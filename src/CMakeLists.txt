@@ -459,9 +459,10 @@ if(BUILD_API_LAYERS)
     add_subdirectory(api_layers)
 endif()
 
-if(BUILD_TESTS)
-    add_subdirectory(tests)
-endif()
+#if(BUILD_TESTS)
+#    add_subdirectory(tests)
+#endif()
+add_subdirectory(hello_xr)
 
 if(BUILD_CONFORMANCE_TESTS)
     add_subdirectory(conformance)
