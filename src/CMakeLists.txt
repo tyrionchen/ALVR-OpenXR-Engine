@@ -462,7 +462,7 @@ endif()
 #if(BUILD_TESTS)
 #    add_subdirectory(tests)
 #endif()
-add_subdirectory(hello_xr)
+add_subdirectory(xr_app)
 
 if(BUILD_CONFORMANCE_TESTS)
     add_subdirectory(conformance)
