@@ -32,7 +32,7 @@ if(ANDROID)
         $<TARGET_OBJECTS:android_native_app_glue>)
     target_link_libraries(xr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY})
 else()
-    add_executable(xr_engine
+    add_library(xr_engine SHARED
         ${LOCAL_SOURCE}
         ${LOCAL_HEADERS}
         ${VULKAN_SHADERS})
