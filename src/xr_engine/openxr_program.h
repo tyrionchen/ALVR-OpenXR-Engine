@@ -4,11 +4,15 @@
 
 #pragma once
 
+struct RustCtx;
+struct TrackingInfo;
+struct HapticsFeedback;
+
 struct IOpenXrProgram {
     virtual ~IOpenXrProgram() = default;
 
     // Create an Instance and other basic instance-level initialization.
-    virtual void CreateInstance() = 0;
+    virtual void CreateInstance(const RustCtx& ctx) = 0;
 
     // Select a System for the view configuration specified in the Options and initialize the graphics device for the selected
     // system.
@@ -35,6 +39,10 @@ struct IOpenXrProgram {
 
     // Create and submit a frame.
     virtual void RenderFrame() = 0;
+
+    virtual bool GetTrackingInfo(TrackingInfo& info) const = 0;
+
+    virtual void EnqueueHapticFeedback(const HapticsFeedback&) = 0;
 };
 
 struct Swapchain {

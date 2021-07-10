@@ -49,6 +49,11 @@ add_dependencies(xr_engine
     run_xr_engine_glsl_compiles
 )
 
+set(ALVR_COMMON_DIR C:/Users/Korcan/Documents/GitHub/ALVR/alvr/client/android/ALVR-common)
+file(GLOB_RECURSE ALVR_COMMON_HEADERS ${ALVR_COMMON_DIR}/*.h)
+file(GLOB_RECURSE ALVR_COMMON_SOURCE ${ALVR_COMMON_DIR}/*.c ${ALVR_COMMON_DIR}/*.cpp)
+add_library(alvr_common ${ALVR_COMMON_SOURCE} ${ALVR_COMMON_SOURCE})
+
 target_include_directories(xr_engine
     PRIVATE
     ${PROJECT_SOURCE_DIR}/src
@@ -60,6 +65,8 @@ target_include_directories(xr_engine
 
     # for helper headers
     ${PROJECT_SOURCE_DIR}/external/include
+
+    ${ALVR_COMMON_DIR}/../
 )
 
 if(GLSLANG_VALIDATOR AND NOT GLSLC_COMMAND)
@@ -73,7 +80,7 @@ if(Vulkan_FOUND)
     )
 endif()
 
-target_link_libraries(xr_engine openxr_loader)
+target_link_libraries(xr_engine openxr_loader alvr_common)
 if(TARGET openxr-gfxwrapper)
     target_link_libraries(xr_engine openxr-gfxwrapper)
 endif()
@@ -96,8 +103,15 @@ if(Vulkan_LIBRARY)
 endif()
 
 if(NOT ANDROID)
+    set(ALVR_BIN_DIR C:/Users/Korcan/Documents/GitHub/ALVR/target/debug/deps)
     install(TARGETS xr_engine
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(TARGETS xr_engine
+        RUNTIME DESTINATION ${ALVR_BIN_DIR}
+        ARCHIVE DESTINATION ${ALVR_BIN_DIR})
+    install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${ALVR_BIN_DIR})
     if(NOT WIN32)
         install(FILES xr_engine.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1/ COMPONENT ManPages)
     endif()

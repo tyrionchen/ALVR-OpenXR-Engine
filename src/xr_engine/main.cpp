@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#define ENGINE_DLL_EXPORTS
+
 #include "pch.h"
 #include "common.h"
 #include "options.h"
@@ -9,6 +11,15 @@
 #include "platformplugin.h"
 #include "graphicsplugin.h"
 #include "openxr_program.h"
+
+#include <array>
+#include <cassert>
+#include <atomic>
+#include <shared_mutex>
+#include <chrono>
+
+#include "rust_bindings.h"
+#include "ALVR-common/packet_types.h"
 
 namespace {
 
@@ -34,7 +45,7 @@ bool UpdateOptionsFromSystemProperties(Options& options) {
 void ShowHelp() {
     // TODO: Improve/update when things are more settled.
     Log::Write(Log::Level::Info,
-               "HelloXr --graphics|-g <Graphics API> [--formfactor|-ff <Form factor>] [--viewconfig|-vc <View config>] "
+               "xr_engine --graphics|-g <Graphics API> [--formfactor|-ff <Form factor>] [--viewconfig|-vc <View config>] "
                "[--blendmode|-bm <Blend mode>] [--space|-s <Space>] [--verbose|-v]");
     Log::Write(Log::Level::Info, "Graphics APIs:            D3D11, D3D12, OpenGLES, OpenGL, Vulkan2, Vulkan");
     Log::Write(Log::Level::Info, "Form factors:             Hmd, Handheld");
@@ -237,8 +248,17 @@ void android_main(struct android_app* app) {
     }
 }
 #else
-int main(int argc, char* argv[]) {
+
+using IOpenXrProgramPtr = std::shared_ptr<IOpenXrProgram>;
+IOpenXrProgramPtr program{ nullptr };
+std::atomic<const RustCtx*> gRustCtx{ nullptr };
+std::shared_mutex gTrackingMutex;
+TrackingInfo gLastTrackingInfo{};
+
+int openxrMain(const RustCtx& ctx, int argc, char* argv[]) {
     try {
+        gRustCtx = &ctx;
+
         // Parse command-line arguments into Options.
         std::shared_ptr<Options> options = std::make_shared<Options>();
         if (!UpdateOptionsFromCommandLine(*options, argc, argv)) {
@@ -248,13 +268,15 @@ int main(int argc, char* argv[]) {
         std::shared_ptr<PlatformData> data = std::make_shared<PlatformData>();
 
         // Spawn a thread to wait for a keypress
-        static bool quitKeyPressed = false;
-        auto exitPollingThread = std::thread{[] {
-            Log::Write(Log::Level::Info, "Press any key to shutdown...");
-            (void)getchar();
-            quitKeyPressed = true;
-        }};
-        exitPollingThread.detach();
+        /*static*/ bool quitKeyPressed = false;
+        //auto exitPollingThread = std::thread{[] {
+        //    Log::Write(Log::Level::Info, "Press any key to shutdown...");
+        //    (void)getchar();
+        //    quitKeyPressed = true;
+        //}};
+        //exitPollingThread.detach();
+
+        ctx.initConnections();
 
         bool requestRestart = false;
         do {
@@ -265,9 +287,9 @@ int main(int argc, char* argv[]) {
             std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options, platformPlugin);
 
             // Initialize the OpenXR program.
-            std::shared_ptr<IOpenXrProgram> program = CreateOpenXrProgram(options, platformPlugin, graphicsPlugin);
+            /*std::shared_ptr<IOpenXrProgram>*/ program = CreateOpenXrProgram(options, platformPlugin, graphicsPlugin);
 
-            program->CreateInstance();
+            program->CreateInstance(ctx);
             program->InitializeSystem();
             program->InitializeSession();
             program->CreateSwapchains();
@@ -282,6 +304,15 @@ int main(int argc, char* argv[]) {
                 if (program->IsSessionRunning()) {
                     program->PollActions();
                     program->RenderFrame();
+
+                    TrackingInfo newInfo;
+                    program->GetTrackingInfo(newInfo);
+                    {
+                        std::unique_lock<std::shared_mutex> lock(gTrackingMutex);
+                        gLastTrackingInfo = newInfo;
+                    }
+
+
                 } else {
                     // Throttle loop since xrWaitFrame won't be called.
                     std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -299,4 +330,74 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 }
+
+void openxrMain(const RustCtx* ctx)
+{
+    if (ctx == nullptr ||
+        ctx->initConnections == nullptr ||
+        ctx->legacySend == nullptr)
+    {
+        Log::Write(Log::Level::Error, "Rust context has not been setup!");
+        return;
+    }
+    std::array</*const*/ char*, 8> args
+    {
+        "openxrMain",
+        "-g",
+        "D3D11",
+        "-vc",
+        "Stereo",
+        "-s",
+        "Stage",
+        "-v"
+    };
+    openxrMain(*ctx, static_cast<int>(args.size()), args.data());
+}
+
+GuardianData getGuardianData() { return {}; }
+
+//inline std::uint64_t GetTimestampUs()
+//{
+//    using namespace std::chrono;
+//    using PeriodType = high_resolution_clock::period;
+//    using DurationType = high_resolution_clock::duration;
+//    using microsecondsU64 = std::chrono::duration<std::uint64_t, std::chrono::microseconds::period>;
+//    return duration_cast<microsecondsU64>(high_resolution_clock::now().time_since_epoch()).count();
+//}
+//
+//std::atomic<std::uint64_t> FrameIndex{ 0 };
+
+void onTrackingNative(bool /*clientsidePrediction*/)
+{
+    const auto rustCtx = gRustCtx.load();
+    if (rustCtx == nullptr || rustCtx->legacySend == nullptr)
+        return;
+    TrackingInfo newInfo;
+    {
+        std::shared_lock<std::shared_mutex> l(gTrackingMutex);
+        newInfo = gLastTrackingInfo;
+    }
+    if (newInfo.type != ALVR_PACKET_TYPE_TRACKING_INFO)
+        return;
+    //++FrameIndex;
+    //newInfo.FrameIndex = FrameIndex;
+    //newInfo.clientTime = GetTimestampUs();
+    rustCtx->legacySend(reinterpret_cast<const unsigned char*>(&newInfo), static_cast<int>(sizeof(newInfo)));
+}
+
+void legacyReceive(const unsigned char* packet, unsigned int packetSize)
+{
+    const auto rustCtx = gRustCtx.load();
+    if (rustCtx == nullptr)
+        return;
+
+    const std::uint32_t type = *reinterpret_cast<const uint32_t*>(packet);
+    if (type == ALVR_PACKET_TYPE_HAPTICS)
+    {
+        if (packetSize < sizeof(HapticsFeedback))
+            return;  
+        program->EnqueueHapticFeedback(*reinterpret_cast<const HapticsFeedback*>(packet));
+    }
+}
+
 #endif

@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#define ENGINE_DLL_EXPORTS
+
 #include "pch.h"
 #include "common.h"
 #include "options.h"
@@ -12,6 +14,16 @@
 #include <common/xr_linear.h>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cassert>
+#include <tuple>
+#include <unordered_map>
+#include <string_view>
+#include <chrono>
+
+#include "concurrent_queue.h"
+#include "rust_bindings.h"
+#include "ALVR-common/packet_types.h"
 
 namespace {
 
@@ -63,6 +75,26 @@ inline XrEnvironmentBlendMode GetXrEnvironmentBlendMode(const std::string& envir
 }
 
 namespace Math {
+template < typename RealT >
+constexpr inline RealT ToDegrees(const RealT radians)
+{
+    return static_cast<RealT>(radians * (180.0 / 3.14159265358979323846));
+}
+
+
+inline void XrMatrix4x4f_CreateFromPose(XrMatrix4x4f& m, const XrPosef& pose)
+{
+    constexpr const XrVector3f scale{ 1.0f,1.0f,1.0f };
+    XrMatrix4x4f_CreateTranslationRotationScale(&m, &pose.position, &pose.orientation, &scale);
+}
+
+inline XrMatrix4x4f XrMatrix4x4f_CreateFromPose(const XrPosef& pose)
+{
+    XrMatrix4x4f ret;
+    XrMatrix4x4f_CreateFromPose(ret, pose);
+    return ret;
+}
+
 namespace Pose {
 XrPosef Identity() {
     XrPosef t{};
@@ -84,6 +116,33 @@ XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
     t.orientation.w = std::cos(radians * 0.5f);
     t.position = translation;
     return t;
+}
+
+constexpr bool IsPoseValid(XrSpaceLocationFlags locationFlags) {
+    constexpr XrSpaceLocationFlags PoseValidFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    return (locationFlags & PoseValidFlags) == PoseValidFlags;
+}
+
+constexpr bool IsPoseTracked(XrSpaceLocationFlags locationFlags) {
+    constexpr XrSpaceLocationFlags PoseTrackedFlags =
+        XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+    return (locationFlags & PoseTrackedFlags) == PoseTrackedFlags;
+}
+
+constexpr bool IsPoseValid(const XrSpaceLocation& spaceLocation) {
+    return IsPoseValid(spaceLocation.locationFlags);
+}
+
+constexpr bool IsPoseTracked(const XrSpaceLocation& spaceLocation) {
+    return IsPoseTracked(spaceLocation.locationFlags);
+}
+
+constexpr bool IsPoseValid(const XrHandJointLocationEXT& jointLocation) {
+    return IsPoseValid(jointLocation.locationFlags);
+}
+
+constexpr bool IsPoseTracked(const XrHandJointLocationEXT& jointLocation) {
+    return IsPoseTracked(jointLocation.locationFlags);
 }
 }  // namespace Pose
 }  // namespace Math
@@ -119,7 +178,88 @@ inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::strin
     return referenceSpaceCreateInfo;
 }
 
-struct OpenXrProgram : IOpenXrProgram {
+inline std::uint64_t GetTimestampUs()
+{
+    using namespace std::chrono;
+    using PeriodType = high_resolution_clock::period;
+    using DurationType = high_resolution_clock::duration;
+    using microsecondsU64 = std::chrono::duration<std::uint64_t, std::chrono::microseconds::period>;
+    return duration_cast<microsecondsU64>(high_resolution_clock::now().time_since_epoch()).count();
+}
+
+constexpr inline TrackingVector3 ToTrackingVector3(const XrVector3f& v)
+{
+    return { v.x, v.y, v.z };
+}
+
+constexpr inline TrackingQuat ToTrackingQuat(const XrQuaternionf& v)
+{
+    return { v.x, v.y, v.z, v.w };
+}
+
+constexpr inline XrPosef IdentityPose = { {0,0,0,1},{0,0,0} };
+
+constexpr inline XrHandJointEXT GetJointParent(const XrHandJointEXT h)
+{
+    switch (h)
+    {
+    case XR_HAND_JOINT_PALM_EXT: return XR_HAND_JOINT_PALM_EXT;
+    case XR_HAND_JOINT_WRIST_EXT: return XR_HAND_JOINT_PALM_EXT;
+    case XR_HAND_JOINT_THUMB_METACARPAL_EXT: return XR_HAND_JOINT_WRIST_EXT;
+    case XR_HAND_JOINT_THUMB_PROXIMAL_EXT: return XR_HAND_JOINT_THUMB_METACARPAL_EXT;
+    case XR_HAND_JOINT_THUMB_DISTAL_EXT: return XR_HAND_JOINT_THUMB_PROXIMAL_EXT;
+    case XR_HAND_JOINT_THUMB_TIP_EXT: return XR_HAND_JOINT_THUMB_DISTAL_EXT;
+    case XR_HAND_JOINT_INDEX_METACARPAL_EXT: return XR_HAND_JOINT_WRIST_EXT;
+    case XR_HAND_JOINT_INDEX_PROXIMAL_EXT: return XR_HAND_JOINT_INDEX_METACARPAL_EXT;
+    case XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT: return XR_HAND_JOINT_INDEX_PROXIMAL_EXT;
+    case XR_HAND_JOINT_INDEX_DISTAL_EXT: return XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT;
+    case XR_HAND_JOINT_INDEX_TIP_EXT: return XR_HAND_JOINT_INDEX_DISTAL_EXT;
+    case XR_HAND_JOINT_MIDDLE_METACARPAL_EXT: return XR_HAND_JOINT_WRIST_EXT;
+    case XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT: return XR_HAND_JOINT_MIDDLE_METACARPAL_EXT;
+    case XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT: return XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT;
+    case XR_HAND_JOINT_MIDDLE_DISTAL_EXT: return XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT;
+    case XR_HAND_JOINT_MIDDLE_TIP_EXT: return XR_HAND_JOINT_MIDDLE_DISTAL_EXT;
+    case XR_HAND_JOINT_RING_METACARPAL_EXT: return XR_HAND_JOINT_WRIST_EXT;
+    case XR_HAND_JOINT_RING_PROXIMAL_EXT: return XR_HAND_JOINT_RING_METACARPAL_EXT;
+    case XR_HAND_JOINT_RING_INTERMEDIATE_EXT: return XR_HAND_JOINT_RING_PROXIMAL_EXT;
+    case XR_HAND_JOINT_RING_DISTAL_EXT: return XR_HAND_JOINT_RING_INTERMEDIATE_EXT;
+    case XR_HAND_JOINT_RING_TIP_EXT: return XR_HAND_JOINT_RING_DISTAL_EXT;
+    case XR_HAND_JOINT_LITTLE_METACARPAL_EXT: return XR_HAND_JOINT_WRIST_EXT;
+    case XR_HAND_JOINT_LITTLE_PROXIMAL_EXT: return XR_HAND_JOINT_LITTLE_METACARPAL_EXT;
+    case XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT: return XR_HAND_JOINT_LITTLE_PROXIMAL_EXT;
+    case XR_HAND_JOINT_LITTLE_DISTAL_EXT: return XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT;
+    case XR_HAND_JOINT_LITTLE_TIP_EXT: return XR_HAND_JOINT_LITTLE_DISTAL_EXT;
+    }
+    return h;
+}
+
+constexpr inline XrHandJointEXT ToXRHandJointType(const ALVR_HAND h)
+{
+    switch (h)
+    {
+    case ALVR_HAND::alvrHandBone_WristRoot: return XR_HAND_JOINT_WRIST_EXT;
+    case ALVR_HAND::alvrHandBone_Thumb0: return XR_HAND_JOINT_THUMB_METACARPAL_EXT;
+    case ALVR_HAND::alvrHandBone_Thumb1: return XR_HAND_JOINT_THUMB_PROXIMAL_EXT;
+    case ALVR_HAND::alvrHandBone_Thumb2: return XR_HAND_JOINT_THUMB_DISTAL_EXT;
+    case ALVR_HAND::alvrHandBone_Thumb3: return XR_HAND_JOINT_THUMB_TIP_EXT;
+    case ALVR_HAND::alvrHandBone_Index1: return XR_HAND_JOINT_INDEX_PROXIMAL_EXT;
+    case ALVR_HAND::alvrHandBone_Index2: return XR_HAND_JOINT_INDEX_INTERMEDIATE_EXT;
+    case ALVR_HAND::alvrHandBone_Index3: return XR_HAND_JOINT_INDEX_DISTAL_EXT;
+    case ALVR_HAND::alvrHandBone_Middle1: return XR_HAND_JOINT_MIDDLE_PROXIMAL_EXT;
+    case ALVR_HAND::alvrHandBone_Middle2: return XR_HAND_JOINT_MIDDLE_INTERMEDIATE_EXT;
+    case ALVR_HAND::alvrHandBone_Middle3: return XR_HAND_JOINT_MIDDLE_DISTAL_EXT;
+    case ALVR_HAND::alvrHandBone_Ring1: return XR_HAND_JOINT_RING_PROXIMAL_EXT;
+    case ALVR_HAND::alvrHandBone_Ring2: return XR_HAND_JOINT_RING_INTERMEDIATE_EXT;
+    case ALVR_HAND::alvrHandBone_Ring3: return XR_HAND_JOINT_RING_DISTAL_EXT;
+    case ALVR_HAND::alvrHandBone_Pinky0: return XR_HAND_JOINT_LITTLE_METACARPAL_EXT;
+    case ALVR_HAND::alvrHandBone_Pinky1: return XR_HAND_JOINT_LITTLE_PROXIMAL_EXT;
+    case ALVR_HAND::alvrHandBone_Pinky2: return XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT;
+    case ALVR_HAND::alvrHandBone_Pinky3: return XR_HAND_JOINT_LITTLE_DISTAL_EXT;
+    }
+    return XR_HAND_JOINT_MAX_ENUM_EXT;
+}
+
+struct OpenXrProgram final : IOpenXrProgram {
     OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin,
                   const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin)
         : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin(graphicsPlugin) {}
@@ -235,7 +375,9 @@ struct OpenXrProgram : IOpenXrProgram {
         CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
     }
 
-    void CreateInstance() override {
+    void CreateInstance(const RustCtx& ctx) override {
+        this->m_rustCtx = &ctx;
+
         LogLayersAndExtensions();
 
         CreateInstanceInternal();
@@ -356,10 +498,76 @@ struct OpenXrProgram : IOpenXrProgram {
         XrAction poseAction{XR_NULL_HANDLE};
         XrAction vibrateAction{XR_NULL_HANDLE};
         XrAction quitAction{XR_NULL_HANDLE};
+
         std::array<XrPath, Side::COUNT> handSubactionPath;
         std::array<XrSpace, Side::COUNT> handSpace;
         std::array<float, Side::COUNT> handScale = {{1.0f, 1.0f}};
         std::array<XrBool32, Side::COUNT> handActive;
+        std::array<TrackingInfo::Controller, Side::COUNT> controllerInfo{};
+
+        struct HandTrackerData
+        {
+            std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> jointLocations;
+            //std::array<XrHandJointVelocityEXT, XR_HAND_JOINT_COUNT_EXT> jointVelocities;
+            XrMatrix4x4f baseOrientation;
+            XrHandTrackerEXT tracker{ XR_NULL_HANDLE };
+        };
+        std::array<HandTrackerData, Side::COUNT> handerTrackers;
+
+        struct ALVRAction
+        {
+            std::string_view name;
+            std::string_view localizedName;
+            XrAction xrAction{ XR_NULL_HANDLE };
+        };
+        using ALVRActionMap = std::unordered_map<ALVR_INPUT, ALVRAction>;
+
+        ALVRActionMap boolActionMap =
+        {
+            { ALVR_INPUT_SYSTEM_CLICK, { "system_click", "System Click" }},
+            { ALVR_INPUT_APPLICATION_MENU_CLICK, { "appliction_click", "Appliction Click" }},
+            { ALVR_INPUT_GRIP_CLICK, { "grip_click", "Grip Click" }},
+            { ALVR_INPUT_GRIP_TOUCH, { "grip_touch", "Grip Touch" }},
+            { ALVR_INPUT_GRIP_VALUE, { "grip_value_to_click", "Grip Value To Click" }},
+            //{ ALVR_INPUT_DPAD_LEFT_CLICK, { "dpad_left_click", "Dpad Left Click" }},
+            //{ ALVR_INPUT_DPAD_UP_CLICK, { "dpad_up_click", "Dpad Up Click" }},
+            //{ ALVR_INPUT_DPAD_RIGHT_CLICK, { "dpad_right_click", "Dpad Right Click" }},
+            //{ ALVR_INPUT_DPAD_DOWN_CLICK, { "dpad_down_click", "Dpad Down Click" }},
+            { ALVR_INPUT_A_CLICK, { "a_click", "A Click" }},
+            { ALVR_INPUT_A_TOUCH, { "a_touch", "A Touch" }},
+            { ALVR_INPUT_B_CLICK, { "b_click", "B Click" }},
+            { ALVR_INPUT_B_TOUCH, { "b_touch", "B Touch" }},
+            { ALVR_INPUT_X_CLICK, { "x_click", "X Click" }},
+            { ALVR_INPUT_X_TOUCH, { "x_touch", "X Touch" }},
+            { ALVR_INPUT_Y_CLICK, { "y_click", "Y Click" }},
+            { ALVR_INPUT_Y_TOUCH, { "y_touch", "Y Touch" }},
+            { ALVR_INPUT_JOYSTICK_CLICK, { "joystick_click", "Joystick Click" }},
+            { ALVR_INPUT_JOYSTICK_TOUCH, { "joystick_touch", "Joystick Touch" }},
+            //{ ALVR_INPUT_BACK_CLICK, { "back_click", "Back Click" }},
+            //{ ALVR_INPUT_GUIDE_CLICK, { "guide_click", "Guide Click" }},
+            //{ ALVR_INPUT_START_CLICK, { "start_click", "Start Click" }},
+            { ALVR_INPUT_TRIGGER_CLICK, { "trigger_click", "Trigger Click" }},
+            { ALVR_INPUT_TRIGGER_TOUCH, { "trigger_touch", "Trigger Touch" }},
+            { ALVR_INPUT_TRACKPAD_CLICK, { "trackpad_click", "Trackpad Click" }},
+            { ALVR_INPUT_TRACKPAD_TOUCH, { "trackpad_touch", "Trackpad Touch" }},
+        };
+        ALVRActionMap scalarActionMap =
+        {
+            { ALVR_INPUT_GRIP_VALUE, { "grip_value", "Grip Value" }},
+            { ALVR_INPUT_JOYSTICK_X, { "joystick_x", "Joystick X" }},
+            { ALVR_INPUT_JOYSTICK_Y, { "joystick_y", "Joystick Y" }},
+            { ALVR_INPUT_TRIGGER_VALUE, { "trigger_value", "Trigger Value" }},
+            { ALVR_INPUT_TRACKPAD_X, { "trackpad_x", "Trackpad X" }},
+            { ALVR_INPUT_TRACKPAD_Y, { "trackpad_y", "Trackpad Y" }},
+        };
+        //ALVRActionMap scalarToBoolActionMap =
+        //{
+        //    { ALVR_INPUT_GRIP_VALUE, { "grip_value_to_click", "Grip Value To Click" }}
+        //};
+        ALVRActionMap boolToScalarActionMap =
+        {
+            { ALVR_INPUT_GRIP_VALUE, { "grip_click_to_value", "Grip Click To Value" }}
+        };
     };
 
     void InitializeActions() {
@@ -378,14 +586,14 @@ struct OpenXrProgram : IOpenXrProgram {
 
         // Create actions.
         {
-            // Create an input action for grabbing objects with the left and right hands.
+            //// Create an input action for grabbing objects with the left and right hands.
             XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
-            actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
-            strcpy_s(actionInfo.actionName, "grab_object");
-            strcpy_s(actionInfo.localizedActionName, "Grab Object");
-            actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
-            actionInfo.subactionPaths = m_input.handSubactionPath.data();
-            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.grabAction));
+            //actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+            //strcpy_s(actionInfo.actionName, "grab_object");
+            //strcpy_s(actionInfo.localizedActionName, "Grab Object");
+            //actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
+            //actionInfo.subactionPaths = m_input.handSubactionPath.data();
+            //CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.grabAction));
 
             // Create an input action getting the left and right hand poses.
             actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
@@ -403,26 +611,49 @@ struct OpenXrProgram : IOpenXrProgram {
             actionInfo.subactionPaths = m_input.handSubactionPath.data();
             CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.vibrateAction));
 
-            // Create input actions for quitting the session using the left and right controller.
-            // Since it doesn't matter which hand did this, we do not specify subaction paths for it.
-            // We will just suggest bindings for both hands, where possible.
-            actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
-            strcpy_s(actionInfo.actionName, "quit_session");
-            strcpy_s(actionInfo.localizedActionName, "Quit Session");
-            actionInfo.countSubactionPaths = 0;
-            actionInfo.subactionPaths = nullptr;
-            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
+            //// Create input actions for quitting the session using the left and right controller.
+            //// Since it doesn't matter which hand did this, we do not specify subaction paths for it.
+            //// We will just suggest bindings for both hands, where possible.
+            //actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+            //strcpy_s(actionInfo.actionName, "quit_session");
+            //strcpy_s(actionInfo.localizedActionName, "Quit Session");
+            //actionInfo.countSubactionPaths = 0;
+            //actionInfo.subactionPaths = nullptr;
+            //CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
+
+            const auto CreateActions = [&](const XrActionType actType, auto& actionMap)
+            {
+                //XrActionCreateInfo actionInfo{ XR_TYPE_ACTION_CREATE_INFO };
+                actionInfo.actionType = actType;
+                for (auto& [k, alvrAction] : actionMap)
+                {
+                    strcpy_s(actionInfo.actionName, alvrAction.name.data());
+                    strcpy_s(actionInfo.localizedActionName, alvrAction.localizedName.data());
+                    actionInfo.countSubactionPaths = std::uint32_t(m_input.handSubactionPath.size());
+                    actionInfo.subactionPaths = m_input.handSubactionPath.data();
+                    CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &alvrAction.xrAction));
+                }
+            };
+            CreateActions(XR_ACTION_TYPE_BOOLEAN_INPUT, m_input.boolActionMap);
+            CreateActions(XR_ACTION_TYPE_BOOLEAN_INPUT, m_input.boolToScalarActionMap);
+            CreateActions(XR_ACTION_TYPE_FLOAT_INPUT, m_input.scalarActionMap);
+            //CreateActions(XR_ACTION_TYPE_FLOAT_INPUT, m_input.scalarToBoolActionMap);
         }
 
         std::array<XrPath, Side::COUNT> selectPath;
-        std::array<XrPath, Side::COUNT> squeezeValuePath;
-        std::array<XrPath, Side::COUNT> squeezeForcePath;
-        std::array<XrPath, Side::COUNT> squeezeClickPath;
+        std::array<XrPath, Side::COUNT> squeezeClickPath, squeezeValuePath, squeezeForcePath;
         std::array<XrPath, Side::COUNT> posePath;
         std::array<XrPath, Side::COUNT> hapticPath;
-        std::array<XrPath, Side::COUNT> menuClickPath;
-        std::array<XrPath, Side::COUNT> bClickPath;
-        std::array<XrPath, Side::COUNT> triggerValuePath;
+        std::array<XrPath, Side::COUNT> menuClickPath, systemClickPath;
+        std::array<XrPath, Side::COUNT> triggerClickPath, triggerTouchPath, triggerValuePath;
+        std::array<XrPath, Side::COUNT> thumbstickXPath, thumbstickYPath,
+                                        thumbstickClickPath, thumbstickTouchPath,
+                                        thumbrestTouchPath;
+        std::array<XrPath, Side::COUNT> trackpadXPath, trackpadYPath, trackpadForcePath,
+                                        trackpadClickPath, trackpadTouchPath;
+
+        std::array<XrPath, Side::COUNT> aClickPath, aTouchPath, bClickPath, bTouchPath,
+                                        xClickPath, xTouchPath, yClickPath, yTouchPath;
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
@@ -435,26 +666,79 @@ struct OpenXrProgram : IOpenXrProgram {
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &posePath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/output/haptic", &hapticPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/output/haptic", &hapticPath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/system/click", &systemClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/system/click", &systemClickPath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
+        
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/a/click", &aClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &aClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/a/touch", &aTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/a/touch", &aTouchPath[Side::RIGHT]));
+
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/b/click", &bClickPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/b/click", &bClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/b/touch", &bTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/b/touch", &bTouchPath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/x/click", &xClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/x/click", &xClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/x/touch", &xTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/x/touch", &xTouchPath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/y/click", &yClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/y/click", &yClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/y/touch", &yTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/y/touch", &yTouchPath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/click", &triggerClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/click", &triggerClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/touch", &triggerTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/touch", &triggerTouchPath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &thumbstickXPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &thumbstickXPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/y", &thumbstickYPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/y", &thumbstickYPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/click", &thumbstickClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/click", &thumbstickClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/touch", &thumbstickTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/touch", &thumbstickTouchPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbrest/touch", &thumbrestTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbrest/touch", &thumbrestTouchPath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/x", &trackpadXPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/x", &trackpadXPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/y", &trackpadYPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/y", &trackpadYPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/click", &trackpadClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/click", &trackpadClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/touch", &trackpadTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/touch", &trackpadTouchPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/force", &trackpadForcePath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/force", &trackpadForcePath[Side::RIGHT]));
+
         // Suggest bindings for KHR Simple.
         {
             XrPath khrSimpleInteractionProfilePath;
             CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/khr/simple_controller", &khrSimpleInteractionProfilePath));
-            std::vector<XrActionSuggestedBinding> bindings{{// Fall back to a click input for the grab action.
-                                                            {m_input.grabAction, selectPath[Side::LEFT]},
-                                                            {m_input.grabAction, selectPath[Side::RIGHT]},
-                                                            {m_input.poseAction, posePath[Side::LEFT]},
-                                                            {m_input.poseAction, posePath[Side::RIGHT]},
-                                                            {m_input.quitAction, menuClickPath[Side::LEFT]},
-                                                            {m_input.quitAction, menuClickPath[Side::RIGHT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]}}};
+            const std::vector<XrActionSuggestedBinding> bindings{ {// Fall back to a click input for the grab action.
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, selectPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, selectPath[Side::RIGHT]},
+                {m_input.poseAction, posePath[Side::LEFT]},
+                {m_input.poseAction, posePath[Side::RIGHT]},
+                //ALVR servers currently does not use APP_MENU_CLICK event.
+                //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+
+                {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = khrSimpleInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -466,13 +750,48 @@ struct OpenXrProgram : IOpenXrProgram {
             XrPath oculusTouchInteractionProfilePath;
             CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/oculus/touch_controller", &oculusTouchInteractionProfilePath));
-            std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeValuePath[Side::LEFT]},
-                                                            {m_input.grabAction, squeezeValuePath[Side::RIGHT]},
-                                                            {m_input.poseAction, posePath[Side::LEFT]},
-                                                            {m_input.poseAction, posePath[Side::RIGHT]},
-                                                            {m_input.quitAction, menuClickPath[Side::LEFT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]}}};
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                // oculus left controller
+                {m_input.boolActionMap[ALVR_INPUT_X_CLICK].xrAction, xClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_X_TOUCH].xrAction, xTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_Y_CLICK].xrAction, yClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_Y_TOUCH].xrAction, yTouchPath[Side::LEFT]},
+                //ALVR servers currently does not use APP_MENU_CLICK event.
+                //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                // oculus right controller
+                {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_A_TOUCH].xrAction, aTouchPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_TOUCH].xrAction, bTouchPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+                // oculus both controllers
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
+                //// grip_value_to_click.
+                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
+                
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::RIGHT]},
+                
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
+                // atm ALVL has no input type for thumbrest touch
+
+                {m_input.poseAction, posePath[Side::LEFT]},
+                {m_input.poseAction, posePath[Side::RIGHT]},
+                //{m_input.quitAction, menuClickPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -484,14 +803,33 @@ struct OpenXrProgram : IOpenXrProgram {
             XrPath viveControllerInteractionProfilePath;
             CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/htc/vive_controller", &viveControllerInteractionProfilePath));
-            std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, triggerValuePath[Side::LEFT]},
-                                                            {m_input.grabAction, triggerValuePath[Side::RIGHT]},
-                                                            {m_input.poseAction, posePath[Side::LEFT]},
-                                                            {m_input.poseAction, posePath[Side::RIGHT]},
-                                                            {m_input.quitAction, menuClickPath[Side::LEFT]},
-                                                            {m_input.quitAction, menuClickPath[Side::RIGHT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]}}};
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+                //ALVR servers currently does not use APP_MENU_CLICK event.
+                //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_X].xrAction, trackpadXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_X].xrAction, trackpadXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
+
+                {m_input.poseAction, posePath[Side::LEFT]},
+                {m_input.poseAction, posePath[Side::RIGHT]},
+                {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = viveControllerInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -504,14 +842,56 @@ struct OpenXrProgram : IOpenXrProgram {
             XrPath indexControllerInteractionProfilePath;
             CHECK_XRCMD(
                 xrStringToPath(m_instance, "/interaction_profiles/valve/index_controller", &indexControllerInteractionProfilePath));
-            std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeForcePath[Side::LEFT]},
-                                                            {m_input.grabAction, squeezeForcePath[Side::RIGHT]},
-                                                            {m_input.poseAction, posePath[Side::LEFT]},
-                                                            {m_input.poseAction, posePath[Side::RIGHT]},
-                                                            {m_input.quitAction, bClickPath[Side::LEFT]},
-                                                            {m_input.quitAction, bClickPath[Side::RIGHT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]}}};
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+                
+                {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_A_TOUCH].xrAction, aTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_A_TOUCH].xrAction, aTouchPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_TOUCH].xrAction, bTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_TOUCH].xrAction, bTouchPath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
+                //// grip_value_to_click
+                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
+                
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
+                
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_X].xrAction, trackpadXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_X].xrAction, trackpadXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::RIGHT]},
+                //{m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
+
+                {m_input.poseAction, posePath[Side::LEFT]},
+                {m_input.poseAction, posePath[Side::RIGHT]},
+                //{m_input.quitAction, bClickPath[Side::LEFT]},
+                //{m_input.quitAction, bClickPath[Side::RIGHT]},
+                {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = indexControllerInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -524,14 +904,43 @@ struct OpenXrProgram : IOpenXrProgram {
             XrPath microsoftMixedRealityInteractionProfilePath;
             CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller",
                                        &microsoftMixedRealityInteractionProfilePath));
-            std::vector<XrActionSuggestedBinding> bindings{{{m_input.grabAction, squeezeClickPath[Side::LEFT]},
-                                                            {m_input.grabAction, squeezeClickPath[Side::RIGHT]},
-                                                            {m_input.poseAction, posePath[Side::LEFT]},
-                                                            {m_input.poseAction, posePath[Side::RIGHT]},
-                                                            {m_input.quitAction, menuClickPath[Side::LEFT]},
-                                                            {m_input.quitAction, menuClickPath[Side::RIGHT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                                                            {m_input.vibrateAction, hapticPath[Side::RIGHT]}}};
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                //ALVR servers currently does not use APP_MENU_CLICK event.
+                //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
+                {m_input.boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeClickPath[Side::LEFT]},
+                {m_input.boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeClickPath[Side::RIGHT]},
+                
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_X].xrAction, trackpadXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_X].xrAction, trackpadXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
+
+                {m_input.poseAction, posePath[Side::LEFT]},
+                {m_input.poseAction, posePath[Side::RIGHT]},
+                //{m_input.quitAction, menuClickPath[Side::LEFT]},
+                //{m_input.quitAction, menuClickPath[Side::RIGHT]},
+                {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = microsoftMixedRealityInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -550,6 +959,52 @@ struct OpenXrProgram : IOpenXrProgram {
         attachInfo.countActionSets = 1;
         attachInfo.actionSets = &m_input.actionSet;
         CHECK_XRCMD(xrAttachSessionActionSets(m_session, &attachInfo));
+    }
+
+    bool InitializeHandTrackers()
+    {
+        //if (m_instance != XR_NULL_HANDLE && m_systemId != XR_NULL_SYSTEM_ID)
+        //    return false;
+
+        // Inspect hand tracking system properties
+        XrSystemHandTrackingPropertiesEXT handTrackingSystemProperties{ XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
+        XrSystemProperties systemProperties{ XR_TYPE_SYSTEM_PROPERTIES, &handTrackingSystemProperties };
+        CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
+        if (!handTrackingSystemProperties.supportsHandTracking)
+            // The system does not support hand tracking
+            return false;
+
+        // Get function pointer for xrCreateHandTrackerEXT
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrCreateHandTrackerEXT",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnCreateHandTrackerEXT)));
+
+        // Get function pointer for xrLocateHandJointsEXT
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrLocateHandJointsEXT",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnLocateHandJointsEXT)));
+
+        if (m_pfnCreateHandTrackerEXT == nullptr ||
+            m_pfnLocateHandJointsEXT == nullptr)
+            return false;
+
+        // Create a hand tracker for left hand that tracks default set of hand joints.
+        const auto createHandTracker = [&](auto& handerTracker, const XrHandEXT hand)
+        {
+            XrHandTrackerCreateInfoEXT createInfo{ XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
+            createInfo.hand = hand;
+            createInfo.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+            CHECK_XRCMD(m_pfnCreateHandTrackerEXT(m_session, &createInfo, &handerTracker.tracker));
+        };
+        createHandTracker(m_input.handerTrackers[0], XR_HAND_LEFT_EXT);
+        createHandTracker(m_input.handerTrackers[1], XR_HAND_RIGHT_EXT);
+
+        auto& leftHandBaseOrientation = m_input.handerTrackers[0].baseOrientation;
+        auto& rightHandBaseOrientation = m_input.handerTrackers[1].baseOrientation;        
+        XrMatrix4x4f zRot;
+        XrMatrix4x4f& yRot = rightHandBaseOrientation;
+        XrMatrix4x4f_CreateRotation(&yRot, 0.0, -90.0f, 0.0f);
+        XrMatrix4x4f_CreateRotation(&zRot, 0.0, 0.0f, 180.0f);
+        XrMatrix4x4f_Multiply(&leftHandBaseOrientation, &yRot, &zRot);
+        return true;
     }
 
     void CreateVisualizedSpaces() {
@@ -592,6 +1047,8 @@ struct OpenXrProgram : IOpenXrProgram {
             XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(m_options->AppSpace);
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
         }
+
+        InitializeHandTrackers();
     }
 
     void CreateSwapchains() override {
@@ -733,10 +1190,16 @@ struct OpenXrProgram : IOpenXrProgram {
                     break;
                 }
                 case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
-                    LogActionSourceName(m_input.grabAction, "Grab");
-                    LogActionSourceName(m_input.quitAction, "Quit");
+                    //LogActionSourceName(m_input.grabAction, "Grab");
+                    //LogActionSourceName(m_input.quitAction, "Quit");
                     LogActionSourceName(m_input.poseAction, "Pose");
                     LogActionSourceName(m_input.vibrateAction, "Vibrate");
+                    for (const auto& [k,v] : m_input.boolActionMap)
+                        LogActionSourceName(v.xrAction, v.localizedName.data());
+                    for (const auto& [k, v] : m_input.boolToScalarActionMap)
+                        LogActionSourceName(v.xrAction, v.localizedName.data());
+                    for (const auto& [k, v] : m_input.scalarActionMap)
+                        LogActionSourceName(v.xrAction, v.localizedName.data());
                     break;
                 case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
                 default: {
@@ -833,8 +1296,95 @@ struct OpenXrProgram : IOpenXrProgram {
 
     bool IsSessionFocused() const override { return m_sessionState == XR_SESSION_STATE_FOCUSED; }
 
+    void PollHandTrackers()
+    {
+        if (m_pfnLocateHandJointsEXT == nullptr)
+            return;
+
+        std::array<XrMatrix4x4f, XR_HAND_JOINT_COUNT_EXT> oculusOrientedJointPoses;
+        for (const auto hand : { Side::LEFT,Side::RIGHT })
+        {
+            auto& handerTracker = m_input.handerTrackers[hand];
+            //XrHandJointVelocitiesEXT velocities{ XR_TYPE_HAND_JOINT_VELOCITIES_EXT };
+            //velocities.jointCount = XR_HAND_JOINT_COUNT_EXT;
+            //velocities.jointVelocities = handerTracker.jointVelocities.data();
+
+            XrHandJointLocationsEXT locations{ XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
+            //locations.next = &velocities;
+            locations.jointCount = XR_HAND_JOINT_COUNT_EXT;
+            locations.jointLocations = handerTracker.jointLocations.data();
+
+            XrHandJointsLocateInfoEXT locateInfo{ XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
+            locateInfo.baseSpace = m_appSpace;
+            locateInfo.time = m_lastDisplayTime;
+            CHECK_XRCMD(m_pfnLocateHandJointsEXT(handerTracker.tracker, &locateInfo, &locations));
+            if (!locations.isActive)
+                continue;
+
+            const auto& jointLocations = handerTracker.jointLocations;
+            const auto& handBaseOrientation = handerTracker.baseOrientation;
+            for (size_t jointIdx = 0; jointIdx < XR_HAND_JOINT_COUNT_EXT; ++jointIdx)
+            {
+                const auto& jointLoc = jointLocations[jointIdx];
+                XrMatrix4x4f& jointMatFixed = oculusOrientedJointPoses[jointIdx];
+                if (!Math::Pose::IsPoseValid(jointLoc))
+                {
+                    XrMatrix4x4f_CreateIdentity(&jointMatFixed);
+                    continue;
+                }
+                const auto jointMat = Math::XrMatrix4x4f_CreateFromPose(jointLoc.pose);
+                XrMatrix4x4f_CreateIdentity(&jointMatFixed);
+                XrMatrix4x4f_Multiply(&jointMatFixed, &jointMat, &handBaseOrientation);
+            }
+
+            auto& controller = m_input.controllerInfo[hand];
+            for (size_t boneIndex = 0; boneIndex < ALVR_HAND::alvrHandBone_MaxSkinnable; ++boneIndex)
+            {
+                auto& boneRot = controller.boneRotations[boneIndex];
+                auto& bonePos = controller.bonePositionsBase[boneIndex];
+                boneRot = { 0,0,0,1 };
+                bonePos = { 0,0,0 };
+                
+                const auto xrJoint = ToXRHandJointType(static_cast<ALVR_HAND>(boneIndex));
+                if (xrJoint == XR_HAND_JOINT_MAX_ENUM_EXT)
+                    continue;
+
+                const auto xrJointParent = GetJointParent(xrJoint);
+                const XrMatrix4x4f& jointParentWorld = oculusOrientedJointPoses[xrJointParent];
+                const XrMatrix4x4f& JointWorld       = oculusOrientedJointPoses[xrJoint];
+
+                XrMatrix4x4f jointLocal, jointParentInv;
+                XrMatrix4x4f_InvertRigidBody(&jointParentInv, &jointParentWorld);
+                XrMatrix4x4f_Multiply(&jointLocal, &jointParentInv, &JointWorld);
+
+                XrQuaternionf localizedRot;
+                XrMatrix4x4f_GetRotation(&localizedRot, &jointLocal);
+                XrVector3f localizedPos;
+                XrMatrix4x4f_GetTranslation(&localizedPos, &jointLocal);
+
+                boneRot = ToTrackingQuat(localizedRot);
+                bonePos = ToTrackingVector3(localizedPos);
+            }
+
+            controller.flags |= TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_HAND;
+            if (hand == Side::LEFT)
+                controller.flags |= TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
+            controller.inputStateStatus = 0;
+
+            const XrMatrix4x4f& palmMatP = oculusOrientedJointPoses[XR_HAND_JOINT_PALM_EXT];
+            XrQuaternionf palmRot;
+            XrVector3f palmPos;
+            XrMatrix4x4f_GetTranslation(&palmPos, &palmMatP);
+            XrMatrix4x4f_GetRotation(&palmRot, &palmMatP);
+            controller.boneRootPosition = ToTrackingVector3(palmPos);
+            controller.boneRootOrientation = ToTrackingQuat(palmRot);
+        }
+
+    }
+
     void PollActions() override {
-        m_input.handActive = {XR_FALSE, XR_FALSE};
+        m_input.handActive = { XR_FALSE, XR_FALSE };
+        m_input.controllerInfo = { TrackingInfo::Controller {}, TrackingInfo::Controller {}, };
 
         // Sync actions
         const XrActiveActionSet activeActionSet{m_input.actionSet, XR_NULL_PATH};
@@ -846,40 +1396,95 @@ struct OpenXrProgram : IOpenXrProgram {
         // Get pose and grab action state and start haptic vibrate when hand is 90% squeezed.
         for (auto hand : {Side::LEFT, Side::RIGHT}) {
             XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
-            getInfo.action = m_input.grabAction;
             getInfo.subactionPath = m_input.handSubactionPath[hand];
-
-            XrActionStateFloat grabValue{XR_TYPE_ACTION_STATE_FLOAT};
-            CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &grabValue));
-            if (grabValue.isActive == XR_TRUE) {
-                // Scale the rendered hand by 1.0f (open) to 0.5f (fully squeezed).
-                m_input.handScale[hand] = 1.0f - 0.5f * grabValue.currentState;
-                if (grabValue.currentState > 0.9f) {
-                    XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
-                    vibration.amplitude = 0.5;
-                    vibration.duration = XR_MIN_HAPTIC_DURATION;
-                    vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
-
-                    XrHapticActionInfo hapticActionInfo{XR_TYPE_HAPTIC_ACTION_INFO};
-                    hapticActionInfo.action = m_input.vibrateAction;
-                    hapticActionInfo.subactionPath = m_input.handSubactionPath[hand];
-                    CHECK_XRCMD(xrApplyHapticFeedback(m_session, &hapticActionInfo, (XrHapticBaseHeader*)&vibration));
-                }
-            }
-
             getInfo.action = m_input.poseAction;
             XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
             CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
             m_input.handActive[hand] = poseState.isActive;
+
+            constexpr const std::uint32_t EnableRightControllerMask = //TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
+                                                                      TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST;
+            constexpr const std::uint32_t EnableLeftControllerMask  = EnableRightControllerMask |
+                                                                      TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
+            
+            const std::uint32_t enableControllerMask = hand == Side::LEFT ? EnableLeftControllerMask : EnableRightControllerMask;
+
+            auto& controllerInfo = m_input.controllerInfo[hand];
+            // xrGetActionStatePose doesn't appear to be a reliable method to determine if a controller is active,
+            // at least with WMR's current OpenXR runtime.
+            // if (m_input.handActive[hand] == XR_TRUE) 
+                controllerInfo.flags |= enableControllerMask;
+
+            for (const auto& [buttonType, v] : m_input.boolActionMap)
+            {
+                getInfo.action = v.xrAction;
+                XrActionStateBoolean boolValue{XR_TYPE_ACTION_STATE_BOOLEAN};
+                CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &boolValue));
+                if ((boolValue.isActive == XR_TRUE) /*&& (quitValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
+                    controllerInfo.buttons |= ALVR_BUTTON_FLAG(buttonType);
+            }
+
+            const auto GetFloatValue = [&](const InputState::ALVRAction& v, float& val)
+            {
+                getInfo.action = v.xrAction;
+                XrActionStateFloat floatValue{XR_TYPE_ACTION_STATE_FLOAT};
+                CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &floatValue));
+                if (floatValue.isActive == XR_FALSE)
+                    return;
+                val = floatValue.currentState;
+            };
+            /*const*/ auto& scalarActionMap = m_input.scalarActionMap;
+            GetFloatValue(scalarActionMap[ALVR_INPUT_TRACKPAD_X], controllerInfo.trackpadPosition.x);
+            GetFloatValue(scalarActionMap[ALVR_INPUT_TRACKPAD_Y], controllerInfo.trackpadPosition.y);
+            GetFloatValue(scalarActionMap[ALVR_INPUT_JOYSTICK_X], controllerInfo.trackpadPosition.x);
+            GetFloatValue(scalarActionMap[ALVR_INPUT_JOYSTICK_Y], controllerInfo.trackpadPosition.y);
+            GetFloatValue(scalarActionMap[ALVR_INPUT_TRIGGER_VALUE], controllerInfo.triggerValue);
+            GetFloatValue(scalarActionMap[ALVR_INPUT_GRIP_VALUE], controllerInfo.gripValue);
+
+            const auto GetFloatFromBool = [&](const InputState::ALVRAction& v, float& val)
+            {
+                getInfo.action = v.xrAction;
+                XrActionStateBoolean boolValue{ XR_TYPE_ACTION_STATE_BOOLEAN };
+                CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &boolValue));
+                if ((boolValue.isActive == XR_TRUE) /*&& (quitValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
+                    val = 1.0f;
+            };
+            auto& boolToScalarActionMap = m_input.boolToScalarActionMap;
+            GetFloatFromBool(boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE], controllerInfo.gripValue);
         }
 
-        // There were no subaction paths specified for the quit action, because we don't care which hand did it.
-        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
-        XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
-        CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
-        if ((quitValue.isActive == XR_TRUE) && (quitValue.changedSinceLastSync == XR_TRUE) && (quitValue.currentState == XR_TRUE)) {
-            CHECK_XRCMD(xrRequestExitSession(m_session));
+        PollHandTrackers();
+
+        // haptic feedback
+        constexpr static const size_t MaxPopPerFrame = 20;
+        size_t popCount = 0;
+        HapticsFeedback hapticFeedback;
+        while (m_hapticsQueue.try_pop(hapticFeedback) && popCount < MaxPopPerFrame)
+        {
+            const size_t hand = hapticFeedback.hand == 0 ? 1 : 0;
+            if ((m_input.controllerInfo[hand].flags & TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_HAND) == 0)
+            {
+                //Log::Write(Log::Level::Info, Fmt("Haptics: amp:%f duration:%f freq:%f", hapticFeedback.amplitude, hapticFeedback.duration, hapticFeedback.frequency));
+                XrHapticVibration vibration{ XR_TYPE_HAPTIC_VIBRATION };
+                vibration.amplitude = hapticFeedback.amplitude;
+                vibration.duration = static_cast<XrDuration>(static_cast<double>(hapticFeedback.duration) * 1e+9);
+                vibration.frequency = hapticFeedback.frequency;
+
+                XrHapticActionInfo hapticActionInfo{ XR_TYPE_HAPTIC_ACTION_INFO };
+                hapticActionInfo.action = m_input.vibrateAction;
+                hapticActionInfo.subactionPath = m_input.handSubactionPath[hand];
+                CHECK_XRCMD(xrApplyHapticFeedback(m_session, &hapticActionInfo, reinterpret_cast<XrHapticBaseHeader*>(&vibration)));
+            }
+            ++popCount;
         }
+
+        //// There were no subaction paths specified for the quit action, because we don't care which hand did it.
+        //XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
+        //XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
+        //CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
+        //if ((quitValue.isActive == XR_TRUE) && (quitValue.changedSinceLastSync == XR_TRUE) && (quitValue.currentState == XR_TRUE)) {
+        //    CHECK_XRCMD(xrRequestExitSession(m_session));
+        //}
     }
 
     void RenderFrame() override {
@@ -888,6 +1493,7 @@ struct OpenXrProgram : IOpenXrProgram {
         XrFrameWaitInfo frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
         XrFrameState frameState{XR_TYPE_FRAME_STATE};
         CHECK_XRCMD(xrWaitFrame(m_session, &frameWaitInfo, &frameState));
+        m_lastDisplayTime = frameState.predictedDisplayTime;
 
         XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
         CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
@@ -907,6 +1513,8 @@ struct OpenXrProgram : IOpenXrProgram {
         frameEndInfo.layerCount = (uint32_t)layers.size();
         frameEndInfo.layers = layers.data();
         CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
+
+        ++m_frameIndex;
     }
 
     bool RenderLayer(XrTime predictedDisplayTime, std::vector<XrCompositionLayerProjectionView>& projectionLayerViews,
@@ -1009,6 +1617,100 @@ struct OpenXrProgram : IOpenXrProgram {
         return true;
     }
 
+    struct SpaceLoc
+    {
+        XrPosef pose = IdentityPose;
+        XrVector3f linearVelocity = { 0,0,0 };
+        XrVector3f angularVelocity = { 0,0,0 };
+    };
+    constexpr /*inline*/ static const SpaceLoc IdentitySpaceLoc = {};
+
+    inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
+    {
+        XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
+        XrSpaceLocation spaceLocation{ XR_TYPE_SPACE_LOCATION, &velocity };
+        const auto res = xrLocateSpace(targetSpace, m_appSpace, m_lastDisplayTime, &spaceLocation);
+        CHECK_XRRESULT(res, "xrLocateSpace");
+        
+        SpaceLoc result = initLoc;
+        if (!XR_UNQUALIFIED_SUCCESS(res))
+            return result;
+
+        const auto& pose = spaceLocation.pose;
+        if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0)
+            result.pose.position = pose.position;
+
+        if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0)
+            result.pose.orientation = pose.orientation;
+
+        if ((velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) != 0)
+            result.linearVelocity = velocity.linearVelocity;
+
+        if ((velocity.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT) != 0)
+            result.angularVelocity = velocity.angularVelocity;
+
+        return result;
+    }
+
+    void GetControllerInfo(TrackingInfo& info, const double /*displayTime*/) const
+    {
+        for (const auto hand : { Side::LEFT, Side::RIGHT }) {
+            auto& newContInfo = info.controller[hand];
+            newContInfo = m_input.controllerInfo[hand];
+
+            //newContInfo.flags |= (TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
+            //                      TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST);
+            //if (hand == Side::LEFT)
+            //    newContInfo.flags |= TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
+            
+            const auto spaceLoc = GetSpaceLocation(m_input.handSpace[hand]);
+            newContInfo.position        = ToTrackingVector3(spaceLoc.pose.position);
+            newContInfo.orientation     = ToTrackingQuat(spaceLoc.pose.orientation);
+            newContInfo.linearVelocity  = ToTrackingVector3(spaceLoc.linearVelocity);
+            newContInfo.angularVelocity = ToTrackingVector3(spaceLoc.angularVelocity);
+        }
+    }
+
+    virtual bool GetTrackingInfo(TrackingInfo& info) const override
+    {
+        info = {};
+        info.type = ALVR_PACKET_TYPE_TRACKING_INFO;
+        info.flags = 0;
+        info.clientTime = GetTimestampUs();
+        info.predictedDisplayTime = static_cast<double>(m_lastDisplayTime) * 1e-9;
+        info.FrameIndex = m_frameIndex;
+
+        info.ipd = 63; //getIPD();
+        info.battery = 100;// g_ctx.batteryLevel;
+
+        if (m_views.size() >= 2)
+        {
+            const auto ToEyeFov = [](const XrFovf& fov) -> EyeFov
+            {
+                return {
+                    Math::ToDegrees(fov.angleLeft),
+                    Math::ToDegrees(fov.angleRight),
+                    Math::ToDegrees(fov.angleUp),
+                    Math::ToDegrees(fov.angleDown)
+                };
+            };
+            info.eyeFov[0] = ToEyeFov(m_views[0].fov);
+            info.eyeFov[1] = ToEyeFov(m_views[1].fov);
+
+            const auto& hmdPose = m_views[0].pose;
+            info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdPose.orientation);
+            info.HeadPose_Pose_Position = ToTrackingVector3(hmdPose.position);
+        }
+
+        GetControllerInfo(info, 0);// clientsidePrediction ? frame->displayTime : 0.);
+        return true;
+    }
+
+    virtual inline void EnqueueHapticFeedback(const HapticsFeedback& hapticFeedback) override
+    {
+        m_hapticsQueue.push(hapticFeedback);
+    }
+
    private:
     const std::shared_ptr<Options> m_options;
     std::shared_ptr<IPlatformPlugin> m_platformPlugin;
@@ -1035,6 +1737,15 @@ struct OpenXrProgram : IOpenXrProgram {
 
     XrEventDataBuffer m_eventDataBuffer;
     InputState m_input;
+
+    PFN_xrCreateHandTrackerEXT m_pfnCreateHandTrackerEXT = nullptr;
+    PFN_xrLocateHandJointsEXT  m_pfnLocateHandJointsEXT = nullptr;
+
+    const RustCtx* m_rustCtx = nullptr;
+    std::size_t m_frameIndex = 0;
+    XrTime m_lastDisplayTime = 0;
+
+    xrconcurrency::concurrent_queue<HapticsFeedback> m_hapticsQueue;
 };
 }  // namespace
 
