@@ -49,7 +49,8 @@ add_dependencies(xr_engine
     run_xr_engine_glsl_compiles
 )
 
-set(ALVR_COMMON_DIR C:/Users/Korcan/Documents/GitHub/ALVR/alvr/client/android/ALVR-common)
+set(ALVR_ROOT_DIR ${PROJECT_SOURCE_DIR}/../../../.. CACHE PATH "Root directory of ALVR source")
+set(ALVR_COMMON_DIR ${ALVR_ROOT_DIR}/alvr/client/android/ALVR-common)
 file(GLOB_RECURSE ALVR_COMMON_HEADERS ${ALVR_COMMON_DIR}/*.h)
 file(GLOB_RECURSE ALVR_COMMON_SOURCE ${ALVR_COMMON_DIR}/*.c ${ALVR_COMMON_DIR}/*.cpp)
 add_library(alvr_common ${ALVR_COMMON_SOURCE} ${ALVR_COMMON_SOURCE})
@@ -103,7 +104,7 @@ if(Vulkan_LIBRARY)
 endif()
 
 if(NOT ANDROID)
-    set(ALVR_BIN_DIR C:/Users/Korcan/Documents/GitHub/ALVR/target/debug/deps)
+    set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/deps)
     install(TARGETS xr_engine
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_BINDIR})
