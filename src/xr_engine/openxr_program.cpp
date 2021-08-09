@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cassert>
+#include <cstring>
 #include <tuple>
 #include <unordered_map>
 #include <string_view>
@@ -293,9 +294,15 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
     }
 
-    static void LogLayersAndExtensions() {
+    using ExtensionMap = std::unordered_map<std::string_view, bool>;
+    ExtensionMap m_availableSupportedExtMap = {
+       { "XR_EXT_hand_tracking", false },
+       //{ "XR_FB_display_refresh_rate", false }
+    };
+
+    void LogLayersAndExtensions() {
         // Write out extension properties for a given layer.
-        const auto logExtensions = [](const char* layerName, int indent = 0) {
+        const auto logExtensions = [this](const char* layerName, int indent = 0) {
             uint32_t instanceExtensionCount;
             CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, 0, &instanceExtensionCount, nullptr));
 
@@ -310,6 +317,10 @@ struct OpenXrProgram final : IOpenXrProgram {
             const std::string indentStr(indent, ' ');
             Log::Write(Log::Level::Verbose, Fmt("%sAvailable Extensions: (%d)", indentStr.c_str(), instanceExtensionCount));
             for (const XrExtensionProperties& extension : extensions) {
+                //std::string_view extName = extension.extensionName;
+                const auto itr = m_availableSupportedExtMap.find(extension.extensionName);
+                if (itr != m_availableSupportedExtMap.end())
+                    itr->second = true;
                 Log::Write(Log::Level::Verbose, Fmt("%s  Name=%s SpecVersion=%d", indentStr.c_str(), extension.extensionName,
                                                     extension.extensionVersion));
             }
@@ -363,13 +374,19 @@ struct OpenXrProgram final : IOpenXrProgram {
         const std::vector<std::string> graphicsExtensions = m_graphicsPlugin->GetInstanceExtensions();
         std::transform(graphicsExtensions.begin(), graphicsExtensions.end(), std::back_inserter(extensions),
                        [](const std::string& ext) { return ext.c_str(); });
-
+                       
+        for (const auto& [extName,extAvaileble] : m_availableSupportedExtMap) {
+            if (extAvaileble) {
+                extensions.push_back(extName.data());
+            }
+        }
+        
         XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
         createInfo.next = m_platformPlugin->GetInstanceCreateExtension();
         createInfo.enabledExtensionCount = (uint32_t)extensions.size();
         createInfo.enabledExtensionNames = extensions.data();
 
-        strcpy(createInfo.applicationInfo.applicationName, "HelloXR");
+        strcpy(createInfo.applicationInfo.applicationName, "openxr_client");
         createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
 
         CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
@@ -970,9 +987,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         XrSystemHandTrackingPropertiesEXT handTrackingSystemProperties{ XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
         XrSystemProperties systemProperties{ XR_TYPE_SYSTEM_PROPERTIES, &handTrackingSystemProperties };
         CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
-        if (!handTrackingSystemProperties.supportsHandTracking)
+        if (!handTrackingSystemProperties.supportsHandTracking) {
+            Log::Write(Log::Level::Info, "XR_EXT_hand_tracking is not supported.");
             // The system does not support hand tracking
             return false;
+        }
 
         // Get function pointer for xrCreateHandTrackerEXT
         CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrCreateHandTrackerEXT",
@@ -1617,13 +1636,29 @@ struct OpenXrProgram final : IOpenXrProgram {
         return true;
     }
 
+    virtual bool GetSystemProperties(SystemProperties& systemProps) const override
+    {
+        if (m_instance == XR_NULL_HANDLE)
+            return false;
+        XrSystemProperties xrSystemProps = { XR_TYPE_SYSTEM_PROPERTIES };
+        CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &xrSystemProps));
+        std::strncpy(systemProps.systemName, xrSystemProps.systemName, sizeof(systemProps.systemName));
+        if (m_configViews.size() > 0)
+        {
+            const auto& configView = m_configViews[0];
+            systemProps.recommendedEyeWidth = configView.recommendedImageRectWidth;
+            systemProps.recommendedEyeHeight = configView.recommendedImageRectHeight;
+        }
+        return true;
+    }
+
     struct SpaceLoc
     {
         XrPosef pose = IdentityPose;
         XrVector3f linearVelocity = { 0,0,0 };
         XrVector3f angularVelocity = { 0,0,0 };
     };
-    constexpr /*inline*/ static const SpaceLoc IdentitySpaceLoc = {};
+    constexpr /*inline*/ static const SpaceLoc IdentitySpaceLoc = { IdentityPose, {0,0,0}, {0,0,0}};
 
     inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
     {

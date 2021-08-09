@@ -1,5 +1,6 @@
 #pragma once
 
+#ifdef XR_USE_PLATFORM_WIN32
 #ifdef ENGINE_DLL_EXPORTS
     /*Enabled as "export" while compiling the dll project*/
     #define DLLEXPORT __declspec(dllexport)  
@@ -7,11 +8,33 @@
     /*Enabled as "import" in the Client side for using already created dll file*/
     #define DLLEXPORT __declspec(dllimport)  
 #endif
+#else
+#define DLLEXPORT
+#endif
+
+#ifdef __cplusplus
+#include <cstdint>
+using std::uint32_t;
+extern "C" {;
+#else
+#include <stdint.h>
+#endif
+
+struct SystemProperties
+{
+    char     systemName[256];
+    uint32_t recommendedEyeWidth;
+    uint32_t recommendedEyeHeight;
+};
 
 struct RustCtx
 {
-    void (*initConnections)();
+    void (*initConnections)(const SystemProperties*);
     void (*legacySend)(const unsigned char* buffer, unsigned int size);
+#ifdef XR_USE_PLATFORM_ANDROID
+    void* applicationVM;
+    void* applicationActivity;
+#endif
 };
 
 struct GuardianData {
@@ -36,11 +59,26 @@ struct GuardianData {
 //    bool extraLatencyMode;
 //};
 
-extern "C" DLLEXPORT void onTrackingNative(bool clientsidePrediction);
-//extern "C" void onHapticsFeedbackNative(long long startTime, float amplitude, float duration, float frequency, unsigned char hand);
-extern "C" DLLEXPORT GuardianData getGuardianData();
+//struct SystemProperties
+//{
+//    char systemName[256];
+//};
+//DLLEXPORT SystemProperties getSystemProperties();
 
-extern "C" DLLEXPORT void legacyReceive(const unsigned char* packet, unsigned int packetSize);
-//extern "C" void sendTimeSync();
+DLLEXPORT void onTrackingNative(bool clientsidePrediction);
+//void onHapticsFeedbackNative(long long startTime, float amplitude, float duration, float frequency, unsigned char hand);
+DLLEXPORT GuardianData getGuardianData();
 
-extern "C" DLLEXPORT void openxrMain(const RustCtx*);
+DLLEXPORT void legacyReceive(const unsigned char* packet, unsigned int packetSize);
+//void sendTimeSync();
+#ifdef XR_USE_PLATFORM_ANDROID
+DLLEXPORT void openxrInit(const RustCtx*);
+DLLEXPORT void openxrProcesFrame();
+DLLEXPORT bool isOpenXRSessionRunning();
+#else
+DLLEXPORT void openxrMain(const RustCtx*);
+#endif
+
+#ifdef __cplusplus
+}
+#endif

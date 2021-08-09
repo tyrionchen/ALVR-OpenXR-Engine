@@ -4,6 +4,7 @@
 
 #pragma once
 
+struct SystemProperties;
 struct RustCtx;
 struct TrackingInfo;
 struct HapticsFeedback;
@@ -39,6 +40,8 @@ struct IOpenXrProgram {
 
     // Create and submit a frame.
     virtual void RenderFrame() = 0;
+
+    virtual bool GetSystemProperties(SystemProperties& systemProps) const = 0;
 
     virtual bool GetTrackingInfo(TrackingInfo& info) const = 0;
 

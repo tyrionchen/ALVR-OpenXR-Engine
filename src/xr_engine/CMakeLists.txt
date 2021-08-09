@@ -28,8 +28,8 @@ if(ANDROID)
     add_library(xr_engine MODULE
         ${LOCAL_SOURCE}
         ${LOCAL_HEADERS}
-        ${VULKAN_SHADERS}
-        $<TARGET_OBJECTS:android_native_app_glue>)
+        ${VULKAN_SHADERS})
+        #$<TARGET_OBJECTS:android_native_app_glue>)
     target_link_libraries(xr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY})
 else()
     add_library(xr_engine SHARED
@@ -104,7 +104,7 @@ if(Vulkan_LIBRARY)
 endif()
 
 if(NOT ANDROID)
-    set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/deps)
+    set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/examples)
     install(TARGETS xr_engine
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_BINDIR})

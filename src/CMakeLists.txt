@@ -129,6 +129,7 @@ option(
     "Enable exception handling in the loader. Leave this on unless your standard library is built to not throw."
     ON
 )
+option(USE_OCULUS_MOBILE_LOADER "Links to the Oculus Mobile OpenXR SDK to use this loader (BUILD_LOADER will be ignored)" OFF)
 
 if(WIN32)
     set(OPENXR_DEBUG_POSTFIX d CACHE STRING "OpenXR loader debug postfix.")
@@ -451,8 +452,21 @@ if(ANDROID)
     find_library(ANDROID_LOG_LIBRARY NAMES log)
 endif()
 
-if(BUILD_LOADER)
-    add_subdirectory(loader)
+if (USE_OCULUS_MOBILE_LOADER)
+    message(STATUS "Using Oculus Mobile OpenXR Loader.")
+    set(OCULUS_OPENXR_MOBILE_SDK ${PROJECT_SOURCE_DIR}/src/external/oculus/OpenXR)
+    add_library(openxr_loader SHARED IMPORTED)
+    set_property(
+            TARGET
+            openxr_loader
+            PROPERTY
+            IMPORTED_LOCATION
+            ${OCULUS_OPENXR_MOBILE_SDK}/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libopenxr_loader.so
+    )
+else()
+    if(BUILD_LOADER)
+        add_subdirectory(loader)
+    endif()
 endif()
 
 if(BUILD_API_LAYERS)
