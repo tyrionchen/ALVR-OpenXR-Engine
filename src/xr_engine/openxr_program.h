@@ -4,6 +4,7 @@
 
 #pragma once
 
+struct StreamConfig;
 struct SystemProperties;
 struct RustCtx;
 struct TrackingInfo;
@@ -46,6 +47,8 @@ struct IOpenXrProgram {
     virtual bool GetTrackingInfo(TrackingInfo& info) const = 0;
 
     virtual void EnqueueHapticFeedback(const HapticsFeedback&) = 0;
+
+    virtual void SetStreamConfig(const StreamConfig& config) = 0;
 };
 
 struct Swapchain {

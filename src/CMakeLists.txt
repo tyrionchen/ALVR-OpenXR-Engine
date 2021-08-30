@@ -455,13 +455,19 @@ endif()
 if (USE_OCULUS_MOBILE_LOADER)
     message(STATUS "Using Oculus Mobile OpenXR Loader.")
     set(OCULUS_OPENXR_MOBILE_SDK ${PROJECT_SOURCE_DIR}/src/external/oculus/OpenXR)
+    string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE_LOWERED)
+    if (${BUILD_TYPE_LOWERED} MATCHES ".*debug.*")
+        set(BUILD_TYPE_DIR Debug)
+    else()
+        set(BUILD_TYPE_DIR Release)
+    endif()
     add_library(openxr_loader SHARED IMPORTED)
     set_property(
             TARGET
             openxr_loader
             PROPERTY
             IMPORTED_LOCATION
-            ${OCULUS_OPENXR_MOBILE_SDK}/Libs/Android/${ANDROID_ABI}/${CMAKE_BUILD_TYPE}/libopenxr_loader.so
+            ${OCULUS_OPENXR_MOBILE_SDK}/Libs/Android/${ANDROID_ABI}/${BUILD_TYPE_DIR}/libopenxr_loader.so
     )
 else()
     if(BUILD_LOADER)

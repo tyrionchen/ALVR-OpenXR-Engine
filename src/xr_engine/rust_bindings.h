@@ -13,18 +13,17 @@
 #endif
 
 #ifdef __cplusplus
-#include <cstdint>
-using std::uint32_t;
 extern "C" {;
-#else
-#include <stdint.h>
 #endif
 
 struct SystemProperties
 {
-    char     systemName[256];
-    uint32_t recommendedEyeWidth;
-    uint32_t recommendedEyeHeight;
+    char         systemName[256];
+    float        currentRefreshRate;
+    const float* refreshRates;
+    unsigned int refreshRatesCount;
+    unsigned int recommendedEyeWidth;
+    unsigned int recommendedEyeHeight;
 };
 
 struct RustCtx
@@ -47,29 +46,26 @@ struct GuardianData {
     unsigned int perimeterPointsCount;
 };
 
-//struct StreamConfig {
-//    unsigned int eyeWidth;
-//    unsigned int eyeHeight;
-//    float refreshRate;
-//    bool enableFoveation;
-//    float foveationStrength;
-//    float foveationShape;
-//    float foveationVerticalOffset;
-//    int trackingSpaceType;
-//    bool extraLatencyMode;
-//};
-
-//struct SystemProperties
-//{
-//    char systemName[256];
-//};
-//DLLEXPORT SystemProperties getSystemProperties();
+struct StreamConfig {
+    //unsigned int eyeWidth;
+    //unsigned int eyeHeight;
+    float refreshRate;
+    //bool enableFoveation;
+    //float foveationStrength;
+    //float foveationShape;
+    //float foveationVerticalOffset;
+    //int trackingSpaceType;
+    //bool extraLatencyMode;
+};
 
 DLLEXPORT void onTrackingNative(bool clientsidePrediction);
 //void onHapticsFeedbackNative(long long startTime, float amplitude, float duration, float frequency, unsigned char hand);
 DLLEXPORT GuardianData getGuardianData();
 
 DLLEXPORT void legacyReceive(const unsigned char* packet, unsigned int packetSize);
+
+DLLEXPORT void setStreamConfig(StreamConfig config);
+
 //void sendTimeSync();
 #ifdef XR_USE_PLATFORM_ANDROID
 DLLEXPORT void openxrInit(const RustCtx*);

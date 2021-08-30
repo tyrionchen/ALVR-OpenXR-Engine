@@ -253,8 +253,6 @@ void openxrInit(const RustCtx* rCtx) {
         ctx.initConnections(&rustSysProp);
         Log::Write(Log::Level::Info, Fmt("device name: %s", rustSysProp.systemName));
 
-        ctx.initConnections(&rustSysProp);
-        
         Log::Write(Log::Level::Info, "openxrInit finished successfully");
         //app->activity->vm->DetachCurrentThread();
     } catch (const std::exception& ex) {
@@ -369,7 +367,6 @@ int openxrMain(const RustCtx& ctx, int argc, char* argv[]) {
                         gLastTrackingInfo = newInfo;
                     }
 
-
                 } else {
                     // Throttle loop since xrWaitFrame won't be called.
                     std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -401,29 +398,16 @@ void openxrMain(const RustCtx* ctx)
     {
         "openxrMain",
         "-g",
-        "D3D11",
+        "OpenGL", //"Vulkan2",//"Vulkan2",//"D3D11",
         "-vc",
         "Stereo",
         "-s",
-        "Stage",
+        "Local",
         "-v"
     };
     openxrMain(*ctx, static_cast<int>(args.size()), args.data());
 }
 #endif
-
-//SystemProperties getSystemProperties()
-//{
-//    SystemProperties ret;
-//    ret.systemName[0] = '\0';
-//    if (const auto programPtr = program) {
-//        XrSystemProperties sysProps;
-//        if (programPtr->GetSystemProperties(sysProps)) {
-//            std::strncpy(ret.systemName, sysProps.systemName, sizeof(ret.systemName));
-//        }
-//    }
-//    return ret;
-//}
 
 GuardianData getGuardianData() { return {}; }
 
@@ -458,8 +442,8 @@ void onTrackingNative(bool /*clientsidePrediction*/)
 
 void legacyReceive(const unsigned char* packet, unsigned int packetSize)
 {
-    const auto rustCtx = gRustCtx;
-    if (rustCtx == nullptr)
+    const auto programPtr = program;
+    if (programPtr == nullptr)
         return;
 
     const std::uint32_t type = *reinterpret_cast<const uint32_t*>(packet);
@@ -467,7 +451,15 @@ void legacyReceive(const unsigned char* packet, unsigned int packetSize)
     {
         if (packetSize < sizeof(HapticsFeedback))
             return;  
-        program->EnqueueHapticFeedback(*reinterpret_cast<const HapticsFeedback*>(packet));
+        programPtr->EnqueueHapticFeedback(*reinterpret_cast<const HapticsFeedback*>(packet));
     }
 }
 
+void setStreamConfig(StreamConfig config)
+{
+    const auto programPtr = program;
+    if (programPtr == nullptr)
+        return;
+
+    programPtr->SetStreamConfig(config);
+}

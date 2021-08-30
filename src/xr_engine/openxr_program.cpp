@@ -18,6 +18,7 @@
 #include <cassert>
 #include <cstring>
 #include <tuple>
+#include <numeric>
 #include <unordered_map>
 #include <string_view>
 #include <chrono>
@@ -297,7 +298,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     using ExtensionMap = std::unordered_map<std::string_view, bool>;
     ExtensionMap m_availableSupportedExtMap = {
        { "XR_EXT_hand_tracking", false },
-       //{ "XR_FB_display_refresh_rate", false }
+       { "XR_FB_display_refresh_rate", false }
     };
 
     void LogLayersAndExtensions() {
@@ -978,6 +979,27 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrAttachSessionActionSets(m_session, &attachInfo));
     }
 
+    inline bool IsExtEnabled(const std::string_view& extName) const
+    {
+        auto ext_itr = m_availableSupportedExtMap.find(extName);
+        return ext_itr != m_availableSupportedExtMap.end() && ext_itr->second;
+    }
+
+    bool InitializeExtensions()
+    {
+        if (IsExtEnabled("XR_FB_display_refresh_rate"))
+        {
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrEnumerateDisplayRefreshRatesFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnEnumerateDisplayRefreshRatesFB)));
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrGetDisplayRefreshRateFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnGetDisplayRefreshRateFB)));
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrRequestDisplayRefreshRateFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnRequestDisplayRefreshRateFB)));
+        }
+        UpdateSupportedDisplayRefreshRates();
+        return InitializeHandTrackers();
+    }
+
     bool InitializeHandTrackers()
     {
         //if (m_instance != XR_NULL_HANDLE && m_systemId != XR_NULL_SYSTEM_ID)
@@ -1067,7 +1089,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
         }
 
-        InitializeHandTrackers();
+        InitializeExtensions();
     }
 
     void CreateSwapchains() override {
@@ -1155,6 +1177,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 swapchain.height = swapchainCreateInfo.height;
                 CHECK_XRCMD(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle));
 
+                Log::Write(Log::Level::Info, Fmt("Finished creating swapchain for view %d", i));
+
                 m_swapchains.push_back(swapchain);
 
                 uint32_t imageCount;
@@ -1165,6 +1189,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 CHECK_XRCMD(xrEnumerateSwapchainImages(swapchain.handle, imageCount, &imageCount, swapchainImages[0]));
 
                 m_swapchainImages.insert(std::make_pair(swapchain.handle, std::move(swapchainImages)));
+
+                Log::Write(Log::Level::Info, Fmt("Finished AllocateSwapchainImageStructs swapchain for view %d", i));
             }
         }
     }
@@ -1317,7 +1343,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     void PollHandTrackers()
     {
-        if (m_pfnLocateHandJointsEXT == nullptr)
+        if (m_pfnLocateHandJointsEXT == nullptr || m_lastDisplayTime == 0)
             return;
 
         std::array<XrMatrix4x4f, XR_HAND_JOINT_COUNT_EXT> oculusOrientedJointPoses;
@@ -1636,6 +1662,89 @@ struct OpenXrProgram final : IOpenXrProgram {
         return true;
     }
 
+    float EstimateDisplayRefreshRate()
+    {
+#if 0
+        if (m_session == XR_NULL_HANDLE)
+            return 60.0f;
+
+        using PeriodType = std::chrono::high_resolution_clock::period;
+        using DurationType = std::chrono::high_resolution_clock::duration;
+        using secondsf = std::chrono::duration<float, std::chrono::seconds::period>;
+
+        using namespace std::literals::chrono_literals;
+        constexpr const auto OneSecond = 1s;
+
+        constexpr const size_t SamplesPerSec = 30;
+
+        std::vector<size_t> frame_count_per_sec;
+        frame_count_per_sec.reserve(SamplesPerSec);
+
+        bool isStarted = false;
+        size_t frameIdx = 0;
+        auto last = std::chrono::high_resolution_clock::now();       
+        while (frame_count_per_sec.size() != SamplesPerSec) {
+            bool exitRenderLoop = false, requestRestart = false;
+            PollEvents(&exitRenderLoop, &requestRestart);
+            if (exitRenderLoop)
+                break;
+            if (!IsSessionRunning())
+                continue;
+            if (!isStarted)
+            {
+                last = std::chrono::high_resolution_clock::now();
+                isStarted = true;
+            }
+            XrFrameState frameState{ XR_TYPE_FRAME_STATE };
+            CHECK_XRCMD(xrWaitFrame(m_session, nullptr, &frameState));            
+            CHECK_XRCMD(xrBeginFrame(m_session, nullptr));
+            XrFrameEndInfo frameEndInfo{ XR_TYPE_FRAME_END_INFO };
+            frameEndInfo.displayTime = frameState.predictedDisplayTime;
+            frameEndInfo.environmentBlendMode = m_environmentBlendMode;
+            frameEndInfo.layerCount = 0;
+            frameEndInfo.layers = nullptr;
+            CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
+
+            if (!frameState.shouldRender)
+                continue;
+            
+            ++frameIdx;
+            auto curr = std::chrono::high_resolution_clock::now();
+            if ((curr - last) >= OneSecond)
+            {
+                Log::Write(Log::Level::Info, Fmt("Frame Count at %d = %d frames", frame_count_per_sec.size(), frameIdx));
+                frame_count_per_sec.push_back(frameIdx);
+                last = curr;
+                frameIdx = 0;              
+            }
+        }
+
+        const float dom = static_cast<float>(std::accumulate(frame_count_per_sec.begin(), frame_count_per_sec.end(), size_t(0)));
+        const float result = dom == 0 ? 60.0f : (dom / static_cast<float>(SamplesPerSec));
+        Log::Write(Log::Level::Info, Fmt("Estimated display refresh rate: %f Hz", result));
+        return result;
+#else
+        return 90.0f;
+#endif
+    }
+
+    void UpdateSupportedDisplayRefreshRates()
+    {
+        if (m_pfnEnumerateDisplayRefreshRatesFB)
+        {
+            std::uint32_t size = 0;
+            CHECK_XRCMD(m_pfnEnumerateDisplayRefreshRatesFB(m_session, 0, &size, nullptr));
+            m_displayRefreshRates.resize(size);
+            CHECK_XRCMD(m_pfnEnumerateDisplayRefreshRatesFB(m_session, size, &size, m_displayRefreshRates.data()));
+            return;
+        }
+        // If OpenXR runtime does not support XR_FB_display_refresh_rate extension
+        // and currently core spec has no method of query the supported refresh rates
+        // the only way to determine this is with a dumy loop
+        m_displayRefreshRates = { EstimateDisplayRefreshRate() };
+        assert(m_displayRefreshRates.size() > 0);
+    }
+
     virtual bool GetSystemProperties(SystemProperties& systemProps) const override
     {
         if (m_instance == XR_NULL_HANDLE)
@@ -1649,6 +1758,12 @@ struct OpenXrProgram final : IOpenXrProgram {
             systemProps.recommendedEyeWidth = configView.recommendedImageRectWidth;
             systemProps.recommendedEyeHeight = configView.recommendedImageRectHeight;
         }
+        assert(m_displayRefreshRates.size() > 0);
+        systemProps.refreshRates = m_displayRefreshRates.data();
+        systemProps.refreshRatesCount = static_cast<std::uint32_t>(m_displayRefreshRates.size());
+        systemProps.currentRefreshRate = m_displayRefreshRates.back();
+        if (m_pfnGetDisplayRefreshRateFB)
+            CHECK_XRCMD(m_pfnGetDisplayRefreshRateFB(m_session, &systemProps.currentRefreshRate));
         return true;
     }
 
@@ -1746,6 +1861,15 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_hapticsQueue.push(hapticFeedback);
     }
 
+    virtual void SetStreamConfig(const StreamConfig& config)
+    {
+        if (m_pfnRequestDisplayRefreshRateFB)
+        {
+            Log::Write(Log::Level::Info, Fmt("Setting Display Refresh Rate To %f Hz", config.refreshRate));
+            CHECK_XRCMD(m_pfnRequestDisplayRefreshRateFB(m_session, config.refreshRate));
+        }
+    }
+
    private:
     const std::shared_ptr<Options> m_options;
     std::shared_ptr<IPlatformPlugin> m_platformPlugin;
@@ -1773,13 +1897,21 @@ struct OpenXrProgram final : IOpenXrProgram {
     XrEventDataBuffer m_eventDataBuffer;
     InputState m_input;
 
+    // XR_EXT_hand_tracking fun pointers.
     PFN_xrCreateHandTrackerEXT m_pfnCreateHandTrackerEXT = nullptr;
     PFN_xrLocateHandJointsEXT  m_pfnLocateHandJointsEXT = nullptr;
+
+    // XR_FB_display_refresh_rate fun pointers.
+    PFN_xrEnumerateDisplayRefreshRatesFB m_pfnEnumerateDisplayRefreshRatesFB = nullptr;
+    PFN_xrGetDisplayRefreshRateFB m_pfnGetDisplayRefreshRateFB = nullptr;
+    PFN_xrRequestDisplayRefreshRateFB m_pfnRequestDisplayRefreshRateFB = nullptr;
 
     const RustCtx* m_rustCtx = nullptr;
     std::size_t m_frameIndex = 0;
     XrTime m_lastDisplayTime = 0;
 
+    std::vector<float> m_displayRefreshRates;
+    
     xrconcurrency::concurrent_queue<HapticsFeedback> m_hapticsQueue;
 };
 }  // namespace

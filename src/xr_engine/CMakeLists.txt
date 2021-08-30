@@ -88,7 +88,11 @@ endif()
 if(WIN32)
     if(MSVC)
         target_compile_definitions(xr_engine PRIVATE _CRT_SECURE_NO_WARNINGS)
-        target_compile_options(xr_engine PRIVATE /Zc:wchar_t /Zc:forScope /W4 /WX)
+        target_compile_options(xr_engine PRIVATE /Zc:wchar_t /Zc:forScope /W4 /WX /Zi)
+        target_compile_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/Zi>")
+        target_link_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/DEBUG>")
+        target_link_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/OPT:REF>")
+        target_link_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>")
     endif()
     target_link_libraries(xr_engine ole32)
     if(MSVC)
@@ -104,17 +108,19 @@ if(Vulkan_LIBRARY)
 endif()
 
 if(NOT ANDROID)
-    set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/examples)
+    #set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/examples)
     install(TARGETS xr_engine
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${CMAKE_INSTALL_BINDIR})
-        install(TARGETS xr_engine
-        RUNTIME DESTINATION ${ALVR_BIN_DIR}
-        ARCHIVE DESTINATION ${ALVR_BIN_DIR})
-    install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${ALVR_BIN_DIR})
-    if(NOT WIN32)
-        install(FILES xr_engine.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1/ COMPONENT ManPages)
+    if(WIN32)
+        install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
+    #    install(TARGETS xr_engine
+    #    RUNTIME DESTINATION ${ALVR_BIN_DIR}
+    #    ARCHIVE DESTINATION ${ALVR_BIN_DIR})
+    #install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${ALVR_BIN_DIR})
+    #if(NOT WIN32)
+    #    install(FILES xr_engine.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1/ COMPONENT ManPages)
+    #endif()
 endif()
 
