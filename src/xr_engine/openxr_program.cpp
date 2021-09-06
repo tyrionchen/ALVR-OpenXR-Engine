@@ -1914,18 +1914,18 @@ struct OpenXrProgram final : IOpenXrProgram {
             info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
             info.HeadPose_Pose_Position = ToTrackingVector3(hmdSpaceLoc.pose.position);
 
-            XrVector3f_Add(&v, &m_views[0].pose.position, &m_views[1].pose.position);
-            XrVector3f_Scale(&v, &v, 0.5f);
+            //XrVector3f_Add(&v, &m_views[0].pose.position, &m_views[1].pose.position);
+            //XrVector3f_Scale(&v, &v, 0.5f);
 
-            XrQuaternionf result;
-            XrQuaternionf_Lerp(&result, &m_views[0].pose.orientation, &m_views[1].pose.orientation, 0.5f);
+            //XrQuaternionf result;
+            //XrQuaternionf_Lerp(&result, &m_views[0].pose.orientation, &m_views[1].pose.orientation, 0.5f);
 
-            
-            Log::Write(Log::Level::Info, Fmt("HMD rot from view data: %f %f %f %f", result.x, result.y, result.z, result.w));
-            Log::Write(Log::Level::Info, Fmt("HMD rot from view space: %f %f %f %f", hmdSpaceLoc.pose.orientation.x, hmdSpaceLoc.pose.orientation.y, hmdSpaceLoc.pose.orientation.z, hmdSpaceLoc.pose.orientation.w));
+            //
+            //Log::Write(Log::Level::Info, Fmt("HMD rot from view data: %f %f %f %f", result.x, result.y, result.z, result.w));
+            //Log::Write(Log::Level::Info, Fmt("HMD rot from view space: %f %f %f %f", hmdSpaceLoc.pose.orientation.x, hmdSpaceLoc.pose.orientation.y, hmdSpaceLoc.pose.orientation.z, hmdSpaceLoc.pose.orientation.w));
 
-            Log::Write(Log::Level::Info, Fmt("HMD pos from view data: %f %f %f %f", v.x, v.y, v.z));
-            Log::Write(Log::Level::Info, Fmt("HMD pos from view space: %f %f %f %f", hmdSpaceLoc.pose.position.x, hmdSpaceLoc.pose.position.y, hmdSpaceLoc.pose.position.z));
+            //Log::Write(Log::Level::Info, Fmt("HMD pos from view data: %f %f %f %f", v.x, v.y, v.z));
+            //Log::Write(Log::Level::Info, Fmt("HMD pos from view space: %f %f %f %f", hmdSpaceLoc.pose.position.x, hmdSpaceLoc.pose.position.y, hmdSpaceLoc.pose.position.z));
 
         }
 
