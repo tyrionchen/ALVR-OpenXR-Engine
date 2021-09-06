@@ -39,7 +39,7 @@ namespace {
 using GraphicsPluginFactory = std::function<std::shared_ptr<IGraphicsPlugin>(const std::shared_ptr<Options>& options,
                                                                              std::shared_ptr<IPlatformPlugin> platformPlugin)>;
 
-std::map<std::string, GraphicsPluginFactory, IgnoreCaseStringLess> graphicsPluginMap = {
+const std::map<std::string, GraphicsPluginFactory, IgnoreCaseStringLess> graphicsPluginMap = {
 #ifdef XR_USE_GRAPHICS_API_OPENGL_ES
     {"OpenGLES",
      [](const std::shared_ptr<Options>& options, std::shared_ptr<IPlatformPlugin> platformPlugin) {

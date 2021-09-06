@@ -36,12 +36,12 @@ bool UpdateOptionsFromSystemProperties(Options& options) {
         options.GraphicsPlugin = value;
     }
 
-    // Check for required parameters.
-    if (options.GraphicsPlugin.empty()) {
-        Log::Write(Log::Level::Error, "GraphicsPlugin parameter is required");
-        ShowHelp();
-        return false;
-    }
+    // // Check for required parameters.
+    // if (options.GraphicsPlugin.empty()) {
+    //     Log::Write(Log::Level::Error, "GraphicsPlugin parameter is required");
+    //     ShowHelp();
+    //     return false;
+    // }
 
     return true;
 }
@@ -58,7 +58,7 @@ void ShowHelp() {
     Log::Write(Log::Level::Info, "Spaces:                   View, Local, Stage");
 }
 
-bool UpdateOptionsFromCommandLine(Options& options, int argc, char* argv[]) {
+bool UpdateOptionsFromCommandLine(Options& options, int argc, const char* argv[]) {
     int i = 1;  // Index 0 is the program name and is skipped.
 
     auto getNextArg = [&] {
@@ -91,16 +91,37 @@ bool UpdateOptionsFromCommandLine(Options& options, int argc, char* argv[]) {
         }
     }
 
-    // Check for required parameters.
-    if (options.GraphicsPlugin.empty()) {
-        Log::Write(Log::Level::Error, "GraphicsPlugin parameter is required");
-        ShowHelp();
-        return false;
-    }
+    // // Check for required parameters.
+    // if (options.GraphicsPlugin.empty()) {
+    //     Log::Write(Log::Level::Error, "GraphicsPlugin parameter is required");
+    //     ShowHelp();
+    //     return false;
+    // }
 
     return true;
 }
 #endif
+
+    constexpr inline auto graphics_api_str(const GraphicsCtxApi gcp)
+    {
+        switch (gcp)
+        {
+        case GraphicsCtxApi::Vulkan2:
+            return "Vulkan2";
+        case GraphicsCtxApi::Vulkan:
+            return "Vulkan";
+        case GraphicsCtxApi::D3D12:
+            return "D3D12";
+        case GraphicsCtxApi::D3D11:
+            return "D3D11";
+        case GraphicsCtxApi::OpenGLES:
+            return "OpenGLES";
+        case GraphicsCtxApi::OpenGL:
+            return "OpenGL";
+        default:
+            return "auto";
+        }
+    }
 }  // namespace
 
 std::shared_ptr<const RustCtx> gRustCtx{ nullptr };
@@ -206,6 +227,8 @@ void openxrInit(const RustCtx* rCtx) {
         if (!UpdateOptionsFromSystemProperties(*options)) {
             return;
         }
+        if (options->GraphicsPlugin.empty())
+            options->GraphicsPlugin = graphics_api_str(rCtx->graphicsApi);
 
         Log::SetLevel(Log::Level::Verbose);
         
@@ -217,17 +240,6 @@ void openxrInit(const RustCtx* rCtx) {
 
         //bool requestRestart = false;
         //bool exitRenderLoop = false;
-        
-        // Create platform-specific implementation.
-        std::shared_ptr<IPlatformPlugin> platformPlugin = CreatePlatformPlugin(options, data);
-        // Create graphics API implementation.
-        std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options,
-                                                                               platformPlugin);
-
-        // Initialize the OpenXR program.
-        /*std::shared_ptr<IOpenXrProgram>*/ program = CreateOpenXrProgram(options, platformPlugin,
-                                                                      graphicsPlugin);
-
         
         // Initialize the loader for this platform
         PFN_xrInitializeLoaderKHR initializeLoader = nullptr;
@@ -242,8 +254,18 @@ void openxrInit(const RustCtx* rCtx) {
             loaderInitInfoAndroid.applicationContext = ctx.applicationActivity;//app->activity->clazz;
             initializeLoader((const XrLoaderInitInfoBaseHeaderKHR *) &loaderInitInfoAndroid);
         }
+
+                // Create platform-specific implementation.
+        std::shared_ptr<IPlatformPlugin> platformPlugin = CreatePlatformPlugin(options, data);
+        // // // Create graphics API implementation.
+        //  std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options,
+        //                                                                         platformPlugin);
+
+        // Initialize the OpenXR program.
+        /*std::shared_ptr<IOpenXrProgram>*/ program = CreateOpenXrProgram(options, platformPlugin);//,
+                                                                      //graphicsPlugin);
         
-        program->CreateInstance(ctx);
+        program->CreateInstance();
         program->InitializeSystem();
         program->InitializeSession();
         program->CreateSwapchains();
@@ -306,7 +328,7 @@ bool isOpenXRSessionRunning()
 
 #else
 
-int openxrMain(const RustCtx& ctx, int argc, char* argv[]) {
+int openxrMain(const RustCtx& ctx, int argc, const char* argv[]) {
     try {
         gRustCtx = std::make_shared<RustCtx>(ctx);
 
@@ -335,12 +357,12 @@ int openxrMain(const RustCtx& ctx, int argc, char* argv[]) {
             std::shared_ptr<IPlatformPlugin> platformPlugin = CreatePlatformPlugin(options, data);
 
             // Create graphics API implementation.
-            std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options, platformPlugin);
+            //std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options, platformPlugin);
 
             // Initialize the OpenXR program.
-            /*std::shared_ptr<IOpenXrProgram>*/ program = CreateOpenXrProgram(options, platformPlugin, graphicsPlugin);
+            /*std::shared_ptr<IOpenXrProgram>*/ program = CreateOpenXrProgram(options, platformPlugin);//, graphicsPlugin);
 
-            program->CreateInstance(ctx);
+            program->CreateInstance();
             program->InitializeSystem();
             program->InitializeSession();
             program->CreateSwapchains();
@@ -394,15 +416,12 @@ void openxrMain(const RustCtx* ctx)
         Log::Write(Log::Level::Error, "Rust context has not been setup!");
         return;
     }
-    std::array</*const*/ char*, 8> args
+    std::array<const char*, 8> args
     {
         "openxrMain",
-        "-g",
-        "OpenGL", //"Vulkan2",//"Vulkan2",//"D3D11",
-        "-vc",
-        "Stereo",
-        "-s",
-        "Local",
+        "-g", graphics_api_str(ctx->graphicsApi),  //"D3D11", //"Vulkan2",//"Vulkan2",//"D3D11",
+        "-vc", "Stereo",
+        "-s", "Stage",
         "-v"
     };
     openxrMain(*ctx, static_cast<int>(args.size()), args.data());

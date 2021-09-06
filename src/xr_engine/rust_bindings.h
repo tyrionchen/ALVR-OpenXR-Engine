@@ -16,6 +16,18 @@
 extern "C" {;
 #endif
 
+enum GraphicsCtxApi
+{
+    Auto,
+    Vulkan2,
+    Vulkan,
+    D3D12,
+    D3D11,
+    OpenGLES,
+    OpenGL,
+    ApiCount = OpenGL
+};
+
 struct SystemProperties
 {
     char         systemName[256];
@@ -30,6 +42,8 @@ struct RustCtx
 {
     void (*initConnections)(const SystemProperties*);
     void (*legacySend)(const unsigned char* buffer, unsigned int size);
+
+    GraphicsCtxApi graphicsApi;
 #ifdef XR_USE_PLATFORM_ANDROID
     void* applicationVM;
     void* applicationActivity;

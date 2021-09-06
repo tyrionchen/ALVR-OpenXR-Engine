@@ -21,6 +21,7 @@
 #include <numeric>
 #include <unordered_map>
 #include <string_view>
+#include <string>
 #include <chrono>
 
 #include "concurrent_queue.h"
@@ -264,7 +265,43 @@ constexpr inline XrHandJointEXT ToXRHandJointType(const ALVR_HAND h)
 struct OpenXrProgram final : IOpenXrProgram {
     OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin,
                   const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin)
-        : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin(graphicsPlugin) {}
+        : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin(graphicsPlugin)
+    {
+        LogLayersAndExtensions();
+    }
+
+    OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin)
+    : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin { nullptr }
+    {
+        LogLayersAndExtensions();
+        auto& graphicsApi = options->GraphicsPlugin;
+        if (graphicsApi.empty() || graphicsApi == "auto")
+        {
+            Log::Write(Log::Level::Info, "Running auto graphics api selection.");
+            constexpr const auto to_graphics_api_str = [](const GraphicsCtxApi gapi) -> std::tuple<std::string_view, std::string_view> {
+                using namespace std::string_view_literals;
+                switch (gapi)
+                {
+                case GraphicsCtxApi::Vulkan2: return std::make_tuple("XR_KHR_vulkan_enable2"sv, "Vulkan2"sv);
+                case GraphicsCtxApi::Vulkan: return std::make_tuple("XR_KHR_vulkan_enable"sv, "Vulkan"sv);
+                case GraphicsCtxApi::D3D12: return std::make_tuple("XR_KHR_D3D12_enable"sv, "D3D12"sv);
+                case GraphicsCtxApi::D3D11: return std::make_tuple("XR_KHR_D3D11_enable"sv, "D3D11"sv);
+                case GraphicsCtxApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
+                default: return std::make_tuple("XR_KHR_opengl_enable"sv, "OpenGL"sv);
+                }
+            };
+            for (size_t apiIndex = GraphicsCtxApi::Vulkan2; apiIndex < size_t(GraphicsCtxApi::ApiCount); ++apiIndex) {
+                const auto& [ext_name, gapi] = to_graphics_api_str(static_cast<GraphicsCtxApi>(apiIndex));
+                auto itr = m_supportedGraphicsContexts.find(ext_name);
+                if (itr != m_supportedGraphicsContexts.end() && itr->second) {
+                    graphicsApi = gapi;
+                    break;
+                }
+            }
+        }
+        m_graphicsPlugin = CreateGraphicsPlugin(options, platformPlugin);
+        Log::Write(Log::Level::Info, Fmt("Selected Graphics API: %s", graphicsApi.c_str()));
+    }
 
     ~OpenXrProgram() override {
         if (m_input.actionSet != XR_NULL_HANDLE) {
@@ -280,6 +317,10 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         for (XrSpace visualizedSpace : m_visualizedSpaces) {
             xrDestroySpace(visualizedSpace);
+        }
+
+        if (m_viewSpace != XR_NULL_HANDLE) {
+            xrDestroySpace(m_viewSpace);
         }
 
         if (m_appSpace != XR_NULL_HANDLE) {
@@ -300,6 +341,14 @@ struct OpenXrProgram final : IOpenXrProgram {
        { "XR_EXT_hand_tracking", false },
        { "XR_FB_display_refresh_rate", false }
     };
+    ExtensionMap m_supportedGraphicsContexts = {
+        { "XR_KHR_vulkan_enable2",   false },
+        { "XR_KHR_vulkan_enable",    false },
+        { "XR_KHR_D3D12_enable",     false },
+        { "XR_KHR_D3D11_enable",     false },
+        { "XR_KHR_opengl_enable",    false },
+        { "XR_KHR_opengl_es_enable", false },
+    };
 
     void LogLayersAndExtensions() {
         // Write out extension properties for a given layer.
@@ -315,13 +364,19 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, (uint32_t)extensions.size(), &instanceExtensionCount,
                                                                extensions.data()));
 
+            constexpr const auto SetExtensionMap = [](auto& extMap, const std::string_view extName)
+            {
+                const auto itr = extMap.find(extName);
+                if (itr == extMap.end())
+                    return;
+                itr->second = true;
+            };
             const std::string indentStr(indent, ' ');
             Log::Write(Log::Level::Verbose, Fmt("%sAvailable Extensions: (%d)", indentStr.c_str(), instanceExtensionCount));
             for (const XrExtensionProperties& extension : extensions) {
-                //std::string_view extName = extension.extensionName;
-                const auto itr = m_availableSupportedExtMap.find(extension.extensionName);
-                if (itr != m_availableSupportedExtMap.end())
-                    itr->second = true;
+                
+                SetExtensionMap(m_availableSupportedExtMap, extension.extensionName);
+                SetExtensionMap(m_supportedGraphicsContexts, extension.extensionName);
                 Log::Write(Log::Level::Verbose, Fmt("%s  Name=%s SpecVersion=%d", indentStr.c_str(), extension.extensionName,
                                                     extension.extensionVersion));
             }
@@ -393,10 +448,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
     }
 
-    void CreateInstance(const RustCtx& ctx) override {
-        this->m_rustCtx = &ctx;
-
-        LogLayersAndExtensions();
+    void CreateInstance() override {        
+        //LogLayersAndExtensions();
 
         CreateInstanceInternal();
 
@@ -1060,6 +1113,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             XrResult res = xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &space);
             if (XR_SUCCEEDED(res)) {
                 m_visualizedSpaces.push_back(space);
+                Log::Write(Log::Level::Info, Fmt("visualized-space %s added", visualizedSpace.c_str()));
             } else {
                 Log::Write(Log::Level::Warning,
                            Fmt("Failed to create reference space %s with error %d", visualizedSpace.c_str(), res));
@@ -1087,6 +1141,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         {
             XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(m_options->AppSpace);
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
+
+            referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo("View");
+            CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_viewSpace));
         }
 
         InitializeExtensions();
@@ -1177,8 +1234,6 @@ struct OpenXrProgram final : IOpenXrProgram {
                 swapchain.height = swapchainCreateInfo.height;
                 CHECK_XRCMD(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle));
 
-                Log::Write(Log::Level::Info, Fmt("Finished creating swapchain for view %d", i));
-
                 m_swapchains.push_back(swapchain);
 
                 uint32_t imageCount;
@@ -1189,8 +1244,6 @@ struct OpenXrProgram final : IOpenXrProgram {
                 CHECK_XRCMD(xrEnumerateSwapchainImages(swapchain.handle, imageCount, &imageCount, swapchainImages[0]));
 
                 m_swapchainImages.insert(std::make_pair(swapchain.handle, std::move(swapchainImages)));
-
-                Log::Write(Log::Level::Info, Fmt("Finished AllocateSwapchainImageStructs swapchain for view %d", i));
             }
         }
     }
@@ -1775,11 +1828,11 @@ struct OpenXrProgram final : IOpenXrProgram {
     };
     constexpr /*inline*/ static const SpaceLoc IdentitySpaceLoc = { IdentityPose, {0,0,0}, {0,0,0}};
 
-    inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
+    inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const XrSpace& baseSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
     {
         XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
         XrSpaceLocation spaceLocation{ XR_TYPE_SPACE_LOCATION, &velocity };
-        const auto res = xrLocateSpace(targetSpace, m_appSpace, m_lastDisplayTime, &spaceLocation);
+        const auto res = xrLocateSpace(targetSpace, baseSpace, m_lastDisplayTime, &spaceLocation);
         CHECK_XRRESULT(res, "xrLocateSpace");
         
         SpaceLoc result = initLoc;
@@ -1800,6 +1853,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             result.angularVelocity = velocity.angularVelocity;
 
         return result;
+    }
+
+    inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
+    {
+        return GetSpaceLocation(targetSpace, m_appSpace, initLoc);
     }
 
     void GetControllerInfo(TrackingInfo& info, const double /*displayTime*/) const
@@ -1829,8 +1887,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         info.clientTime = GetTimestampUs();
         info.predictedDisplayTime = static_cast<double>(m_lastDisplayTime) * 1e-9;
         info.FrameIndex = m_frameIndex;
-
-        info.ipd = 63; //getIPD();
         info.battery = 100;// g_ctx.batteryLevel;
 
         if (m_views.size() >= 2)
@@ -1846,10 +1902,31 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             info.eyeFov[0] = ToEyeFov(m_views[0].fov);
             info.eyeFov[1] = ToEyeFov(m_views[1].fov);
+                        
+            XrVector3f v;
+            XrVector3f_Sub(&v, &m_views[1].pose.position, &m_views[0].pose.position);
+            float ipd = XrVector3f_Length(&v);
+            if (std::fabs(ipd) < 0.00001f)
+                ipd = 0.063f;
+            info.ipd = ipd * 1000.0f;
 
-            const auto& hmdPose = m_views[0].pose;
-            info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdPose.orientation);
-            info.HeadPose_Pose_Position = ToTrackingVector3(hmdPose.position);
+            const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace);
+            info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
+            info.HeadPose_Pose_Position = ToTrackingVector3(hmdSpaceLoc.pose.position);
+
+            XrVector3f_Add(&v, &m_views[0].pose.position, &m_views[1].pose.position);
+            XrVector3f_Scale(&v, &v, 0.5f);
+
+            XrQuaternionf result;
+            XrQuaternionf_Lerp(&result, &m_views[0].pose.orientation, &m_views[1].pose.orientation, 0.5f);
+
+            
+            Log::Write(Log::Level::Info, Fmt("HMD rot from view data: %f %f %f %f", result.x, result.y, result.z, result.w));
+            Log::Write(Log::Level::Info, Fmt("HMD rot from view space: %f %f %f %f", hmdSpaceLoc.pose.orientation.x, hmdSpaceLoc.pose.orientation.y, hmdSpaceLoc.pose.orientation.z, hmdSpaceLoc.pose.orientation.w));
+
+            Log::Write(Log::Level::Info, Fmt("HMD pos from view data: %f %f %f %f", v.x, v.y, v.z));
+            Log::Write(Log::Level::Info, Fmt("HMD pos from view space: %f %f %f %f", hmdSpaceLoc.pose.position.x, hmdSpaceLoc.pose.position.y, hmdSpaceLoc.pose.position.z));
+
         }
 
         GetControllerInfo(info, 0);// clientsidePrediction ? frame->displayTime : 0.);
@@ -1877,6 +1954,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     XrInstance m_instance{XR_NULL_HANDLE};
     XrSession m_session{XR_NULL_HANDLE};
     XrSpace m_appSpace{XR_NULL_HANDLE};
+    XrSpace m_viewSpace{ XR_NULL_HANDLE };
     XrFormFactor m_formFactor{XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
     XrViewConfigurationType m_viewConfigType{XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
     XrEnvironmentBlendMode m_environmentBlendMode{XR_ENVIRONMENT_BLEND_MODE_OPAQUE};
@@ -1906,7 +1984,6 @@ struct OpenXrProgram final : IOpenXrProgram {
     PFN_xrGetDisplayRefreshRateFB m_pfnGetDisplayRefreshRateFB = nullptr;
     PFN_xrRequestDisplayRefreshRateFB m_pfnRequestDisplayRefreshRateFB = nullptr;
 
-    const RustCtx* m_rustCtx = nullptr;
     std::size_t m_frameIndex = 0;
     XrTime m_lastDisplayTime = 0;
 
@@ -1920,4 +1997,9 @@ std::shared_ptr<IOpenXrProgram> CreateOpenXrProgram(const std::shared_ptr<Option
                                                     const std::shared_ptr<IPlatformPlugin>& platformPlugin,
                                                     const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin) {
     return std::make_shared<OpenXrProgram>(options, platformPlugin, graphicsPlugin);
+}
+
+std::shared_ptr<IOpenXrProgram> CreateOpenXrProgram(const std::shared_ptr<Options>& options,
+                                                    const std::shared_ptr<IPlatformPlugin>& platformPlugin) {
+    return std::make_shared<OpenXrProgram>(options, platformPlugin);
 }

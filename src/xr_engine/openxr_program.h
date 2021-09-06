@@ -4,9 +4,10 @@
 
 #pragma once
 
+#include <cstdint>
+
 struct StreamConfig;
 struct SystemProperties;
-struct RustCtx;
 struct TrackingInfo;
 struct HapticsFeedback;
 
@@ -14,7 +15,7 @@ struct IOpenXrProgram {
     virtual ~IOpenXrProgram() = default;
 
     // Create an Instance and other basic instance-level initialization.
-    virtual void CreateInstance(const RustCtx& ctx) = 0;
+    virtual void CreateInstance() = 0;
 
     // Select a System for the view configuration specified in the Options and initialize the graphics device for the selected
     // system.
@@ -60,3 +61,6 @@ struct Swapchain {
 std::shared_ptr<IOpenXrProgram> CreateOpenXrProgram(const std::shared_ptr<Options>& options,
                                                     const std::shared_ptr<IPlatformPlugin>& platformPlugin,
                                                     const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin);
+
+std::shared_ptr<IOpenXrProgram> CreateOpenXrProgram(const std::shared_ptr<Options>& options,
+                                                    const std::shared_ptr<IPlatformPlugin>& platformPlugin);
