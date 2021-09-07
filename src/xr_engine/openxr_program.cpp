@@ -150,7 +150,21 @@ constexpr bool IsPoseTracked(const XrHandJointLocationEXT& jointLocation) {
 }  // namespace Pose
 }  // namespace Math
 
-inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::string& referenceSpaceTypeStr) {
+constexpr inline auto ToTrackingSpaceName(const TrackingSpace ts)
+{
+    if (ts == TrackingSpace::LocalRefSpace)
+        return "Local";
+    return "Stage";
+}
+
+/*constexpr*/ inline TrackingSpace ToTrackingSpace(const std::string_view& tsname)
+{
+    if (EqualsIgnoreCase(tsname, "Local"))
+        return TrackingSpace::LocalRefSpace;
+    return TrackingSpace::StageRefSpace;
+}
+
+inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::string_view& referenceSpaceTypeStr) {
     XrReferenceSpaceCreateInfo referenceSpaceCreateInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     referenceSpaceCreateInfo.poseInReferenceSpace = Math::Pose::Identity();
     if (EqualsIgnoreCase(referenceSpaceTypeStr, "View")) {
@@ -176,9 +190,13 @@ inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::strin
         referenceSpaceCreateInfo.poseInReferenceSpace = Math::Pose::RotateCCWAboutYAxis(-3.14f / 3.f, {2.f, 0.5f, -2.f});
         referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
     } else {
-        throw std::invalid_argument(Fmt("Unknown reference space type '%s'", referenceSpaceTypeStr.c_str()));
+        throw std::invalid_argument(Fmt("Unknown reference space type '%s'", referenceSpaceTypeStr.data()));
     }
     return referenceSpaceCreateInfo;
+}
+
+inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const TrackingSpace ts) {
+    return GetXrReferenceSpaceCreateInfo(ToTrackingSpaceName(ts));
 }
 
 inline std::uint64_t GetTimestampUs()
@@ -303,7 +321,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         Log::Write(Log::Level::Info, Fmt("Selected Graphics API: %s", graphicsApi.c_str()));
     }
 
-    ~OpenXrProgram() override {
+    virtual ~OpenXrProgram() override {
         if (m_input.actionSet != XR_NULL_HANDLE) {
             for (auto hand : {Side::LEFT, Side::RIGHT}) {
                 xrDestroySpace(m_input.handSpace[hand]);
@@ -1141,6 +1159,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         {
             XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(m_options->AppSpace);
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
+            m_streamConfig.trackingSpaceType = ToTrackingSpace(m_options->AppSpace);
 
             referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo("View");
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_viewSpace));
@@ -1272,9 +1291,17 @@ struct OpenXrProgram final : IOpenXrProgram {
     void PollEvents(bool* exitRenderLoop, bool* requestRestart) override {
         *exitRenderLoop = *requestRestart = false;
 
+        PollStreamConfigEvents();
+
         // Process all pending messages.
         while (const XrEventDataBaseHeader* event = TryReadNextEvent()) {
             switch (event->type) {
+                case XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB: {
+                    const auto& refreshRateChangedEvent = *reinterpret_cast<const XrEventDataDisplayRefreshRateChangedFB*>(event);
+                    Log::Write(Log::Level::Info, Fmt("display refresh rate has changed from %f Hz to %f Hz", refreshRateChangedEvent.fromDisplayRefreshRate, refreshRateChangedEvent.toDisplayRefreshRate));
+                    m_streamConfig.refreshRate = refreshRateChangedEvent.toDisplayRefreshRate;
+                    break;
+                }
                 case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
                     const auto& instanceLossPending = *reinterpret_cast<const XrEventDataInstanceLossPending*>(event);
                     Log::Write(Log::Level::Warning, Fmt("XrEventDataInstanceLossPending by %lld", instanceLossPending.lossTime));
@@ -1783,8 +1810,11 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     void UpdateSupportedDisplayRefreshRates()
     {
-        if (m_pfnEnumerateDisplayRefreshRatesFB)
-        {
+        if (m_pfnGetDisplayRefreshRateFB) {
+            CHECK_XRCMD(m_pfnGetDisplayRefreshRateFB(m_session, &m_streamConfig.refreshRate));
+        }
+
+        if (m_pfnEnumerateDisplayRefreshRatesFB) {
             std::uint32_t size = 0;
             CHECK_XRCMD(m_pfnEnumerateDisplayRefreshRatesFB(m_session, 0, &size, nullptr));
             m_displayRefreshRates.resize(size);
@@ -1938,13 +1968,51 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_hapticsQueue.push(hapticFeedback);
     }
 
-    virtual void SetStreamConfig(const StreamConfig& config)
+    virtual inline void SetStreamConfig(const StreamConfig& config) override
     {
-        if (m_pfnRequestDisplayRefreshRateFB)
-        {
-            Log::Write(Log::Level::Info, Fmt("Setting Display Refresh Rate To %f Hz", config.refreshRate));
-            CHECK_XRCMD(m_pfnRequestDisplayRefreshRateFB(m_session, config.refreshRate));
+        m_streamConfigQueue.push(config);
+    }
+
+    void PollStreamConfigEvents()
+    {
+        StreamConfig newConfig;
+        if (!m_streamConfigQueue.try_pop(newConfig))
+            return;
+
+        if (newConfig.trackingSpaceType != m_streamConfig.trackingSpaceType) {
+            if (m_appSpace != XR_NULL_HANDLE) {
+                xrDestroySpace(m_appSpace);
+                m_appSpace = XR_NULL_HANDLE;
+            }
+            const auto oldTrackingSpaceName = ToTrackingSpaceName(m_streamConfig.trackingSpaceType);
+            const auto newTrackingSpaceName = ToTrackingSpaceName(newConfig.trackingSpaceType);
+            Log::Write(Log::Level::Info, Fmt("Changing tracking space from %s to %s", oldTrackingSpaceName, newTrackingSpaceName));
+            XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(newTrackingSpaceName);
+            CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
+
+            m_streamConfig.trackingSpaceType = newConfig.trackingSpaceType;
         }
+
+        if (newConfig.refreshRate != m_streamConfig.refreshRate) {
+            [&]() {
+                if (m_pfnRequestDisplayRefreshRateFB == nullptr) {
+                    Log::Write(Log::Level::Warning, "This OpenXR runtime does not support setting the display refresh rate.");
+                    return;
+                }
+
+                const auto itr = std::find(m_displayRefreshRates.begin(), m_displayRefreshRates.end(), newConfig.refreshRate);
+                if (itr == m_displayRefreshRates.end()) {
+                    Log::Write(Log::Level::Warning, Fmt("Selected new refresh rate %f Hz is not supported, no change has been made.", newConfig.refreshRate));
+                    return;
+                }
+
+                Log::Write(Log::Level::Info, Fmt("Setting display refresh rate from %f Hz to %f Hz.", m_streamConfig.refreshRate, newConfig.refreshRate));
+                CHECK_XRCMD(m_pfnRequestDisplayRefreshRateFB(m_session, newConfig.refreshRate));
+                m_streamConfig.refreshRate = newConfig.refreshRate;
+            }();
+        }
+
+        //m_streamConfig = newConfig;
     }
 
    private:
@@ -1988,8 +2056,11 @@ struct OpenXrProgram final : IOpenXrProgram {
     XrTime m_lastDisplayTime = 0;
 
     std::vector<float> m_displayRefreshRates;
+
+    StreamConfig m_streamConfig { 90.0, TrackingSpace::LocalRefSpace };
     
     xrconcurrency::concurrent_queue<HapticsFeedback> m_hapticsQueue;
+    xrconcurrency::concurrent_queue<StreamConfig> m_streamConfigQueue;
 };
 }  // namespace
 
