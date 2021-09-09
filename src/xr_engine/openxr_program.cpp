@@ -1539,6 +1539,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             // at least with WMR's current OpenXR runtime.
             // if (m_input.handActive[hand] == XR_TRUE) 
                 controllerInfo.flags |= enableControllerMask;
+            controllerInfo.batteryPercentRemaining = 100; // OpenXR has no method of obtaining controller/HMD battery life.
 
             for (const auto& [buttonType, v] : m_input.boolActionMap)
             {
@@ -1918,6 +1919,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         info.predictedDisplayTime = static_cast<double>(m_lastDisplayTime) * 1e-9;
         info.FrameIndex = m_frameIndex;
         info.battery = 100;// g_ctx.batteryLevel;
+        info.plugged = true;
 
         if (m_views.size() >= 2)
         {
