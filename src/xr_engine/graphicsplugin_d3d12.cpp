@@ -510,42 +510,44 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
         cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
 
         // Set cube primitive data.
-        const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {
-            {m_cubeVertexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeVertices), sizeof(Geometry::Vertex)}};
-        cmdList->IASetVertexBuffers(0, (UINT)ArraySize(vertexBufferView), vertexBufferView);
+        if (cubes.size() > 0) {
+            const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {
+                {m_cubeVertexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeVertices), sizeof(Geometry::Vertex)} };
+            cmdList->IASetVertexBuffers(0, (UINT)ArraySize(vertexBufferView), vertexBufferView);
 
-        D3D12_INDEX_BUFFER_VIEW indexBufferView{m_cubeIndexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeIndices),
-                                                DXGI_FORMAT_R16_UINT};
-        cmdList->IASetIndexBuffer(&indexBufferView);
+            D3D12_INDEX_BUFFER_VIEW indexBufferView{ m_cubeIndexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeIndices),
+                                                    DXGI_FORMAT_R16_UINT };
+            cmdList->IASetIndexBuffer(&indexBufferView);
 
-        cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        constexpr uint32_t cubeCBufferSize = AlignTo<D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT>(sizeof(ModelConstantBuffer));
-        swapchainContext.RequestModelCBuffer(static_cast<uint32_t>(cubeCBufferSize * cubes.size()));
-        ID3D12Resource* modelCBuffer = swapchainContext.GetModelCBuffer();
+            constexpr uint32_t cubeCBufferSize = AlignTo<D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT>(sizeof(ModelConstantBuffer));
+            swapchainContext.RequestModelCBuffer(static_cast<uint32_t>(cubeCBufferSize * cubes.size()));
+            ID3D12Resource* modelCBuffer = swapchainContext.GetModelCBuffer();
 
-        // Render each cube
-        uint32_t offset = 0;
-        for (const Cube& cube : cubes) {
-            // Compute and update the model transform.
-            ModelConstantBuffer model;
-            XMStoreFloat4x4(&model.Model,
-                            XMMatrixTranspose(XMMatrixScaling(cube.Scale.x, cube.Scale.y, cube.Scale.z) * LoadXrPose(cube.Pose)));
-            {
-                uint8_t* data;
-                const D3D12_RANGE readRange{0, 0};
-                CHECK_HRCMD(modelCBuffer->Map(0, &readRange, reinterpret_cast<void**>(&data)));
-                memcpy(data + offset, &model, sizeof(model));
-                const D3D12_RANGE writeRange{offset, offset + cubeCBufferSize};
-                modelCBuffer->Unmap(0, &writeRange);
+            // Render each cube
+            uint32_t offset = 0;
+            for (const Cube& cube : cubes) {
+                // Compute and update the model transform.
+                ModelConstantBuffer model;
+                XMStoreFloat4x4(&model.Model,
+                    XMMatrixTranspose(XMMatrixScaling(cube.Scale.x, cube.Scale.y, cube.Scale.z) * LoadXrPose(cube.Pose)));
+                {
+                    uint8_t* data;
+                    const D3D12_RANGE readRange{ 0, 0 };
+                    CHECK_HRCMD(modelCBuffer->Map(0, &readRange, reinterpret_cast<void**>(&data)));
+                    memcpy(data + offset, &model, sizeof(model));
+                    const D3D12_RANGE writeRange{ offset, offset + cubeCBufferSize };
+                    modelCBuffer->Unmap(0, &writeRange);
+                }
+
+                cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress() + offset);
+
+                // Draw the cube.
+                cmdList->DrawIndexedInstanced((UINT)ArraySize(Geometry::c_cubeIndices), 1, 0, 0, 0);
+
+                offset += cubeCBufferSize;
             }
-
-            cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress() + offset);
-
-            // Draw the cube.
-            cmdList->DrawIndexedInstanced((UINT)ArraySize(Geometry::c_cubeIndices), 1, 0, 0, 0);
-
-            offset += cubeCBufferSize;
         }
 
         CHECK_HRCMD(cmdList->Close());

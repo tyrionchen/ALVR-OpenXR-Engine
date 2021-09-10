@@ -1122,8 +1122,9 @@ struct OpenXrProgram final : IOpenXrProgram {
     void CreateVisualizedSpaces() {
         CHECK(m_session != XR_NULL_HANDLE);
 
-        std::string visualizedSpaces[] = {"ViewFront",        "Local", "Stage", "StageLeft", "StageRight", "StageLeftRotated",
-                                          "StageRightRotated"};
+#ifdef XR_ENGINE_ENABLE_VIZ_SPACES
+        constexpr const std::string_view visualizedSpaces[] = { "ViewFront",        "Local", "Stage", "StageLeft", "StageRight", "StageLeftRotated",
+                                          "StageRightRotated" };
 
         for (const auto& visualizedSpace : visualizedSpaces) {
             XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(visualizedSpace);
@@ -1131,12 +1132,13 @@ struct OpenXrProgram final : IOpenXrProgram {
             XrResult res = xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &space);
             if (XR_SUCCEEDED(res)) {
                 m_visualizedSpaces.push_back(space);
-                Log::Write(Log::Level::Info, Fmt("visualized-space %s added", visualizedSpace.c_str()));
+                Log::Write(Log::Level::Info, Fmt("visualized-space %s added", visualizedSpace.data()));
             } else {
                 Log::Write(Log::Level::Warning,
-                           Fmt("Failed to create reference space %s with error %d", visualizedSpace.c_str(), res));
+                           Fmt("Failed to create reference space %s with error %d", visualizedSpace.data(), res));
             }
         }
+#endif
     }
 
     void InitializeSession() override {
@@ -1671,7 +1673,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         // For each locatable space that we want to visualize, render a 25cm cube.
         std::vector<Cube> cubes;
-
+#ifdef XR_ENGINE_ENABLE_VIZ_SPACES
         for (XrSpace visualizedSpace : m_visualizedSpaces) {
             XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
             res = xrLocateSpace(visualizedSpace, m_appSpace, predictedDisplayTime, &spaceLocation);
@@ -1685,6 +1687,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 Log::Write(Log::Level::Verbose, Fmt("Unable to locate a visualized reference space in app space: %d", res));
             }
         }
+#endif
 
         // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
         // true when the application has focus.
@@ -1937,8 +1940,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                         
             XrVector3f v;
             XrVector3f_Sub(&v, &m_views[1].pose.position, &m_views[0].pose.position);
-            float ipd = XrVector3f_Length(&v);
-            if (std::fabs(ipd) < 0.00001f)
+            float ipd = std::fabs(XrVector3f_Length(&v));
+            if (ipd < 0.00001f)
                 ipd = 0.063f;
             info.ipd = ipd * 1000.0f;
 
