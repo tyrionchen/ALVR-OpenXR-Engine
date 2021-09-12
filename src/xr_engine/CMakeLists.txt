@@ -49,7 +49,7 @@ add_dependencies(xr_engine
     run_xr_engine_glsl_compiles
 )
 
-set(ALVR_ROOT_DIR ${PROJECT_SOURCE_DIR}/../../../.. CACHE PATH "Root directory of ALVR source")
+set(ALVR_ROOT_DIR ${PROJECT_SOURCE_DIR}/../../../../.. CACHE PATH "Root directory of ALVR source")
 set(ALVR_COMMON_DIR ${ALVR_ROOT_DIR}/alvr/client/android/ALVR-common)
 file(GLOB_RECURSE ALVR_COMMON_HEADERS ${ALVR_COMMON_DIR}/*.h)
 file(GLOB_RECURSE ALVR_COMMON_SOURCE ${ALVR_COMMON_DIR}/*.c ${ALVR_COMMON_DIR}/*.cpp)
