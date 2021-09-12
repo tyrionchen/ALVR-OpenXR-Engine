@@ -594,6 +594,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         std::array<XrBool32, Side::COUNT> handActive;
         std::array<TrackingInfo::Controller, Side::COUNT> controllerInfo{};
 
+        using time_point = std::chrono::steady_clock::time_point;
+        time_point quitStartTime{};
+
         struct HandTrackerData
         {
             std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> jointLocations;
@@ -677,12 +680,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         {
             //// Create an input action for grabbing objects with the left and right hands.
             XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
-            //actionInfo.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
-            //strcpy_s(actionInfo.actionName, "grab_object");
-            //strcpy_s(actionInfo.localizedActionName, "Grab Object");
-            //actionInfo.countSubactionPaths = uint32_t(m_input.handSubactionPath.size());
-            //actionInfo.subactionPaths = m_input.handSubactionPath.data();
-            //CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.grabAction));
 
             // Create an input action getting the left and right hand poses.
             actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
@@ -703,12 +700,12 @@ struct OpenXrProgram final : IOpenXrProgram {
             //// Create input actions for quitting the session using the left and right controller.
             //// Since it doesn't matter which hand did this, we do not specify subaction paths for it.
             //// We will just suggest bindings for both hands, where possible.
-            //actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
-            //strcpy_s(actionInfo.actionName, "quit_session");
-            //strcpy_s(actionInfo.localizedActionName, "Quit Session");
-            //actionInfo.countSubactionPaths = 0;
-            //actionInfo.subactionPaths = nullptr;
-            //CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
+            actionInfo.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+            strcpy_s(actionInfo.actionName, "quit_session");
+            strcpy_s(actionInfo.localizedActionName, "Quit Session");
+            actionInfo.countSubactionPaths = 0;
+            actionInfo.subactionPaths = nullptr;
+            CHECK_XRCMD(xrCreateAction(m_input.actionSet, &actionInfo, &m_input.quitAction));
 
             const auto CreateActions = [&](const XrActionType actType, auto& actionMap)
             {
@@ -827,7 +824,9 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::RIGHT]},
 
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                {m_input.quitAction, menuClickPath[Side::LEFT]},
+                {m_input.quitAction, menuClickPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = khrSimpleInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -878,9 +877,10 @@ struct OpenXrProgram final : IOpenXrProgram {
 
                 {m_input.poseAction, posePath[Side::LEFT]},
                 {m_input.poseAction, posePath[Side::RIGHT]},
-                //{m_input.quitAction, menuClickPath[Side::LEFT]},
+
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                {m_input.quitAction, menuClickPath[Side::LEFT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -917,8 +917,12 @@ struct OpenXrProgram final : IOpenXrProgram {
 
                 {m_input.poseAction, posePath[Side::LEFT]},
                 {m_input.poseAction, posePath[Side::RIGHT]},
+
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
-                {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                
+                {m_input.quitAction, menuClickPath[Side::LEFT]},
+                {m_input.quitAction, menuClickPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
             suggestedBindings.interactionProfile = viveControllerInteractionProfilePath;
             suggestedBindings.suggestedBindings = bindings.data();
@@ -977,8 +981,8 @@ struct OpenXrProgram final : IOpenXrProgram {
 
                 {m_input.poseAction, posePath[Side::LEFT]},
                 {m_input.poseAction, posePath[Side::RIGHT]},
-                //{m_input.quitAction, bClickPath[Side::LEFT]},
-                //{m_input.quitAction, bClickPath[Side::RIGHT]},
+                {m_input.quitAction, thumbstickClickPath[Side::LEFT]},
+                {m_input.quitAction, thumbstickClickPath[Side::RIGHT]},
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -1026,8 +1030,10 @@ struct OpenXrProgram final : IOpenXrProgram {
 
                 {m_input.poseAction, posePath[Side::LEFT]},
                 {m_input.poseAction, posePath[Side::RIGHT]},
-                //{m_input.quitAction, menuClickPath[Side::LEFT]},
-                //{m_input.quitAction, menuClickPath[Side::RIGHT]},
+                
+                {m_input.quitAction, menuClickPath[Side::LEFT]},
+                {m_input.quitAction, menuClickPath[Side::RIGHT]},
+
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
             XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -1317,8 +1323,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                     break;
                 }
                 case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
-                    //LogActionSourceName(m_input.grabAction, "Grab");
-                    //LogActionSourceName(m_input.quitAction, "Quit");
+                    LogActionSourceName(m_input.quitAction, "Quit");
                     LogActionSourceName(m_input.poseAction, "Pose");
                     LogActionSourceName(m_input.vibrateAction, "Vibrate");
                     for (const auto& [k,v] : m_input.boolActionMap)
@@ -1548,7 +1553,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 getInfo.action = v.xrAction;
                 XrActionStateBoolean boolValue{XR_TYPE_ACTION_STATE_BOOLEAN};
                 CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &boolValue));
-                if ((boolValue.isActive == XR_TRUE) /*&& (quitValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
+                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
                     controllerInfo.buttons |= ALVR_BUTTON_FLAG(buttonType);
             }
 
@@ -1574,7 +1579,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 getInfo.action = v.xrAction;
                 XrActionStateBoolean boolValue{ XR_TYPE_ACTION_STATE_BOOLEAN };
                 CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &boolValue));
-                if ((boolValue.isActive == XR_TRUE) /*&& (quitValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
+                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
                     val = 1.0f;
             };
             auto& boolToScalarActionMap = m_input.boolToScalarActionMap;
@@ -1606,13 +1611,28 @@ struct OpenXrProgram final : IOpenXrProgram {
             ++popCount;
         }
 
-        //// There were no subaction paths specified for the quit action, because we don't care which hand did it.
-        //XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
-        //XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
-        //CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
-        //if ((quitValue.isActive == XR_TRUE) && (quitValue.changedSinceLastSync == XR_TRUE) && (quitValue.currentState == XR_TRUE)) {
-        //    CHECK_XRCMD(xrRequestExitSession(m_session));
-        //}
+        // There were no subaction paths specified for the quit action, because we don't care which hand did it.
+        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
+        XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
+        CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
+        if (quitValue.isActive == XR_TRUE && quitValue.currentState == XR_TRUE) {
+            using namespace std::literals::chrono_literals;
+            if (quitValue.changedSinceLastSync == XR_TRUE) {
+                m_input.quitStartTime = std::chrono::steady_clock::now();
+            }
+            else {
+                constexpr const auto QuitHoldTime = 5s;
+                const auto currTime = std::chrono::steady_clock::now();
+                const auto holdTime = std::chrono::duration_cast<std::chrono::seconds>(currTime - m_input.quitStartTime);
+                if (holdTime >= QuitHoldTime)
+                {
+                    Log::Write(Log::Level::Info, "Exit session requested.");
+                    m_input.quitStartTime = currTime;
+                    CHECK_XRCMD(xrRequestExitSession(m_session));
+                }
+            }
+        }
+
     }
 
     void RenderFrame() override {
