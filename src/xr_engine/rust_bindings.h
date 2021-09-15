@@ -50,6 +50,7 @@ struct RustCtx
     void (*legacySend)(const unsigned char* buffer, unsigned int size);
 
     GraphicsCtxApi graphicsApi; // TODO: make this a part of StreamConfig structure and exposes available APIs in the server UI.
+    bool verbose;
 #ifdef XR_USE_PLATFORM_ANDROID
     void* applicationVM;
     void* applicationActivity;

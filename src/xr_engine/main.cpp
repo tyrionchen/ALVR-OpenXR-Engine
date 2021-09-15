@@ -17,6 +17,7 @@
 #include <atomic>
 #include <shared_mutex>
 #include <chrono>
+#include <sstream>
 
 #include "rust_bindings.h"
 #include "ALVR-common/packet_types.h"
@@ -34,6 +35,13 @@ bool UpdateOptionsFromSystemProperties(Options& options) {
     char value[PROP_VALUE_MAX] = {};
     if (__system_property_get("debug.xr.graphicsPlugin", value) != 0) {
         options.GraphicsPlugin = value;
+    }
+
+    if (__system_property_get("debug.xr.verbose", value) != 0) {
+        bool verbose = false;
+        std::istringstream oss{ value };
+        if (!(oss >> verbose) && verbose)
+            Log::SetLevel(Log::Level::Verbose);
     }
 
     // // Check for required parameters.
@@ -406,14 +414,15 @@ void openxrMain(const RustCtx* ctx)
         Log::Write(Log::Level::Error, "Rust context has not been setup!");
         return;
     }
-    std::array<const char*, 8> args
+    std::vector<const char*> args
     {
         "openxrMain",
         "-g", graphics_api_str(ctx->graphicsApi),  //"D3D11", //"Vulkan2",//"Vulkan2",//"D3D11",
         "-vc", "Stereo",
-        "-s", "Stage",
-        "-v"
+        "-s", "Stage"
     };
+    if (ctx->verbose)
+        args.push_back("-v");
     openxrMain(*ctx, static_cast<int>(args.size()), args.data());
 }
 #endif
