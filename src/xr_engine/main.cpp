@@ -210,18 +210,6 @@ void openxrInit(const RustCtx* rCtx) {
         
         gRustCtx = std::make_shared<RustCtx>(*rCtx);
         const auto &ctx = *gRustCtx;//.load();
-        
-        //auto result = dlopen("libopenxr_loader.so", RTLD_NOW | RTLD_GLOBAL);
-        //if (result == nullptr) {
-        //    Log::Write(Log::Level::Info, Fmt("failed to load libopenxr_loader.so, reasion: %s\n", dlerror()));
-        //}
-        //JNIEnv* Env;
-        //app->activity->vm->AttachCurrentThread(&Env, nullptr);
-
-        //AndroidAppState appState = {};
-
-        //app->userData = &appState;
-        //app->onAppCmd = app_handle_cmd;
 
         std::shared_ptr<Options> options = std::make_shared<Options>();
         if (!UpdateOptionsFromSystemProperties(*options)) {
@@ -232,15 +220,10 @@ void openxrInit(const RustCtx* rCtx) {
 
         Log::SetLevel(Log::Level::Verbose);
         
-        //ctx.initConnections(&rustSysProp);
-       
         std::shared_ptr<PlatformData> data = std::make_shared<PlatformData>();
         data->applicationVM = ctx.applicationVM; // app->activity->vm;
         data->applicationActivity = ctx.applicationActivity;//app->activity->clazz;
 
-        //bool requestRestart = false;
-        //bool exitRenderLoop = false;
-        
         // Initialize the loader for this platform
         PFN_xrInitializeLoaderKHR initializeLoader = nullptr;
         if (XR_SUCCEEDED(
@@ -284,7 +267,12 @@ void openxrInit(const RustCtx* rCtx) {
     }
 }
 
-void openxrProcesFrame() {
+void openxrShutdown() {
+    program = nullptr;
+}
+
+void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */) {
+    assert(exitRenderLoop != nullptr && requestRestart != nullptr);
     // while (app->destroyRequested == 0) {
     //     // Read all pending events.
     //     for (;;) {
@@ -303,8 +291,8 @@ void openxrProcesFrame() {
     //             source->process(app, source);
     //         }
     //     }
-        bool exitRenderLoop=false, requestRestart=false;
-        program->PollEvents(&exitRenderLoop, &requestRestart);
+    //    bool exitRenderLoop=false, requestRestart=false;
+        program->PollEvents(exitRenderLoop, requestRestart);
         if (!program->IsSessionRunning()) {
             return;//continue;
         }
@@ -396,6 +384,8 @@ int openxrMain(const RustCtx& ctx, int argc, const char* argv[]) {
             }
 
         } while (!quitKeyPressed && requestRestart);
+
+        program = nullptr;
 
         return 0;
     } catch (const std::exception& ex) {
