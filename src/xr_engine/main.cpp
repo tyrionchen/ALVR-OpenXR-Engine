@@ -67,7 +67,7 @@ void ShowHelp() {
 }
 
 bool UpdateOptionsFromCommandLine(Options& options, int argc, const char* argv[]) {
-    int i = 1;  // Index 0 is the program name and is skipped.
+    int i = 1;  // Index 0 is the gProgram name and is skipped.
 
     auto getNextArg = [&] {
         if (i >= argc) {
@@ -135,7 +135,7 @@ bool UpdateOptionsFromCommandLine(Options& options, int argc, const char* argv[]
 std::shared_ptr<const RustCtx> gRustCtx{ nullptr };
 
 using IOpenXrProgramPtr = std::shared_ptr<IOpenXrProgram>;
-IOpenXrProgramPtr program{ nullptr };
+IOpenXrProgramPtr gProgram{ nullptr };
 
 std::shared_mutex gTrackingMutex;
 TrackingInfo gLastTrackingInfo{};
@@ -224,7 +224,7 @@ void openxrInit(const RustCtx* rCtx) {
             return;
         }
         if (options->GraphicsPlugin.empty())
-            options->GraphicsPlugin = graphics_api_str(rCtx->graphicsApi);
+            options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
 
         Log::SetLevel(Log::Level::Verbose);
         
@@ -252,17 +252,17 @@ void openxrInit(const RustCtx* rCtx) {
         //  std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options,
         //                                                                         platformPlugin);
 
-        // Initialize the OpenXR program.
-        /*std::shared_ptr<IOpenXrProgram>*/ program = CreateOpenXrProgram(options, platformPlugin);//,
+        // Initialize the OpenXR gProgram.
+        /*std::shared_ptr<IOpenXrProgram>*/ gProgram = CreateOpenXrProgram(options, platformPlugin);//,
                                                                       //graphicsPlugin);
         
-        program->CreateInstance();
-        program->InitializeSystem();
-        program->InitializeSession();
-        program->CreateSwapchains();
+        gProgram->CreateInstance();
+        gProgram->InitializeSystem();
+        gProgram->InitializeSession();
+        gProgram->CreateSwapchains();
 
         thread_local SystemProperties rustSysProp{};
-        program->GetSystemProperties(rustSysProp);
+        gProgram->GetSystemProperties(rustSysProp);
         ctx.initConnections(&rustSysProp);
         Log::Write(Log::Level::Info, Fmt("device name: %s", rustSysProp.systemName));
 
@@ -275,8 +275,16 @@ void openxrInit(const RustCtx* rCtx) {
     }
 }
 
-void openxrShutdown() {
-    program = nullptr;
+void openxrRequestExitSession() {
+    if (auto programPtr = gProgram) {
+        programPtr->RequestExitSession();
+    }
+}
+
+void openxrDestroy() {
+    Log::Write(Log::Level::Info, "openxrShutdown: Shuttingdown");
+    gProgram.reset();
+    gRustCtx.reset();
 }
 
 void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */) {
@@ -289,7 +297,7 @@ void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestar
     //         // If the timeout is zero, returns immediately without blocking.
     //         // If the timeout is negative, waits indefinitely until an event appears.
     //         const int timeoutMilliseconds =
-    //             (!appState.Resumed && !program->IsSessionRunning() && app->destroyRequested == 0) ? -1 : 0;
+    //             (!appState.Resumed && !gProgram->IsSessionRunning() && app->destroyRequested == 0) ? -1 : 0;
     //         if (ALooper_pollAll(timeoutMilliseconds, nullptr, &events, (void**)&source) < 0) {
     //             break;
     //         }
@@ -300,16 +308,16 @@ void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestar
     //         }
     //     }
     //    bool exitRenderLoop=false, requestRestart=false;
-        program->PollEvents(exitRenderLoop, requestRestart);
-        if (!program->IsSessionRunning()) {
+        gProgram->PollEvents(exitRenderLoop, requestRestart);
+        if (!gProgram->IsSessionRunning()) {
             return;//continue;
         }
         
-        program->PollActions();
-        program->RenderFrame();
+        gProgram->PollActions();
+        gProgram->RenderFrame();
 
         TrackingInfo newInfo;
-        program->GetTrackingInfo(newInfo);
+        gProgram->GetTrackingInfo(newInfo);
         {
             std::unique_lock<std::shared_mutex> lock(gTrackingMutex);
             gLastTrackingInfo = newInfo;
@@ -319,7 +327,9 @@ void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestar
 
 bool isOpenXRSessionRunning()
 {
-    return program && program->IsSessionRunning();
+    if (auto programPtr = gProgram)
+        return gProgram->IsSessionRunning();
+    return false;
 }
 
 #else
@@ -355,31 +365,31 @@ int openxrMain(const RustCtx& ctx, int argc, const char* argv[]) {
             // Create graphics API implementation.
             //std::shared_ptr<IGraphicsPlugin> graphicsPlugin = CreateGraphicsPlugin(options, platformPlugin);
 
-            // Initialize the OpenXR program.
-            /*std::shared_ptr<IOpenXrProgram>*/ program = CreateOpenXrProgram(options, platformPlugin);//, graphicsPlugin);
+            // Initialize the OpenXR gProgram.
+            /*std::shared_ptr<IOpenXrProgram>*/ gProgram = CreateOpenXrProgram(options, platformPlugin);//, graphicsPlugin);
 
-            program->CreateInstance();
-            program->InitializeSystem();
-            program->InitializeSession();
-            program->CreateSwapchains();
+            gProgram->CreateInstance();
+            gProgram->InitializeSystem();
+            gProgram->InitializeSession();
+            gProgram->CreateSwapchains();
 
             SystemProperties rustSysProp{};
-            program->GetSystemProperties(rustSysProp);            
+            gProgram->GetSystemProperties(rustSysProp);            
             ctx.initConnections(&rustSysProp);
 
             while (!quitKeyPressed) {
                 bool exitRenderLoop = false;
-                program->PollEvents(&exitRenderLoop, &requestRestart);
+                gProgram->PollEvents(&exitRenderLoop, &requestRestart);
                 if (exitRenderLoop) {
                     break;
                 }
 
-                if (program->IsSessionRunning()) {
-                    program->PollActions();
-                    program->RenderFrame();
+                if (gProgram->IsSessionRunning()) {
+                    gProgram->PollActions();
+                    gProgram->RenderFrame();
 
                     TrackingInfo newInfo;
-                    program->GetTrackingInfo(newInfo);
+                    gProgram->GetTrackingInfo(newInfo);
                     {
                         std::unique_lock<std::shared_mutex> lock(gTrackingMutex);
                         gLastTrackingInfo = newInfo;
@@ -393,7 +403,8 @@ int openxrMain(const RustCtx& ctx, int argc, const char* argv[]) {
 
         } while (!quitKeyPressed && requestRestart);
 
-        program = nullptr;
+        gProgram.reset();
+        gRustCtx.reset();
 
         return 0;
     } catch (const std::exception& ex) {
@@ -460,7 +471,7 @@ void onTrackingNative(bool /*clientsidePrediction*/)
 
 void legacyReceive(const unsigned char* packet, unsigned int packetSize)
 {
-    const auto programPtr = program;
+    const auto programPtr = gProgram;
     if (programPtr == nullptr)
         return;
 
@@ -475,7 +486,7 @@ void legacyReceive(const unsigned char* packet, unsigned int packetSize)
 
 void setStreamConfig(StreamConfig config)
 {
-    const auto programPtr = program;
+    const auto programPtr = gProgram;
     if (programPtr == nullptr)
         return;
 

@@ -90,7 +90,8 @@ DLLEXPORT void setStreamConfig(StreamConfig config);
 //void sendTimeSync();
 #ifdef XR_USE_PLATFORM_ANDROID
 DLLEXPORT void openxrInit(const RustCtx*);
-DLLEXPORT void openxrShutdown();
+DLLEXPORT void openxrRequestExitSession();
+DLLEXPORT void openxrDestroy();
 DLLEXPORT void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */);
 DLLEXPORT bool isOpenXRSessionRunning();
 #else

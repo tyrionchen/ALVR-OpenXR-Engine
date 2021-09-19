@@ -322,6 +322,17 @@ struct OpenXrProgram final : IOpenXrProgram {
     }
 
     virtual ~OpenXrProgram() override {
+
+        if (m_pfnDestroyHandTrackerEXT != nullptr)
+        {
+            assert(m_pfnCreateHandTrackerEXT != nullptr);
+            for (auto& handTracker : m_input.handerTrackers) {
+                if (handTracker.tracker != XR_NULL_HANDLE) {
+                    m_pfnDestroyHandTrackerEXT(handTracker.tracker);
+                }
+            }
+        }
+
         if (m_input.actionSet != XR_NULL_HANDLE) {
             for (auto hand : {Side::LEFT, Side::RIGHT}) {
                 xrDestroySpace(m_input.handSpace[hand]);
@@ -352,6 +363,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         if (m_instance != XR_NULL_HANDLE) {
             xrDestroyInstance(m_instance);
         }
+
+        m_graphicsPlugin.reset();
+        m_platformPlugin.reset();
     }
 
     using ExtensionMap = std::unordered_map<std::string_view, bool>;
@@ -1100,8 +1114,13 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrLocateHandJointsEXT",
             reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnLocateHandJointsEXT)));
 
+        // Get function pointer for xrLocateHandJointsEXT
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrDestroyHandTrackerEXT",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnDestroyHandTrackerEXT)));
+
         if (m_pfnCreateHandTrackerEXT == nullptr ||
-            m_pfnLocateHandJointsEXT == nullptr)
+            m_pfnLocateHandJointsEXT == nullptr  ||
+            m_pfnDestroyHandTrackerEXT == nullptr)
             return false;
 
         // Create a hand tracker for left hand that tracks default set of hand joints.
@@ -1360,14 +1379,15 @@ struct OpenXrProgram final : IOpenXrProgram {
                 CHECK(m_session != XR_NULL_HANDLE);
                 XrSessionBeginInfo sessionBeginInfo{XR_TYPE_SESSION_BEGIN_INFO};
                 sessionBeginInfo.primaryViewConfigurationType = m_viewConfigType;
-                CHECK_XRCMD(xrBeginSession(m_session, &sessionBeginInfo));
-                m_sessionRunning = true;
+                XrResult result;
+                CHECK_XRCMD(result = xrBeginSession(m_session, &sessionBeginInfo));
+                m_sessionRunning = (result == XR_SUCCESS);
                 break;
             }
             case XR_SESSION_STATE_STOPPING: {
                 CHECK(m_session != XR_NULL_HANDLE);
-                m_sessionRunning = false;
                 CHECK_XRCMD(xrEndSession(m_session))
+                m_sessionRunning = false;
                 break;
             }
             case XR_SESSION_STATE_EXITING: {
@@ -1628,11 +1648,10 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {
                     Log::Write(Log::Level::Info, "Exit session requested.");
                     m_input.quitStartTime = currTime;
-                    CHECK_XRCMD(xrRequestExitSession(m_session));
+                    RequestExitSession();
                 }
             }
         }
-
     }
 
     void RenderFrame() override {
@@ -2040,6 +2059,12 @@ struct OpenXrProgram final : IOpenXrProgram {
         //m_streamConfig = newConfig;
     }
 
+    virtual inline void RequestExitSession() override {
+        if (m_session == XR_NULL_HANDLE)
+            return;
+        CHECK_XRCMD(xrRequestExitSession(m_session));
+    }
+
    private:
     const std::shared_ptr<Options> m_options;
     std::shared_ptr<IPlatformPlugin> m_platformPlugin;
@@ -2069,8 +2094,9 @@ struct OpenXrProgram final : IOpenXrProgram {
     InputState m_input;
 
     // XR_EXT_hand_tracking fun pointers.
-    PFN_xrCreateHandTrackerEXT m_pfnCreateHandTrackerEXT = nullptr;
-    PFN_xrLocateHandJointsEXT  m_pfnLocateHandJointsEXT = nullptr;
+    PFN_xrCreateHandTrackerEXT  m_pfnCreateHandTrackerEXT = nullptr;
+    PFN_xrLocateHandJointsEXT   m_pfnLocateHandJointsEXT = nullptr;
+    PFN_xrDestroyHandTrackerEXT m_pfnDestroyHandTrackerEXT = nullptr;
 
     // XR_FB_display_refresh_rate fun pointers.
     PFN_xrEnumerateDisplayRefreshRatesFB m_pfnEnumerateDisplayRefreshRatesFB = nullptr;

@@ -50,6 +50,8 @@ struct IOpenXrProgram {
     virtual void EnqueueHapticFeedback(const HapticsFeedback&) = 0;
 
     virtual void SetStreamConfig(const StreamConfig& config) = 0;
+
+    virtual void RequestExitSession() = 0;
 };
 
 struct Swapchain {
