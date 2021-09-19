@@ -80,23 +80,16 @@ struct StreamConfig {
 };
 
 DLLEXPORT void onTrackingNative(bool clientsidePrediction);
-//void onHapticsFeedbackNative(long long startTime, float amplitude, float duration, float frequency, unsigned char hand);
 DLLEXPORT GuardianData getGuardianData();
-
 DLLEXPORT void legacyReceive(const unsigned char* packet, unsigned int packetSize);
-
 DLLEXPORT void setStreamConfig(StreamConfig config);
 
 //void sendTimeSync();
-#ifdef XR_USE_PLATFORM_ANDROID
-DLLEXPORT void openxrInit(const RustCtx*);
+DLLEXPORT bool openxrInit(const RustCtx*);
 DLLEXPORT void openxrRequestExitSession();
 DLLEXPORT void openxrDestroy();
 DLLEXPORT void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */);
 DLLEXPORT bool isOpenXRSessionRunning();
-#else
-DLLEXPORT void openxrMain(const RustCtx*);
-#endif
 
 #ifdef __cplusplus
 }
