@@ -120,10 +120,9 @@ IOpenXrProgramPtr   gProgram{ nullptr };
 std::shared_mutex   gTrackingMutex;
 TrackingInfo        gLastTrackingInfo{};
 
-bool openxrInit(const RustCtx* rCtx) {
+bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemProperties) {
     try {
         if (rCtx == nullptr ||
-            rCtx->initConnections == nullptr ||
             rCtx->legacySend == nullptr)
         {
             Log::Write(Log::Level::Error, "Rust context has not been setup!");
@@ -183,9 +182,10 @@ bool openxrInit(const RustCtx* rCtx) {
         gProgram->InitializeSession();
         gProgram->CreateSwapchains();
 
-        thread_local SystemProperties rustSysProp{};
+        SystemProperties rustSysProp{};
         gProgram->GetSystemProperties(rustSysProp);
-        ctx.initConnections(&rustSysProp);
+        if (systemProperties)
+            *systemProperties = rustSysProp;
 
         Log::Write(Log::Level::Info, Fmt("device name: %s", rustSysProp.systemName));
         Log::Write(Log::Level::Info, "openxrInit finished successfully");

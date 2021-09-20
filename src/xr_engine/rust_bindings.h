@@ -46,7 +46,6 @@ struct SystemProperties
 
 struct RustCtx
 {
-    void (*initConnections)(const SystemProperties*);
     void (*legacySend)(const unsigned char* buffer, unsigned int size);
 
     GraphicsCtxApi graphicsApi; // TODO: make this a part of StreamConfig structure and exposes available APIs in the server UI.
@@ -85,7 +84,7 @@ DLLEXPORT void legacyReceive(const unsigned char* packet, unsigned int packetSiz
 DLLEXPORT void setStreamConfig(StreamConfig config);
 
 //void sendTimeSync();
-DLLEXPORT bool openxrInit(const RustCtx*);
+DLLEXPORT bool openxrInit(const RustCtx*, /*[out]*/ SystemProperties* systemProperties);
 DLLEXPORT void openxrRequestExitSession();
 DLLEXPORT void openxrDestroy();
 DLLEXPORT void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */);
