@@ -122,8 +122,7 @@ TrackingInfo        gLastTrackingInfo{};
 
 bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemProperties) {
     try {
-        if (rCtx == nullptr ||
-            rCtx->legacySend == nullptr)
+        if (rCtx == nullptr || rCtx->legacySend == nullptr)
         {
             Log::Write(Log::Level::Error, "Rust context has not been setup!");
             return false;
@@ -131,27 +130,18 @@ bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemPropertie
         
         gRustCtx = std::make_shared<RustCtx>(*rCtx);
         const auto &ctx = *gRustCtx;//.load();
-        const auto options = std::make_shared<Options>();
+        if (ctx.verbose)
+            Log::SetLevel(Log::Level::Verbose);
 
+        const auto options = std::make_shared<Options>();
+        options->AppSpace = "Stage";
+        options->ViewConfiguration = "Stereo";
 #ifdef XR_USE_PLATFORM_ANDROID
-        if (!UpdateOptionsFromSystemProperties(*options)) {
+        if (!UpdateOptionsFromSystemProperties(*options))
             return false;
-        }
+#endif
         if (options->GraphicsPlugin.empty())
             options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
-#else
-        std::vector<const char*> args {
-            "openxrInit",
-            "-g", graphics_api_str(ctx.graphicsApi),  //"D3D11", //"Vulkan2",//"Vulkan2",//"D3D11",
-            "-vc", "Stereo",
-            "-s", "Stage"
-        };
-        if (ctx.verbose)
-            args.push_back("-v");
-        if (!UpdateOptionsFromCommandLine(*options, static_cast<int>(args.size()), args.data())) {
-            return false;
-        }
-#endif
 
         const auto platformData = std::make_shared<PlatformData>();
 #ifdef XR_USE_PLATFORM_ANDROID
