@@ -1,7 +1,6 @@
 // Copyright (c) 2017-2021, The Khronos Group Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 #define ENGINE_DLL_EXPORTS
 
 #include "pch.h"
@@ -17,101 +16,9 @@
 #include <atomic>
 #include <shared_mutex>
 #include <chrono>
-#include <sstream>
 
 #include "rust_bindings.h"
 #include "ALVR-common/packet_types.h"
-
-namespace {
-
-#ifdef XR_USE_PLATFORM_ANDROID
-void ShowHelp() { Log::Write(Log::Level::Info, "adb shell setprop debug.xr.graphicsPlugin OpenGLES|Vulkan"); }
-
-bool UpdateOptionsFromSystemProperties(Options& options) {
-    char value[PROP_VALUE_MAX] = {};
-    if (__system_property_get("debug.xr.graphicsPlugin", value) != 0) {
-        options.GraphicsPlugin = value;
-    }
-
-    if (__system_property_get("debug.xr.verbose", value) != 0) {
-        bool verbose = false;
-        std::istringstream oss{ value };
-        if (!(oss >> verbose) && verbose) {
-            Log::SetLevel(Log::Level::Verbose);
-            Log::Write(Log::Level::Info, "verbose mode enabled.");
-        }
-    }
-    return true;
-}
-#else
-void ShowHelp() {
-    // TODO: Improve/update when things are more settled.
-    Log::Write(Log::Level::Info,
-               "xr_engine --graphics|-g <Graphics API> [--formfactor|-ff <Form factor>] [--viewconfig|-vc <View config>] "
-               "[--blendmode|-bm <Blend mode>] [--space|-s <Space>] [--verbose|-v]");
-    Log::Write(Log::Level::Info, "Graphics APIs:            D3D11, D3D12, OpenGLES, OpenGL, Vulkan2, Vulkan");
-    Log::Write(Log::Level::Info, "Form factors:             Hmd, Handheld");
-    Log::Write(Log::Level::Info, "View configurations:      Mono, Stereo");
-    Log::Write(Log::Level::Info, "Environment blend modes:  Opaque, Additive, AlphaBlend");
-    Log::Write(Log::Level::Info, "Spaces:                   View, Local, Stage");
-}
-
-bool UpdateOptionsFromCommandLine(Options& options, int argc, const char* argv[]) {
-    int i = 1;  // Index 0 is the gProgram name and is skipped.
-
-    auto getNextArg = [&] {
-        if (i >= argc) {
-            throw std::invalid_argument("Argument parameter missing");
-        }
-
-        return std::string(argv[i++]);
-    };
-
-    while (i < argc) {
-        const std::string arg = getNextArg();
-        if (EqualsIgnoreCase(arg, "--graphics") || EqualsIgnoreCase(arg, "-g")) {
-            options.GraphicsPlugin = getNextArg();
-        } else if (EqualsIgnoreCase(arg, "--formfactor") || EqualsIgnoreCase(arg, "-ff")) {
-            options.FormFactor = getNextArg();
-        } else if (EqualsIgnoreCase(arg, "--viewconfig") || EqualsIgnoreCase(arg, "-vc")) {
-            options.ViewConfiguration = getNextArg();
-        } else if (EqualsIgnoreCase(arg, "--blendmode") || EqualsIgnoreCase(arg, "-bm")) {
-            options.EnvironmentBlendMode = getNextArg();
-        } else if (EqualsIgnoreCase(arg, "--space") || EqualsIgnoreCase(arg, "-s")) {
-            options.AppSpace = getNextArg();
-        } else if (EqualsIgnoreCase(arg, "--verbose") || EqualsIgnoreCase(arg, "-v")) {
-            Log::SetLevel(Log::Level::Verbose);
-        } else if (EqualsIgnoreCase(arg, "--help") || EqualsIgnoreCase(arg, "-h")) {
-            ShowHelp();
-            return false;
-        } else {
-            throw std::invalid_argument(Fmt("Unknown argument: %s", arg.c_str()));
-        }
-    }
-    return true;
-}
-#endif
-    constexpr inline auto graphics_api_str(const GraphicsCtxApi gcp)
-    {
-        switch (gcp)
-        {
-        case GraphicsCtxApi::Vulkan2:
-            return "Vulkan2";
-        case GraphicsCtxApi::Vulkan:
-            return "Vulkan";
-        case GraphicsCtxApi::D3D12:
-            return "D3D12";
-        case GraphicsCtxApi::D3D11:
-            return "D3D11";
-        case GraphicsCtxApi::OpenGLES:
-            return "OpenGLES";
-        case GraphicsCtxApi::OpenGL:
-            return "OpenGL";
-        default:
-            return "auto";
-        }
-    }
-}  // namespace
 
 using IOpenXrProgramPtr = std::shared_ptr<IOpenXrProgram>;
 using RustCtxPtr = std::shared_ptr<const RustCtx>;
@@ -119,6 +26,27 @@ RustCtxPtr          gRustCtx{ nullptr };
 IOpenXrProgramPtr   gProgram{ nullptr };
 std::shared_mutex   gTrackingMutex;
 TrackingInfo        gLastTrackingInfo{};
+
+constexpr inline auto graphics_api_str(const GraphicsCtxApi gcp)
+{
+    switch (gcp)
+    {
+    case GraphicsCtxApi::Vulkan2:
+        return "Vulkan2";
+    case GraphicsCtxApi::Vulkan:
+        return "Vulkan";
+    case GraphicsCtxApi::D3D12:
+        return "D3D12";
+    case GraphicsCtxApi::D3D11:
+        return "D3D11";
+    case GraphicsCtxApi::OpenGLES:
+        return "OpenGLES";
+    case GraphicsCtxApi::OpenGL:
+        return "OpenGL";
+    default:
+        return "auto";
+    }
+}
 
 bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemProperties) {
     try {
@@ -136,10 +64,6 @@ bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemPropertie
         const auto options = std::make_shared<Options>();
         options->AppSpace = "Stage";
         options->ViewConfiguration = "Stereo";
-#ifdef XR_USE_PLATFORM_ANDROID
-        if (!UpdateOptionsFromSystemProperties(*options))
-            return false;
-#endif
         if (options->GraphicsPlugin.empty())
             options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
 
