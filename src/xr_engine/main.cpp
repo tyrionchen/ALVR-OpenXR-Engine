@@ -126,7 +126,7 @@ void alxr_request_exit_session() {
     }
 }
 
-void alxr_proces_frame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */) {
+void alxr_process_frame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */) {
     assert(exitRenderLoop != nullptr && requestRestart != nullptr);
 
     gProgram->PollEvents(exitRenderLoop, requestRestart);

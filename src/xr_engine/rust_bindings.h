@@ -83,7 +83,7 @@ struct ALXRStreamConfig {
 DLLEXPORT bool alxr_init(const ALXRRustCtx*, /*[out]*/ ALXRSystemProperties* systemProperties);
 DLLEXPORT void alxr_request_exit_session();
 DLLEXPORT void alxr_destroy();
-DLLEXPORT void alxr_proces_frame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */);
+DLLEXPORT void alxr_process_frame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */);
 DLLEXPORT bool alxr_is_session_running();
 
 DLLEXPORT void alxr_set_stream_config(ALXRStreamConfig config);
