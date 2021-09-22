@@ -28,6 +28,12 @@
 #include "alxr_engine.h"
 #include "ALVR-common/packet_types.h"
 
+#ifdef XR_USE_PLATFORM_ANDROID
+#ifndef ALXR_ENGINE_DISABLE_QUIT_ACTION
+#define ALXR_ENGINE_DISABLE_QUIT_ACTION
+#endif
+#endif
+
 namespace {
 
 #if !defined(XR_USE_PLATFORM_WIN32)
@@ -1693,6 +1699,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             ++popCount;
         }
 
+#ifndef ALXR_ENGINE_DISABLE_QUIT_ACTION
         // There were no subaction paths specified for the quit action, because we don't care which hand did it.
         XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
         XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
@@ -1703,7 +1710,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 m_input.quitStartTime = std::chrono::steady_clock::now();
             }
             else {
-                constexpr const auto QuitHoldTime = 5s;
+                constexpr const auto QuitHoldTime = 4s;
                 const auto currTime = std::chrono::steady_clock::now();
                 const auto holdTime = std::chrono::duration_cast<std::chrono::seconds>(currTime - m_input.quitStartTime);
                 if (holdTime >= QuitHoldTime)
@@ -1714,6 +1721,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 }
             }
         }
+#endif
     }
 
     void RenderFrame() override {
