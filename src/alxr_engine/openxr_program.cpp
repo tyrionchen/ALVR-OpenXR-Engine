@@ -1208,7 +1208,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     void CreateVisualizedSpaces() {
         CHECK(m_session != XR_NULL_HANDLE);
 
-#ifdef XR_ENGINE_ENABLE_VIZ_SPACES
+#ifdef ALXR_ENGINE_ENABLE_VIZ_SPACES
         constexpr const std::string_view visualizedSpaces[] = { "ViewFront",        "Local", "Stage", "StageLeft", "StageRight", "StageLeftRotated",
                                           "StageRightRotated" };
 
@@ -1774,7 +1774,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         // For each locatable space that we want to visualize, render a 25cm cube.
         std::vector<Cube> cubes;
-#ifdef XR_ENGINE_ENABLE_VIZ_SPACES
+#ifdef ALXR_ENGINE_ENABLE_VIZ_SPACES
         for (XrSpace visualizedSpace : m_visualizedSpaces) {
             XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
             res = xrLocateSpace(visualizedSpace, m_appSpace, predictedDisplayTime, &spaceLocation);

@@ -25,28 +25,28 @@ file(GLOB VULKAN_SHADERS "vulkan_shaders/*.glsl")
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 if(ANDROID)
-    add_library(xr_engine MODULE
+    add_library(alxr_engine MODULE
         ${LOCAL_SOURCE}
         ${LOCAL_HEADERS}
         ${VULKAN_SHADERS})
         #$<TARGET_OBJECTS:android_native_app_glue>)
-    target_link_libraries(xr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY})
+    target_link_libraries(alxr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY})
 else()
-    add_library(xr_engine SHARED
+    add_library(alxr_engine SHARED
         ${LOCAL_SOURCE}
         ${LOCAL_HEADERS}
         ${VULKAN_SHADERS})
 endif()
-set_target_properties(xr_engine PROPERTIES FOLDER ${SAMPLES_FOLDER})
+set_target_properties(alxr_engine PROPERTIES FOLDER ${SAMPLES_FOLDER})
 
 source_group("Headers" FILES ${LOCAL_HEADERS})
 source_group("Shaders" FILES ${VULKAN_SHADERS})
 
-compile_glsl(run_xr_engine_glsl_compiles ${VULKAN_SHADERS})
+compile_glsl(run_alxr_engine_glsl_compiles ${VULKAN_SHADERS})
 
-add_dependencies(xr_engine
+add_dependencies(alxr_engine
     generate_openxr_header
-    run_xr_engine_glsl_compiles
+    run_alxr_engine_glsl_compiles
 )
 
 set(ALVR_ROOT_DIR ${PROJECT_SOURCE_DIR}/../../../../.. CACHE PATH "Root directory of ALVR source")
@@ -55,7 +55,7 @@ file(GLOB_RECURSE ALVR_COMMON_HEADERS ${ALVR_COMMON_DIR}/*.h)
 file(GLOB_RECURSE ALVR_COMMON_SOURCE ${ALVR_COMMON_DIR}/*.c ${ALVR_COMMON_DIR}/*.cpp)
 add_library(alvr_common ${ALVR_COMMON_SOURCE} ${ALVR_COMMON_SOURCE})
 
-target_include_directories(xr_engine
+target_include_directories(alxr_engine
     PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/common
@@ -71,56 +71,56 @@ target_include_directories(xr_engine
 )
 
 if(GLSLANG_VALIDATOR AND NOT GLSLC_COMMAND)
-    target_compile_definitions(xr_engine PRIVATE USE_GLSLANGVALIDATOR)
+    target_compile_definitions(alxr_engine PRIVATE USE_GLSLANGVALIDATOR)
 endif()
 
 if(Vulkan_FOUND)
-    target_include_directories(xr_engine
+    target_include_directories(alxr_engine
         PRIVATE
         ${Vulkan_INCLUDE_DIRS}
     )
 endif()
 
-target_link_libraries(xr_engine openxr_loader alvr_common)
+target_link_libraries(alxr_engine openxr_loader alvr_common)
 if(TARGET openxr-gfxwrapper)
-    target_link_libraries(xr_engine openxr-gfxwrapper)
+    target_link_libraries(alxr_engine openxr-gfxwrapper)
 endif()
 if(WIN32)
     if(MSVC)
-        target_compile_definitions(xr_engine PRIVATE _CRT_SECURE_NO_WARNINGS)
-        target_compile_options(xr_engine PRIVATE /Zc:wchar_t /Zc:forScope /W4 /WX /Zi)
-        target_compile_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/Zi>")
-        target_link_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/DEBUG>")
-        target_link_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/OPT:REF>")
-        target_link_options(xr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>")
+        target_compile_definitions(alxr_engine PRIVATE _CRT_SECURE_NO_WARNINGS)
+        target_compile_options(alxr_engine PRIVATE /Zc:wchar_t /Zc:forScope /W4 /WX /Zi)
+        target_compile_options(alxr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/Zi>")
+        target_link_options(alxr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/DEBUG>")
+        target_link_options(alxr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/OPT:REF>")
+        target_link_options(alxr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>")
     endif()
-    target_link_libraries(xr_engine ole32)
+    target_link_libraries(alxr_engine ole32)
     if(MSVC)
         # Right now can't build this on MinGW because of directxcolors, etc.
-        target_link_libraries(xr_engine d3d11 d3d12 d3dcompiler dxgi)
+        target_link_libraries(alxr_engine d3d11 d3d12 d3dcompiler dxgi)
     else()
-        target_compile_definitions(xr_engine PRIVATE MISSING_DIRECTX_COLORS)
+        target_compile_definitions(alxr_engine PRIVATE MISSING_DIRECTX_COLORS)
     endif()
 endif()
 
 if(Vulkan_LIBRARY)
-    target_link_libraries(xr_engine ${Vulkan_LIBRARY})
+    target_link_libraries(alxr_engine ${Vulkan_LIBRARY})
 endif()
 
 if(NOT ANDROID)
     #set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/examples)
-    install(TARGETS xr_engine
+    install(TARGETS alxr_engine
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(WIN32)
-        install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(FILES $<TARGET_PDB_FILE:alxr_engine> DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
-    #    install(TARGETS xr_engine
+    #    install(TARGETS alxr_engine
     #    RUNTIME DESTINATION ${ALVR_BIN_DIR}
     #    ARCHIVE DESTINATION ${ALVR_BIN_DIR})
-    #install(FILES $<TARGET_PDB_FILE:xr_engine> DESTINATION ${ALVR_BIN_DIR})
+    #install(FILES $<TARGET_PDB_FILE:alxr_engine> DESTINATION ${ALVR_BIN_DIR})
     #if(NOT WIN32)
-    #    install(FILES xr_engine.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1/ COMPONENT ManPages)
+    #    install(FILES alxr_engine.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1/ COMPONENT ManPages)
     #endif()
 endif()
 

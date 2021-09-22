@@ -482,7 +482,7 @@ endif()
 #if(BUILD_TESTS)
 #    add_subdirectory(tests)
 #endif()
-add_subdirectory(xr_engine)
+add_subdirectory(alxr_engine)
 
 if(BUILD_CONFORMANCE_TESTS)
     add_subdirectory(conformance)
