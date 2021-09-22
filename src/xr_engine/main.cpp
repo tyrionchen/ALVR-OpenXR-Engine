@@ -21,34 +21,34 @@
 #include "ALVR-common/packet_types.h"
 
 using IOpenXrProgramPtr = std::shared_ptr<IOpenXrProgram>;
-using RustCtxPtr = std::shared_ptr<const RustCtx>;
+using RustCtxPtr = std::shared_ptr<const ALXRRustCtx>;
 RustCtxPtr          gRustCtx{ nullptr };
 IOpenXrProgramPtr   gProgram{ nullptr };
 std::shared_mutex   gTrackingMutex;
 TrackingInfo        gLastTrackingInfo{};
 
-constexpr inline auto graphics_api_str(const GraphicsCtxApi gcp)
+constexpr inline auto graphics_api_str(const ALXRGraphicsApi gcp)
 {
     switch (gcp)
     {
-    case GraphicsCtxApi::Vulkan2:
+    case ALXRGraphicsApi::Vulkan2:
         return "Vulkan2";
-    case GraphicsCtxApi::Vulkan:
+    case ALXRGraphicsApi::Vulkan:
         return "Vulkan";
-    case GraphicsCtxApi::D3D12:
+    case ALXRGraphicsApi::D3D12:
         return "D3D12";
-    case GraphicsCtxApi::D3D11:
+    case ALXRGraphicsApi::D3D11:
         return "D3D11";
-    case GraphicsCtxApi::OpenGLES:
+    case ALXRGraphicsApi::OpenGLES:
         return "OpenGLES";
-    case GraphicsCtxApi::OpenGL:
+    case ALXRGraphicsApi::OpenGL:
         return "OpenGL";
     default:
         return "auto";
     }
 }
 
-bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemProperties) {
+bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemProperties) {
     try {
         if (rCtx == nullptr || rCtx->legacySend == nullptr)
         {
@@ -56,7 +56,7 @@ bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemPropertie
             return false;
         }
         
-        gRustCtx = std::make_shared<RustCtx>(*rCtx);
+        gRustCtx = std::make_shared<ALXRRustCtx>(*rCtx);
         const auto &ctx = *gRustCtx;//.load();
         if (ctx.verbose)
             Log::SetLevel(Log::Level::Verbose);
@@ -96,7 +96,7 @@ bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemPropertie
         gProgram->InitializeSession();
         gProgram->CreateSwapchains();
 
-        SystemProperties rustSysProp{};
+        ALXRSystemProperties rustSysProp{};
         gProgram->GetSystemProperties(rustSysProp);
         if (systemProperties)
             *systemProperties = rustSysProp;
@@ -114,19 +114,19 @@ bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemPropertie
     }
 }
 
-void openxrRequestExitSession() {
-    if (auto programPtr = gProgram) {
-        programPtr->RequestExitSession();
-    }
-}
-
-void openxrDestroy() {
+void alxr_destroy() {
     Log::Write(Log::Level::Info, "openxrShutdown: Shuttingdown");
     gProgram.reset();
     gRustCtx.reset();
 }
 
-void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */) {
+void alxr_request_exit_session() {
+    if (auto programPtr = gProgram) {
+        programPtr->RequestExitSession();
+    }
+}
+
+void alxr_proces_frame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */) {
     assert(exitRenderLoop != nullptr && requestRestart != nullptr);
 
     gProgram->PollEvents(exitRenderLoop, requestRestart);
@@ -144,27 +144,23 @@ void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestar
     }
 }
 
-bool isOpenXRSessionRunning()
+bool alxr_is_session_running()
 {
     if (auto programPtr = gProgram)
         return gProgram->IsSessionRunning();
     return false;
 }
 
-GuardianData getGuardianData() { return {}; }
+void alxr_set_stream_config(ALXRStreamConfig config)
+{
+    if (const auto programPtr = gProgram) {
+        programPtr->SetStreamConfig(config);
+    }
+}
 
-//inline std::uint64_t GetTimestampUs()
-//{
-//    using namespace std::chrono;
-//    using PeriodType = high_resolution_clock::period;
-//    using DurationType = high_resolution_clock::duration;
-//    using microsecondsU64 = std::chrono::duration<std::uint64_t, std::chrono::microseconds::period>;
-//    return duration_cast<microsecondsU64>(high_resolution_clock::now().time_since_epoch()).count();
-//}
-//
-//std::atomic<std::uint64_t> FrameIndex{ 0 };
+ALXRGuardianData alxr_get_guardian_data() { return {}; }
 
-void onTrackingNative(bool /*clientsidePrediction*/)
+void alxr_on_tracking_update(bool /*clientsidePrediction*/)
 {
     const auto rustCtx = gRustCtx;
     if (rustCtx == nullptr || rustCtx->legacySend == nullptr)
@@ -182,7 +178,7 @@ void onTrackingNative(bool /*clientsidePrediction*/)
     rustCtx->legacySend(reinterpret_cast<const unsigned char*>(&newInfo), static_cast<int>(sizeof(newInfo)));
 }
 
-void legacyReceive(const unsigned char* packet, unsigned int packetSize)
+void alxr_on_receive(const unsigned char* packet, unsigned int packetSize)
 {
     const auto programPtr = gProgram;
     if (programPtr == nullptr)
@@ -194,12 +190,5 @@ void legacyReceive(const unsigned char* packet, unsigned int packetSize)
         if (packetSize < sizeof(HapticsFeedback))
             return;  
         programPtr->EnqueueHapticFeedback(*reinterpret_cast<const HapticsFeedback*>(packet));
-    }
-}
-
-void setStreamConfig(StreamConfig config)
-{
-    if (const auto programPtr = gProgram) {
-        programPtr->SetStreamConfig(config);
     }
 }

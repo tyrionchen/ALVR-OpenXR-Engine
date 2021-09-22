@@ -6,8 +6,8 @@
 
 #include <cstdint>
 
-struct StreamConfig;
-struct SystemProperties;
+struct ALXRStreamConfig;
+struct ALXRSystemProperties;
 struct TrackingInfo;
 struct HapticsFeedback;
 
@@ -43,13 +43,13 @@ struct IOpenXrProgram {
     // Create and submit a frame.
     virtual void RenderFrame() = 0;
 
-    virtual bool GetSystemProperties(SystemProperties& systemProps) const = 0;
+    virtual bool GetSystemProperties(ALXRSystemProperties& systemProps) const = 0;
 
     virtual bool GetTrackingInfo(TrackingInfo& info) const = 0;
 
     virtual void EnqueueHapticFeedback(const HapticsFeedback&) = 0;
 
-    virtual void SetStreamConfig(const StreamConfig& config) = 0;
+    virtual void SetStreamConfig(const ALXRStreamConfig& config) = 0;
 
     virtual void RequestExitSession() = 0;
 };

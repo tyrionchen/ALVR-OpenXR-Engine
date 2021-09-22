@@ -16,7 +16,7 @@
 extern "C" {;
 #endif
 
-enum GraphicsCtxApi
+enum ALXRGraphicsApi
 {
     Auto,
     Vulkan2,
@@ -28,14 +28,14 @@ enum GraphicsCtxApi
     ApiCount = OpenGL
 };
 
-enum TrackingSpace
+enum ALXRTrackingSpace
 {
     LocalRefSpace,
     StageRefSpace,
     ViewRefSpace
 };
 
-struct SystemProperties
+struct ALXRSystemProperties
 {
     char         systemName[256];
     float        currentRefreshRate;
@@ -45,11 +45,11 @@ struct SystemProperties
     unsigned int recommendedEyeHeight;
 };
 
-struct RustCtx
+struct ALXRRustCtx
 {
     void (*legacySend)(const unsigned char* buffer, unsigned int size);
 
-    GraphicsCtxApi graphicsApi; // TODO: make this a part of StreamConfig structure and exposes available APIs in the server UI.
+    ALXRGraphicsApi graphicsApi; // TODO: make this a part of StreamConfig structure and exposes available APIs in the server UI.
     bool verbose;
 #ifdef XR_USE_PLATFORM_ANDROID
     void* applicationVM;
@@ -57,7 +57,7 @@ struct RustCtx
 #endif
 };
 
-struct GuardianData {
+struct ALXRGuardianData {
     bool shouldSync;
     float position[3];
     float rotation[4]; // convention: x, y, z, w
@@ -67,7 +67,7 @@ struct GuardianData {
     unsigned int perimeterPointsCount;
 };
 
-struct StreamConfig {
+struct ALXRStreamConfig {
     //unsigned int eyeWidth;
     //unsigned int eyeHeight;
     float refreshRate;
@@ -75,21 +75,22 @@ struct StreamConfig {
     //float foveationStrength;
     //float foveationShape;
     //float foveationVerticalOffset;
-    TrackingSpace trackingSpaceType;
+    ALXRTrackingSpace trackingSpaceType;
     //bool extraLatencyMode;
 };
 
-DLLEXPORT void onTrackingNative(bool clientsidePrediction);
-DLLEXPORT GuardianData getGuardianData();
-DLLEXPORT void legacyReceive(const unsigned char* packet, unsigned int packetSize);
-DLLEXPORT void setStreamConfig(StreamConfig config);
-
 //void sendTimeSync();
-DLLEXPORT bool openxrInit(const RustCtx*, /*[out]*/ SystemProperties* systemProperties);
-DLLEXPORT void openxrRequestExitSession();
-DLLEXPORT void openxrDestroy();
-DLLEXPORT void openxrProcesFrame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */);
-DLLEXPORT bool isOpenXRSessionRunning();
+DLLEXPORT bool alxr_init(const ALXRRustCtx*, /*[out]*/ ALXRSystemProperties* systemProperties);
+DLLEXPORT void alxr_request_exit_session();
+DLLEXPORT void alxr_destroy();
+DLLEXPORT void alxr_proces_frame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */);
+DLLEXPORT bool alxr_is_session_running();
+
+DLLEXPORT void alxr_set_stream_config(ALXRStreamConfig config);
+DLLEXPORT ALXRGuardianData alxr_get_guardian_data();
+
+DLLEXPORT void alxr_on_receive(const unsigned char* packet, unsigned int packetSize);
+DLLEXPORT void alxr_on_tracking_update(bool clientsidePrediction);
 
 #ifdef __cplusplus
 }

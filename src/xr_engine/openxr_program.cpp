@@ -150,39 +150,39 @@ constexpr bool IsPoseTracked(const XrHandJointLocationEXT& jointLocation) {
 }  // namespace Pose
 }  // namespace Math
 
-constexpr inline auto ToTrackingSpaceName(const TrackingSpace ts)
+constexpr inline auto ToTrackingSpaceName(const ALXRTrackingSpace ts)
 {
     switch (ts)
     {
-    case TrackingSpace::LocalRefSpace: return "Local";
-    case TrackingSpace::ViewRefSpace: return "View";
+    case ALXRTrackingSpace::LocalRefSpace: return "Local";
+    case ALXRTrackingSpace::ViewRefSpace: return "View";
     }
     return "Stage";
 }
 
-/*constexpr*/ inline TrackingSpace ToTrackingSpace(const std::string_view& tsname)
+/*constexpr*/ inline ALXRTrackingSpace ToTrackingSpace(const std::string_view& tsname)
 {
     if (EqualsIgnoreCase(tsname, "Local"))
-        return TrackingSpace::LocalRefSpace;
+        return ALXRTrackingSpace::LocalRefSpace;
     if (EqualsIgnoreCase(tsname, "View"))
-        return TrackingSpace::ViewRefSpace;
-    return TrackingSpace::StageRefSpace;
+        return ALXRTrackingSpace::ViewRefSpace;
+    return ALXRTrackingSpace::StageRefSpace;
 }
 
-constexpr inline TrackingSpace ToTrackingSpace(const XrReferenceSpaceType xrreftype)
+constexpr inline ALXRTrackingSpace ToTrackingSpace(const XrReferenceSpaceType xrreftype)
 {
     switch (xrreftype) {
-    case XR_REFERENCE_SPACE_TYPE_VIEW: return TrackingSpace::ViewRefSpace;
-    case XR_REFERENCE_SPACE_TYPE_LOCAL: return TrackingSpace::LocalRefSpace;
+    case XR_REFERENCE_SPACE_TYPE_VIEW: return ALXRTrackingSpace::ViewRefSpace;
+    case XR_REFERENCE_SPACE_TYPE_LOCAL: return ALXRTrackingSpace::LocalRefSpace;
     }
-    return TrackingSpace::StageRefSpace;
+    return ALXRTrackingSpace::StageRefSpace;
 }
 
-constexpr inline XrReferenceSpaceType ToXrReferenceSpaceType(const TrackingSpace xrreftype)
+constexpr inline XrReferenceSpaceType ToXrReferenceSpaceType(const ALXRTrackingSpace xrreftype)
 {
     switch (xrreftype) {
-    case TrackingSpace::ViewRefSpace: return XR_REFERENCE_SPACE_TYPE_VIEW;
-    case TrackingSpace::LocalRefSpace: return XR_REFERENCE_SPACE_TYPE_LOCAL;
+    case ALXRTrackingSpace::ViewRefSpace: return XR_REFERENCE_SPACE_TYPE_VIEW;
+    case ALXRTrackingSpace::LocalRefSpace: return XR_REFERENCE_SPACE_TYPE_LOCAL;
     }
     return XR_REFERENCE_SPACE_TYPE_STAGE;
 }
@@ -218,7 +218,7 @@ inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::strin
     return referenceSpaceCreateInfo;
 }
 
-inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const TrackingSpace ts) {
+inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const ALXRTrackingSpace ts) {
     return GetXrReferenceSpaceCreateInfo(ToTrackingSpaceName(ts));
 }
 
@@ -319,20 +319,20 @@ struct OpenXrProgram final : IOpenXrProgram {
         if (graphicsApi.empty() || graphicsApi == "auto")
         {
             Log::Write(Log::Level::Info, "Running auto graphics api selection.");
-            constexpr const auto to_graphics_api_str = [](const GraphicsCtxApi gapi) -> std::tuple<std::string_view, std::string_view> {
+            constexpr const auto to_graphics_api_str = [](const ALXRGraphicsApi gapi) -> std::tuple<std::string_view, std::string_view> {
                 using namespace std::string_view_literals;
                 switch (gapi)
                 {
-                case GraphicsCtxApi::Vulkan2: return std::make_tuple("XR_KHR_vulkan_enable2"sv, "Vulkan2"sv);
-                case GraphicsCtxApi::Vulkan: return std::make_tuple("XR_KHR_vulkan_enable"sv, "Vulkan"sv);
-                case GraphicsCtxApi::D3D12: return std::make_tuple("XR_KHR_D3D12_enable"sv, "D3D12"sv);
-                case GraphicsCtxApi::D3D11: return std::make_tuple("XR_KHR_D3D11_enable"sv, "D3D11"sv);
-                case GraphicsCtxApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
+                case ALXRGraphicsApi::Vulkan2: return std::make_tuple("XR_KHR_vulkan_enable2"sv, "Vulkan2"sv);
+                case ALXRGraphicsApi::Vulkan: return std::make_tuple("XR_KHR_vulkan_enable"sv, "Vulkan"sv);
+                case ALXRGraphicsApi::D3D12: return std::make_tuple("XR_KHR_D3D12_enable"sv, "D3D12"sv);
+                case ALXRGraphicsApi::D3D11: return std::make_tuple("XR_KHR_D3D11_enable"sv, "D3D11"sv);
+                case ALXRGraphicsApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
                 default: return std::make_tuple("XR_KHR_opengl_enable"sv, "OpenGL"sv);
                 }
             };
-            for (size_t apiIndex = GraphicsCtxApi::Vulkan2; apiIndex < size_t(GraphicsCtxApi::ApiCount); ++apiIndex) {
-                const auto& [ext_name, gapi] = to_graphics_api_str(static_cast<GraphicsCtxApi>(apiIndex));
+            for (size_t apiIndex = ALXRGraphicsApi::Vulkan2; apiIndex < size_t(ALXRGraphicsApi::ApiCount); ++apiIndex) {
+                const auto& [ext_name, gapi] = to_graphics_api_str(static_cast<ALXRGraphicsApi>(apiIndex));
                 auto itr = m_supportedGraphicsContexts.find(ext_name);
                 if (itr != m_supportedGraphicsContexts.end() && itr->second) {
                     graphicsApi = gapi;
@@ -1933,7 +1933,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         assert(m_displayRefreshRates.size() > 0);
     }
 
-    virtual bool GetSystemProperties(SystemProperties& systemProps) const override
+    virtual bool GetSystemProperties(ALXRSystemProperties& systemProps) const override
     {
         if (m_instance == XR_NULL_HANDLE)
             return false;
@@ -2074,19 +2074,19 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_hapticsQueue.push(hapticFeedback);
     }
 
-    virtual inline void SetStreamConfig(const StreamConfig& config) override
+    virtual inline void SetStreamConfig(const ALXRStreamConfig& config) override
     {
         m_streamConfigQueue.push(config);
     }
 
     void PollStreamConfigEvents()
     {
-        StreamConfig newConfig;
+        ALXRStreamConfig newConfig;
         if (!m_streamConfigQueue.try_pop(newConfig))
             return;
 
         if (newConfig.trackingSpaceType != m_streamConfig.trackingSpaceType) {
-            const auto IsRefSpaceTypeSupported = [this](const TrackingSpace ts) {
+            const auto IsRefSpaceTypeSupported = [this](const ALXRTrackingSpace ts) {
                 const auto xrSpaceRefType = ToXrReferenceSpaceType(ts);
                 const auto availSpaces = GetAvailableReferenceSpaces();
                 return std::find(availSpaces.begin(), availSpaces.end(), xrSpaceRefType) != availSpaces.end();
@@ -2180,10 +2180,10 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     std::vector<float> m_displayRefreshRates;
 
-    StreamConfig m_streamConfig { 90.0, TrackingSpace::LocalRefSpace };
+    ALXRStreamConfig m_streamConfig { 90.0, ALXRTrackingSpace::LocalRefSpace };
     
     xrconcurrency::concurrent_queue<HapticsFeedback> m_hapticsQueue;
-    xrconcurrency::concurrent_queue<StreamConfig> m_streamConfigQueue;
+    xrconcurrency::concurrent_queue<ALXRStreamConfig> m_streamConfigQueue;
 };
 }  // namespace
 
