@@ -62,8 +62,8 @@ bool openxrInit(const RustCtx* rCtx, /*[out]*/ SystemProperties* systemPropertie
             Log::SetLevel(Log::Level::Verbose);
 
         const auto options = std::make_shared<Options>();
-        options->AppSpace = "Stage";
-        options->ViewConfiguration = "Stereo";
+        assert(options->AppSpace == "Stage");
+        assert(options->ViewConfiguration == "Stereo");
         if (options->GraphicsPlugin.empty())
             options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
 

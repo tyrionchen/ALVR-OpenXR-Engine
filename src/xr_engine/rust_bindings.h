@@ -31,7 +31,8 @@ enum GraphicsCtxApi
 enum TrackingSpace
 {
     LocalRefSpace,
-    StageRefSpace
+    StageRefSpace,
+    ViewRefSpace
 };
 
 struct SystemProperties

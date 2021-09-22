@@ -152,8 +152,11 @@ constexpr bool IsPoseTracked(const XrHandJointLocationEXT& jointLocation) {
 
 constexpr inline auto ToTrackingSpaceName(const TrackingSpace ts)
 {
-    if (ts == TrackingSpace::LocalRefSpace)
-        return "Local";
+    switch (ts)
+    {
+    case TrackingSpace::LocalRefSpace: return "Local";
+    case TrackingSpace::ViewRefSpace: return "View";
+    }
     return "Stage";
 }
 
@@ -161,7 +164,27 @@ constexpr inline auto ToTrackingSpaceName(const TrackingSpace ts)
 {
     if (EqualsIgnoreCase(tsname, "Local"))
         return TrackingSpace::LocalRefSpace;
+    if (EqualsIgnoreCase(tsname, "View"))
+        return TrackingSpace::ViewRefSpace;
     return TrackingSpace::StageRefSpace;
+}
+
+constexpr inline TrackingSpace ToTrackingSpace(const XrReferenceSpaceType xrreftype)
+{
+    switch (xrreftype) {
+    case XR_REFERENCE_SPACE_TYPE_VIEW: return TrackingSpace::ViewRefSpace;
+    case XR_REFERENCE_SPACE_TYPE_LOCAL: return TrackingSpace::LocalRefSpace;
+    }
+    return TrackingSpace::StageRefSpace;
+}
+
+constexpr inline XrReferenceSpaceType ToXrReferenceSpaceType(const TrackingSpace xrreftype)
+{
+    switch (xrreftype) {
+    case TrackingSpace::ViewRefSpace: return XR_REFERENCE_SPACE_TYPE_VIEW;
+    case TrackingSpace::LocalRefSpace: return XR_REFERENCE_SPACE_TYPE_LOCAL;
+    }
+    return XR_REFERENCE_SPACE_TYPE_STAGE;
 }
 
 inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::string_view& referenceSpaceTypeStr) {
@@ -581,16 +604,54 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_graphicsPlugin->InitializeDevice(m_instance, m_systemId);
     }
 
+    inline std::vector<XrReferenceSpaceType> GetAvailableReferenceSpaces() const
+    {
+        CHECK(m_session != XR_NULL_HANDLE);
+        uint32_t spaceCount;
+        CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, 0, &spaceCount, nullptr));
+        assert(spaceCount > 0);
+        std::vector<XrReferenceSpaceType> spaces(spaceCount);
+        CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, spaceCount, &spaceCount, spaces.data()));
+        return spaces;
+    }
+
+    inline XrReferenceSpaceCreateInfo GetAppReferenceSpaceCreateInfo() const {
+
+        const auto appReferenceSpaceType = [this]() -> std::string_view
+        {
+            constexpr const auto refSpaceName = [](const XrReferenceSpaceType refType) {
+                switch (refType) {
+                case XR_REFERENCE_SPACE_TYPE_VIEW: return "View";
+                case XR_REFERENCE_SPACE_TYPE_LOCAL: return "Local";
+                case XR_REFERENCE_SPACE_TYPE_STAGE: return "Stage";
+                    //case XR_REFERENCE_SPACE_TYPE_UNBOUNDED_MSFT:
+                    //case XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO:
+                };
+                assert(false); // "Uknown HMD reference space type"
+                return "Stage";
+            };
+            const auto availSpaces = GetAvailableReferenceSpaces();
+            assert(availSpaces.size() > 0);
+            // iterate through order of preference/priority, STAGE is the most preferred if available.
+            for (const auto spaceType : { XR_REFERENCE_SPACE_TYPE_STAGE,
+                                          XR_REFERENCE_SPACE_TYPE_LOCAL,
+                                          XR_REFERENCE_SPACE_TYPE_VIEW })
+            {
+                if (std::find(availSpaces.begin(), availSpaces.end(), spaceType) != availSpaces.end())
+                    return refSpaceName(spaceType);
+            }
+            // should never reach this point.
+            return refSpaceName(availSpaces[0]);
+        }();
+        return GetXrReferenceSpaceCreateInfo(appReferenceSpaceType);
+    }
+
     void LogReferenceSpaces() {
         CHECK(m_session != XR_NULL_HANDLE);
 
-        uint32_t spaceCount;
-        CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, 0, &spaceCount, nullptr));
-        std::vector<XrReferenceSpaceType> spaces(spaceCount);
-        CHECK_XRCMD(xrEnumerateReferenceSpaces(m_session, spaceCount, &spaceCount, spaces.data()));
-
-        Log::Write(Log::Level::Info, Fmt("Available reference spaces: %d", spaceCount));
-        for (XrReferenceSpaceType space : spaces) {
+        const auto spaces = GetAvailableReferenceSpaces();
+        Log::Write(Log::Level::Info, Fmt("Available reference spaces: %d", spaces.size()));
+        for (const XrReferenceSpaceType space : spaces) {
             Log::Write(Log::Level::Verbose, Fmt("  Name: %s", to_string(space)));
         }
     }
@@ -1184,9 +1245,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         CreateVisualizedSpaces();
 
         {
-            XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(m_options->AppSpace);
+            XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetAppReferenceSpaceCreateInfo();
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
-            m_streamConfig.trackingSpaceType = ToTrackingSpace(m_options->AppSpace);
+            Log::Write(Log::Level::Verbose, Fmt("Selected app reference space: %s", to_string(referenceSpaceCreateInfo.referenceSpaceType)));
+            m_streamConfig.trackingSpaceType = ToTrackingSpace(referenceSpaceCreateInfo.referenceSpaceType);
 
             referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo("View");
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_viewSpace));
@@ -2024,17 +2086,27 @@ struct OpenXrProgram final : IOpenXrProgram {
             return;
 
         if (newConfig.trackingSpaceType != m_streamConfig.trackingSpaceType) {
-            if (m_appSpace != XR_NULL_HANDLE) {
-                xrDestroySpace(m_appSpace);
-                m_appSpace = XR_NULL_HANDLE;
-            }
-            const auto oldTrackingSpaceName = ToTrackingSpaceName(m_streamConfig.trackingSpaceType);
-            const auto newTrackingSpaceName = ToTrackingSpaceName(newConfig.trackingSpaceType);
-            Log::Write(Log::Level::Info, Fmt("Changing tracking space from %s to %s", oldTrackingSpaceName, newTrackingSpaceName));
-            XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(newTrackingSpaceName);
-            CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
+            const auto IsRefSpaceTypeSupported = [this](const TrackingSpace ts) {
+                const auto xrSpaceRefType = ToXrReferenceSpaceType(ts);
+                const auto availSpaces = GetAvailableReferenceSpaces();
+                return std::find(availSpaces.begin(), availSpaces.end(), xrSpaceRefType) != availSpaces.end();
+            };
+            if (IsRefSpaceTypeSupported(newConfig.trackingSpaceType)) {
+                if (m_appSpace != XR_NULL_HANDLE) {
+                    xrDestroySpace(m_appSpace);
+                    m_appSpace = XR_NULL_HANDLE;
+                }
+                const auto oldTrackingSpaceName = ToTrackingSpaceName(m_streamConfig.trackingSpaceType);
+                const auto newTrackingSpaceName = ToTrackingSpaceName(newConfig.trackingSpaceType);
+                Log::Write(Log::Level::Info, Fmt("Changing tracking space from %s to %s", oldTrackingSpaceName, newTrackingSpaceName));
+                XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(newTrackingSpaceName);
+                CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_appSpace));
 
-            m_streamConfig.trackingSpaceType = newConfig.trackingSpaceType;
+                m_streamConfig.trackingSpaceType = newConfig.trackingSpaceType;
+            }
+            else {
+                Log::Write(Log::Level::Warning, Fmt("Tracking space %s is not supported, tracking space is not changed.", ToTrackingSpaceName(newConfig.trackingSpaceType)));
+            }
         }
 
         if (newConfig.refreshRate != m_streamConfig.refreshRate) {
