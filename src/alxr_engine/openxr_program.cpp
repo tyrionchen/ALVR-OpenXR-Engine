@@ -25,7 +25,7 @@
 #include <chrono>
 
 #include "concurrent_queue.h"
-#include "rust_bindings.h"
+#include "alxr_engine.h"
 #include "ALVR-common/packet_types.h"
 
 namespace {

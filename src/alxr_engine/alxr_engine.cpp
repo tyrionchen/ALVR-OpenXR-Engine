@@ -17,7 +17,7 @@
 #include <shared_mutex>
 #include <chrono>
 
-#include "rust_bindings.h"
+#include "alxr_engine.h"
 #include "ALVR-common/packet_types.h"
 
 using IOpenXrProgramPtr = std::shared_ptr<IOpenXrProgram>;
