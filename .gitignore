@@ -91,3 +91,6 @@ out/install/x64-Release/bin/api_layers/XrApiLayer_core_validation.json
 out/install/x64-Release/bin/api_layers/XrApiLayer_core_validation.dll
 out/install/x64-Release/bin/api_layers/XrApiLayer_api_dump.json
 out/install/x64-Release/bin/api_layers/XrApiLayer_api_dump.dll
+out/install/x64-Debug/bin/alxr_engine.dll
+out/install/x64-Debug/bin/alxr_engine.pdb
+out/install/x64-Debug/lib/alxr_engine.lib

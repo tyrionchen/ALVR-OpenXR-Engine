@@ -32,6 +32,7 @@ if(ANDROID)
         #$<TARGET_OBJECTS:android_native_app_glue>)
     target_link_libraries(alxr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY})
 else()
+    set(CMAKE_INSTALL_RPATH $ORIGIN)
     add_library(alxr_engine SHARED
         ${LOCAL_SOURCE}
         ${LOCAL_HEADERS}
@@ -109,9 +110,11 @@ endif()
 
 if(NOT ANDROID)
     #set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/examples)
+    #include(GNUInstallDirs)
     install(TARGETS alxr_engine
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_BINDIR})
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
     if(WIN32)
         install(FILES $<TARGET_PDB_FILE:alxr_engine> DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
