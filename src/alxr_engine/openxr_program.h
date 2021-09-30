@@ -8,6 +8,7 @@
 
 struct ALXRStreamConfig;
 struct ALXRSystemProperties;
+struct ALXRGuardianData;
 struct TrackingInfo;
 struct HapticsFeedback;
 
@@ -52,6 +53,8 @@ struct IOpenXrProgram {
     virtual void SetStreamConfig(const ALXRStreamConfig& config) = 0;
 
     virtual void RequestExitSession() = 0;
+
+    virtual bool GetGuardianData(ALXRGuardianData& gd) /*const*/ = 0;
 };
 
 struct Swapchain {

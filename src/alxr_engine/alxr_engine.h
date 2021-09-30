@@ -63,7 +63,7 @@ struct ALXRGuardianData {
     float rotation[4]; // convention: x, y, z, w
     float areaWidth;
     float areaHeight;
-    float(*perimeterPoints)[3];
+    const float (*perimeterPoints)[3];
     unsigned int perimeterPointsCount;
 };
 

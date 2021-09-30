@@ -248,6 +248,7 @@ constexpr inline TrackingQuat ToTrackingQuat(const XrQuaternionf& v)
 }
 
 constexpr inline XrPosef IdentityPose = { {0,0,0,1},{0,0,0} };
+constexpr inline XrPosef ZeroPose = { {0,0,0,0},{0,0,0} };
 
 constexpr inline XrHandJointEXT GetJointParent(const XrHandJointEXT h)
 {
@@ -379,6 +380,10 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         if (m_viewSpace != XR_NULL_HANDLE) {
             xrDestroySpace(m_viewSpace);
+        }
+
+        if (m_boundingStageSpace != XR_NULL_HANDLE) {
+            xrDestroySpace(m_boundingStageSpace);
         }
 
         if (m_appSpace != XR_NULL_HANDLE) {
@@ -1256,6 +1261,10 @@ struct OpenXrProgram final : IOpenXrProgram {
             Log::Write(Log::Level::Verbose, Fmt("Selected app reference space: %s", to_string(referenceSpaceCreateInfo.referenceSpaceType)));
             m_streamConfig.trackingSpaceType = ToTrackingSpace(referenceSpaceCreateInfo.referenceSpaceType);
 
+            referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo("Stage");
+            if (XR_FAILED(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_boundingStageSpace)))
+                m_boundingStageSpace = XR_NULL_HANDLE;
+
             referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo("View");
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_viewSpace));
         }
@@ -1405,7 +1414,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                     return;
                 }
                 case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
-                    auto sessionStateChangedEvent = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
+                    const auto& sessionStateChangedEvent = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
                     HandleSessionStateChangedEvent(sessionStateChangedEvent, exitRenderLoop, requestRestart);
                     break;
                 }
@@ -1420,7 +1429,13 @@ struct OpenXrProgram final : IOpenXrProgram {
                     for (const auto& [k, v] : m_input.scalarActionMap)
                         LogActionSourceName(v.xrAction, v.localizedName.data());
                     break;
-                case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+                case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+                    const auto& spaceChangedEvent = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
+                    Log::Write(Log::Level::Verbose, Fmt("reference space: %d changing", spaceChangedEvent.referenceSpaceType));
+                    const auto appRefSpace = ToXrReferenceSpaceType(m_streamConfig.trackingSpaceType);
+                    if (spaceChangedEvent.referenceSpaceType == appRefSpace)
+                        enqueueGuardianChanged(spaceChangedEvent.changeTime);
+                }  break;
                 default: {
                     Log::Write(Log::Level::Verbose, Fmt("Ignoring event type %d", event->type));
                     break;
@@ -1443,6 +1458,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
 
         switch (m_sessionState) {
+            case XR_SESSION_STATE_SYNCHRONIZED: {
+                m_delayOnGuardianChanged = true;
+                break;
+            }
             case XR_SESSION_STATE_READY: {
                 CHECK(m_session != XR_NULL_HANDLE);
                 XrSessionBeginInfo sessionBeginInfo{XR_TYPE_SESSION_BEGIN_INFO};
@@ -1750,8 +1769,14 @@ struct OpenXrProgram final : IOpenXrProgram {
         frameEndInfo.layerCount = (uint32_t)layers.size();
         frameEndInfo.layers = layers.data();
         CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
-
+        
         ++m_frameIndex;
+
+        if (m_delayOnGuardianChanged)
+        {
+            m_delayOnGuardianChanged = false;
+            enqueueGuardianChanged();
+        }
     }
 
     bool RenderLayer(XrTime predictedDisplayTime, std::vector<XrCompositionLayerProjectionView>& projectionLayerViews,
@@ -1968,14 +1993,32 @@ struct OpenXrProgram final : IOpenXrProgram {
         XrPosef pose = IdentityPose;
         XrVector3f linearVelocity = { 0,0,0 };
         XrVector3f angularVelocity = { 0,0,0 };
+
+        constexpr inline bool is_zero() const {
+            return  pose.position.x == 0 &&
+                    pose.position.y == 0 &&
+                    pose.position.z == 0 &&
+                    pose.orientation.x == 0 &&
+                    pose.orientation.y == 0 &&
+                    pose.orientation.z == 0 &&
+                    pose.orientation.w == 0;
+
+        }
     };
     constexpr /*inline*/ static const SpaceLoc IdentitySpaceLoc = { IdentityPose, {0,0,0}, {0,0,0}};
+    constexpr /*inline*/ static const SpaceLoc ZeroSpaceLoc = { ZeroPose, {0,0,0}, {0,0,0} };
 
-    inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const XrSpace& baseSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
+    inline SpaceLoc GetSpaceLocation
+    (
+        const XrSpace& targetSpace,
+        const XrSpace& baseSpace,
+        const XrTime& time,
+        const SpaceLoc& initLoc = IdentitySpaceLoc
+    ) const
     {
         XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
         XrSpaceLocation spaceLocation{ XR_TYPE_SPACE_LOCATION, &velocity };
-        const auto res = xrLocateSpace(targetSpace, baseSpace, m_lastDisplayTime, &spaceLocation);
+        const auto res = xrLocateSpace(targetSpace, baseSpace, time, &spaceLocation);
         CHECK_XRRESULT(res, "xrLocateSpace");
         
         SpaceLoc result = initLoc;
@@ -1998,9 +2041,19 @@ struct OpenXrProgram final : IOpenXrProgram {
         return result;
     }
 
+    inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const XrSpace& baseSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
+    {
+        return GetSpaceLocation(targetSpace, baseSpace, m_lastDisplayTime, initLoc);
+    }
+
+    inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const XrTime& time, const SpaceLoc& initLoc = IdentitySpaceLoc) const
+    {
+        return GetSpaceLocation(targetSpace, m_appSpace, time, initLoc);
+    }
+
     inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
     {
-        return GetSpaceLocation(targetSpace, m_appSpace, initLoc);
+        return GetSpaceLocation(targetSpace, m_lastDisplayTime, initLoc);
     }
 
     void GetControllerInfo(TrackingInfo& info, const double /*displayTime*/) const
@@ -2139,10 +2192,91 @@ struct OpenXrProgram final : IOpenXrProgram {
         //m_streamConfig = newConfig;
     }
 
-    virtual inline void RequestExitSession() override {
+    virtual inline void RequestExitSession() override
+    {
         if (m_session == XR_NULL_HANDLE)
             return;
         CHECK_XRCMD(xrRequestExitSession(m_session));
+    }
+
+    virtual inline bool GetGuardianData(ALXRGuardianData& gd) /*const*/ override
+    {
+        gd.shouldSync = false;
+        return m_guardianChangedQueue.try_pop(gd);
+    }
+
+    inline bool GetBoundingStageSpace(const XrTime& time, SpaceLoc& space, XrExtent2Df& boundingArea) const
+    {
+        if (m_session == XR_NULL_HANDLE ||
+            m_boundingStageSpace == XR_NULL_HANDLE)
+            return false;
+        if (XR_FAILED(xrGetReferenceSpaceBoundsRect(m_session, XR_REFERENCE_SPACE_TYPE_STAGE, &boundingArea)))
+        {
+            Log::Write(Log::Level::Info, "xrGetReferenceSpaceBoundsRect FAILED.");
+            return false;
+        }
+        space = GetSpaceLocation(m_boundingStageSpace, time, ZeroSpaceLoc);
+        return !space.is_zero();
+    }
+
+    inline bool GetBoundingStageSpace(const XrTime& time, ALXRGuardianData& gd) const
+    {
+        SpaceLoc loc;
+        XrExtent2Df boundingArea;
+        if (!GetBoundingStageSpace(time, loc, boundingArea))
+            return false;
+                
+        gd.shouldSync = true;
+        gd.areaHeight = boundingArea.height;
+        gd.areaWidth = boundingArea.height;
+        const auto& pose = loc.pose;
+
+        gd.position[0] = pose.position.x;
+        gd.position[1] = pose.position.y;
+        gd.position[2] = pose.position.z;
+
+        gd.rotation[0] = pose.orientation.x;
+        gd.rotation[1] = pose.orientation.y;
+        gd.rotation[2] = pose.orientation.z;
+        gd.rotation[3] = pose.orientation.w;
+
+        static constexpr const unsigned int PointCount = 4;
+        struct PerimeterPoints {            
+            float points[PointCount][3]{};
+            constexpr inline PerimeterPoints() {
+                points[0][0] = -1.0f;
+                points[0][1] = -1.0f;
+
+                points[1][0] = -1.0f;
+                points[1][1] = 1.0f;
+
+                points[2][0] = 1.0f;
+                points[2][1] = 1.0f;
+
+                points[3][0] = 1.0f;
+                points[3][1] = -1.0f;
+            }
+        };
+        static constexpr const PerimeterPoints SquarePerimeter{};
+        gd.perimeterPoints = SquarePerimeter.points;
+        gd.perimeterPointsCount = PointCount;
+        return true;
+    }
+
+    inline bool enqueueGuardianChanged(const XrTime& time)
+    {
+        Log::Write(Log::Level::Verbose, "Enqueuing guardian changed");
+        ALXRGuardianData gd;
+        gd.shouldSync = false;
+        if (!GetBoundingStageSpace(time, gd))
+            return false;
+        Log::Write(Log::Level::Verbose, "Guardian changed enqueud successfully.");
+        m_guardianChangedQueue.push(gd);
+        return true;
+    }
+
+    bool enqueueGuardianChanged() {
+        return enqueueGuardianChanged(m_lastDisplayTime);
     }
 
    private:
@@ -2152,6 +2286,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     XrInstance m_instance{XR_NULL_HANDLE};
     XrSession m_session{XR_NULL_HANDLE};
     XrSpace m_appSpace{XR_NULL_HANDLE};
+    XrSpace m_boundingStageSpace{ XR_NULL_HANDLE };
     XrSpace m_viewSpace{ XR_NULL_HANDLE };
     XrFormFactor m_formFactor{XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
     XrViewConfigurationType m_viewConfigType{XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
@@ -2189,9 +2324,14 @@ struct OpenXrProgram final : IOpenXrProgram {
     std::vector<float> m_displayRefreshRates;
 
     ALXRStreamConfig m_streamConfig { 90.0, ALXRTrackingSpace::LocalRefSpace };
-    
-    xrconcurrency::concurrent_queue<HapticsFeedback> m_hapticsQueue;
-    xrconcurrency::concurrent_queue<ALXRStreamConfig> m_streamConfigQueue;
+
+    using HapticsFeedbackQueue  = xrconcurrency::concurrent_queue<HapticsFeedback>;
+    using StreamConfigQueue     = xrconcurrency::concurrent_queue<ALXRStreamConfig>;
+    using GuardianChangedQueue  = xrconcurrency::concurrent_queue<ALXRGuardianData>;
+    HapticsFeedbackQueue m_hapticsQueue;
+    StreamConfigQueue    m_streamConfigQueue;
+    GuardianChangedQueue m_guardianChangedQueue;
+    bool                 m_delayOnGuardianChanged = false;
 };
 }  // namespace
 

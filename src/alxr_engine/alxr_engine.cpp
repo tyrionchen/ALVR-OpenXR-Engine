@@ -158,7 +158,17 @@ void alxr_set_stream_config(ALXRStreamConfig config)
     }
 }
 
-ALXRGuardianData alxr_get_guardian_data() { return {}; }
+ALXRGuardianData alxr_get_guardian_data()
+{
+    ALXRGuardianData gd{};
+    gd.shouldSync = false;
+    gd.perimeterPoints = 0;
+    gd.perimeterPoints = nullptr;
+    if (const auto programPtr = gProgram) {
+        programPtr->GetGuardianData(gd);
+    }
+    return gd;
+}
 
 void alxr_on_tracking_update(bool /*clientsidePrediction*/)
 {
