@@ -2090,22 +2090,22 @@ struct OpenXrProgram final : IOpenXrProgram {
         {
             const auto ToEyeFov = [](const XrFovf& fov) -> EyeFov
             {
-                return {
-                    Math::ToDegrees(fov.angleLeft),
-                    Math::ToDegrees(fov.angleRight),
-                    Math::ToDegrees(fov.angleUp),
-                    Math::ToDegrees(fov.angleDown)
+                return EyeFov {
+                    std::fabs(Math::ToDegrees(fov.angleLeft)),
+                    std::fabs(Math::ToDegrees(fov.angleRight)),
+                    std::fabs(Math::ToDegrees(fov.angleUp)),
+                    std::fabs(Math::ToDegrees(fov.angleDown))
                 };
             };
             info.eyeFov[0] = ToEyeFov(m_views[0].fov);
             info.eyeFov[1] = ToEyeFov(m_views[1].fov);
-                        
+
             XrVector3f v;
             XrVector3f_Sub(&v, &m_views[1].pose.position, &m_views[0].pose.position);
             float ipd = std::fabs(XrVector3f_Length(&v));
             if (ipd < 0.00001f)
                 ipd = 0.063f;
-            info.ipd = ipd * 1000.0f;
+            info.ipd = ipd;
 
             const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace);
             info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
@@ -2225,10 +2225,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         XrExtent2Df boundingArea;
         if (!GetBoundingStageSpace(time, loc, boundingArea))
             return false;
-                
+        
         gd.shouldSync = true;
+        gd.areaWidth = boundingArea.width;
         gd.areaHeight = boundingArea.height;
-        gd.areaWidth = boundingArea.height;
+        
         const auto& pose = loc.pose;
 
         gd.position[0] = pose.position.x;
@@ -2241,24 +2242,27 @@ struct OpenXrProgram final : IOpenXrProgram {
         gd.rotation[3] = pose.orientation.w;
 
         static constexpr const unsigned int PointCount = 4;
-        struct PerimeterPoints {            
-            float points[PointCount][3]{};
-            constexpr inline PerimeterPoints() {
-                points[0][0] = -1.0f;
-                points[0][1] = -1.0f;
+        thread_local float SquarePerimeter[PointCount][3]{};
 
-                points[1][0] = -1.0f;
-                points[1][1] = 1.0f;
+        const float halfWidth = gd.areaWidth * 0.5f;
+        const float halfHeight = gd.areaHeight * 0.5f;
+        SquarePerimeter[0][0] = gd.position[0] - halfWidth;
+        SquarePerimeter[0][1] = gd.position[1];
+        SquarePerimeter[0][2] = gd.position[2] - halfHeight;
 
-                points[2][0] = 1.0f;
-                points[2][1] = 1.0f;
+        SquarePerimeter[1][0] = gd.position[0] - halfWidth;
+        SquarePerimeter[1][1] = gd.position[1];
+        SquarePerimeter[1][2] = gd.position[2] + halfHeight;
 
-                points[3][0] = 1.0f;
-                points[3][1] = -1.0f;
-            }
-        };
-        static constexpr const PerimeterPoints SquarePerimeter{};
-        gd.perimeterPoints = SquarePerimeter.points;
+        SquarePerimeter[2][0] = gd.position[0] + halfWidth;
+        SquarePerimeter[2][1] = gd.position[1];
+        SquarePerimeter[2][2] = gd.position[2] + halfHeight;
+
+        SquarePerimeter[3][0] = gd.position[0] + halfWidth;
+        SquarePerimeter[3][1] = gd.position[1];
+        SquarePerimeter[3][2] = gd.position[2] - halfHeight;
+
+        gd.perimeterPoints = SquarePerimeter;
         gd.perimeterPointsCount = PointCount;
         return true;
     }
