@@ -13,6 +13,9 @@ CMakeLists.txt.user
 *.log
 pregen/
 
+# Marker file for a snapshot build
+SNAPSHOT
+
 # Cached python scripts in bytecode form
 *.pyc
 applyfixes.sh
@@ -58,6 +61,11 @@ local.properties
 !.markdownlint.yaml
 !.proclamation.json
 !.reuse
+
+# Output artifact
+*.aar
+*.pom
+
 out/install/x64-Debug/share/doc/openxr/LICENSE
 out/install/x64-Debug/lib/openxr_loaderd.lib
 out/install/x64-Debug/include/openxr/openxr_reflection.h
