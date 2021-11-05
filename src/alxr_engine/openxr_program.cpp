@@ -2110,6 +2110,8 @@ struct OpenXrProgram final : IOpenXrProgram {
             const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace);
             info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
             info.HeadPose_Pose_Position = ToTrackingVector3(hmdSpaceLoc.pose.position);
+            info.HeadPose_LinearVelocity = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
+            info.HeadPose_AngularVelocity = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
 
             //XrVector3f_Add(&v, &m_views[0].pose.position, &m_views[1].pose.position);
             //XrVector3f_Scale(&v, &v, 0.5f);
