@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2021 The Khronos Group Inc.
+# Copyright (c) 2019-2022, The Khronos Group Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 # Main azure-pipelines configuration for the OpenXR-SDK-Sources repo.
@@ -62,7 +62,7 @@ stages:
               presentationBackend: wayland
         pool:
           vmImage: "ubuntu-latest"
-        container: khronosgroup/docker-images:openxr-sdk.202102
+        container: khronosgroup/docker-images:openxr-sdk.202110
         steps:
           - task: DownloadPipelineArtifact@2
             displayName: Download archived OpenXR-SDK

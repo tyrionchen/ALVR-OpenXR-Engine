@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2021, The Khronos Group Inc.
+// Copyright (c) 2017-2022, The Khronos Group Inc.
 //
 // SPDX-License-Identifier: CC-BY-4.0
 
@@ -194,7 +194,7 @@ tag above.
 If no runtime is found this way, as a fall-back, a similar process as on
 Linux takes place, searching for `active_runtime.json` files in:
 
-* `/odm/etc/openxr/1`
+* `/oem/etc/openxr/1`
 * `/vendor/etc/openxr/1`
 * `/system/etc/openxr/1`
 
@@ -440,7 +440,7 @@ If more than one is found, user preferences are used to identify the
 "active" runtime.
 
 The path containing the dynamic library is computed from
-`ApplicationInfo.getNativeLibraryDir()` and the specified ABI, and the
+`ApplicationInfo.nativeLibraryDir` and the specified ABI, and the
 filename is returned using the filename found in the OpenXR metadata value.
 The "hasFunctions" column is dynamically generated based on the presence of
 any function metadata entries.
