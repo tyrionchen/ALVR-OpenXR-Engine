@@ -69,6 +69,7 @@ target_include_directories(alxr_engine
     ${PROJECT_SOURCE_DIR}/external/include
 
     ${ALVR_COMMON_DIR}/../
+    ${ALVR_COMMON_DIR}/../app/src/main/cpp
 )
 
 if(GLSLANG_VALIDATOR AND NOT GLSLC_COMMAND)

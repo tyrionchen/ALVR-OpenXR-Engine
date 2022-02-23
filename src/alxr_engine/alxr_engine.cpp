@@ -50,7 +50,7 @@ constexpr inline auto graphics_api_str(const ALXRGraphicsApi gcp)
 
 bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemProperties) {
     try {
-        if (rCtx == nullptr || rCtx->legacySend == nullptr)
+        if (rCtx == nullptr || rCtx->inputSend == nullptr)
         {
             Log::Write(Log::Level::Error, "Rust context has not been setup!");
             return false;
@@ -173,7 +173,7 @@ ALXRGuardianData alxr_get_guardian_data()
 void alxr_on_tracking_update(bool /*clientsidePrediction*/)
 {
     const auto rustCtx = gRustCtx;
-    if (rustCtx == nullptr || rustCtx->legacySend == nullptr)
+    if (rustCtx == nullptr || rustCtx->inputSend == nullptr)
         return;
     TrackingInfo newInfo;
     {
@@ -185,7 +185,7 @@ void alxr_on_tracking_update(bool /*clientsidePrediction*/)
     //++FrameIndex;
     //newInfo.FrameIndex = FrameIndex;
     //newInfo.clientTime = GetTimestampUs();
-    rustCtx->legacySend(reinterpret_cast<const unsigned char*>(&newInfo), static_cast<int>(sizeof(newInfo)));
+    rustCtx->inputSend(&newInfo);
 }
 
 void alxr_on_receive(const unsigned char* packet, unsigned int packetSize)

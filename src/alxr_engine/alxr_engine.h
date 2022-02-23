@@ -12,6 +12,11 @@
 #define DLLEXPORT
 #endif
 
+#ifndef ALXR_CLIENT
+    #define ALXR_CLIENT
+#endif
+#include "bindings.h"
+
 #ifdef __cplusplus
 extern "C" {;
 #endif
@@ -47,7 +52,7 @@ struct ALXRSystemProperties
 
 struct ALXRRustCtx
 {
-    void (*legacySend)(const unsigned char* buffer, unsigned int size);
+    void (*inputSend)(const TrackingInfo* data);
 
     ALXRGraphicsApi graphicsApi; // TODO: make this a part of StreamConfig structure and exposes available APIs in the server UI.
     bool verbose;

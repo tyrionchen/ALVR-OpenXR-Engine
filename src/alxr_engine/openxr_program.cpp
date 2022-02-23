@@ -1641,7 +1641,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
             m_input.handActive[hand] = poseState.isActive;
 
-            constexpr const std::uint32_t EnableRightControllerMask = //TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
+            constexpr const std::uint32_t EnableRightControllerMask = TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
                                                                       TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST;
             constexpr const std::uint32_t EnableLeftControllerMask  = EnableRightControllerMask |
                                                                       TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
@@ -2085,6 +2085,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         info.FrameIndex = m_frameIndex;
         info.battery = 100;// g_ctx.batteryLevel;
         info.plugged = true;
+        info.mounted = true;
 
         if (m_views.size() >= 2)
         {
