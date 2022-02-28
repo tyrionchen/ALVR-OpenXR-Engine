@@ -592,9 +592,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK(blendModeFound);
     }
 
-    void InitializeSystem() override {
+    void InitializeSystem(const ALXRPaths& xrPaths) override {
         CHECK(m_instance != XR_NULL_HANDLE);
         CHECK(m_systemId == XR_NULL_SYSTEM_ID);
+
+        m_alxrPaths = xrPaths;
 
         m_formFactor = GetXrFormFactor(m_options->FormFactor);
         m_viewConfigType = GetXrViewConfigurationType(m_options->ViewConfiguration);
@@ -1605,10 +1607,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 bonePos = ToTrackingVector3(localizedPos);
             }
 
-            controller.flags |= TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_HAND;
-            if (hand == Side::LEFT)
-                controller.flags |= TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
-            controller.inputStateStatus = 0;
+            controller.isHand = true;
 
             const XrMatrix4x4f& palmMatP = oculusOrientedJointPoses[XR_HAND_JOINT_PALM_EXT];
             XrQuaternionf palmRot;
@@ -1641,20 +1640,20 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
             m_input.handActive[hand] = poseState.isActive;
 
-            constexpr const std::uint32_t EnableRightControllerMask = TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
-                                                                      TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST;
-            constexpr const std::uint32_t EnableLeftControllerMask  = EnableRightControllerMask |
-                                                                      TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
-            
-            const std::uint32_t enableControllerMask = hand == Side::LEFT ? EnableLeftControllerMask : EnableRightControllerMask;
+            //constexpr const std::uint32_t EnableRightControllerMask = TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
+            //                                                          TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST;
+            //constexpr const std::uint32_t EnableLeftControllerMask  = EnableRightControllerMask |
+            //                                                          TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
+            //
+            //const std::uint32_t enableControllerMask = hand == Side::LEFT ? EnableLeftControllerMask : EnableRightControllerMask;
 
             auto& controllerInfo = m_input.controllerInfo[hand];
             // xrGetActionStatePose doesn't appear to be a reliable method to determine if a controller is active,
             // at least with WMR's current OpenXR runtime.
             // if (m_input.handActive[hand] == XR_TRUE) 
-                controllerInfo.flags |= enableControllerMask;
-            controllerInfo.batteryPercentRemaining = 100; // OpenXR has no method of obtaining controller/HMD battery life.
-
+                controllerInfo.enabled = true;
+                //controllerInfo.flags |= enableControllerMask;
+            
             for (const auto& [buttonType, v] : m_input.boolActionMap)
             {
                 getInfo.action = v.xrAction;
@@ -1701,8 +1700,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         HapticsFeedback hapticFeedback;
         while (m_hapticsQueue.try_pop(hapticFeedback) && popCount < MaxPopPerFrame)
         {
-            const size_t hand = hapticFeedback.hand == 0 ? 1 : 0;
-            if ((m_input.controllerInfo[hand].flags & TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_HAND) == 0)
+            const size_t hand = hapticFeedback.alxrPath == m_alxrPaths.right_haptics ? 1 : 0;
+            if (!m_input.controllerInfo[hand].isHand)
             {
                 //Log::Write(Log::Level::Info, Fmt("Haptics: amp:%f duration:%f freq:%f", hapticFeedback.amplitude, hapticFeedback.duration, hapticFeedback.frequency));
                 XrHapticVibration vibration{ XR_TYPE_HAPTIC_VIBRATION };
@@ -2075,58 +2074,74 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
     }
 
+    static inline ALXREyeInfo GetEyeInfo(const XrView& left_view, const XrView& right_view)
+    {
+        XrVector3f v;
+        XrVector3f_Sub(&v, &right_view.pose.position, &left_view.pose.position);
+        float ipd = std::fabs(XrVector3f_Length(&v));
+        if (ipd < 0.00001f)
+            ipd = 0.063f;
+        constexpr const auto ToEyeFov = [](const XrFovf& fov) -> EyeFov
+        {
+            return EyeFov{
+                std::fabs(Math::ToDegrees(fov.angleLeft)),
+                std::fabs(Math::ToDegrees(fov.angleRight)),
+                std::fabs(Math::ToDegrees(fov.angleUp)),
+                std::fabs(Math::ToDegrees(fov.angleDown))
+            };
+        };
+        return ALXREyeInfo{
+            .eveFov = {
+                ToEyeFov(left_view.fov),
+                ToEyeFov(right_view.fov)
+            },
+            .ipd = ipd
+        };
+    }
+
+    static inline ALXREyeInfo GetEyeInfo(const std::array<XrView, 2>& views)
+    {
+        return GetEyeInfo(views[0], views[1]);
+    }
+
+    virtual inline bool GetEyeInfo(ALXREyeInfo& eyeInfo) const override
+    {
+        if (m_views.size() < 2)
+            return false;
+        eyeInfo = GetEyeInfo(m_views[0], m_views[1]);
+        return true;
+    }
+
     virtual bool GetTrackingInfo(TrackingInfo& info) const override
     {
         info = {};
-        info.type = ALVR_PACKET_TYPE_TRACKING_INFO;
-        info.flags = 0;
-        info.clientTime = GetTimestampUs();
-        info.predictedDisplayTime = static_cast<double>(m_lastDisplayTime) * 1e-9;
-        info.FrameIndex = m_frameIndex;
-        info.battery = 100;// g_ctx.batteryLevel;
-        info.plugged = true;
+        info.targetTimestampNs = static_cast<decltype(info.targetTimestampNs)>(m_lastDisplayTime);
         info.mounted = true;
 
         if (m_views.size() >= 2)
         {
-            const auto ToEyeFov = [](const XrFovf& fov) -> EyeFov
-            {
-                return EyeFov {
-                    std::fabs(Math::ToDegrees(fov.angleLeft)),
-                    std::fabs(Math::ToDegrees(fov.angleRight)),
-                    std::fabs(Math::ToDegrees(fov.angleUp)),
-                    std::fabs(Math::ToDegrees(fov.angleDown))
-                };
-            };
-            info.eyeFov[0] = ToEyeFov(m_views[0].fov);
-            info.eyeFov[1] = ToEyeFov(m_views[1].fov);
+            //const auto ToEyeFov = [](const XrFovf& fov) -> EyeFov
+            //{
+            //    return EyeFov {
+            //        std::fabs(Math::ToDegrees(fov.angleLeft)),
+            //        std::fabs(Math::ToDegrees(fov.angleRight)),
+            //        std::fabs(Math::ToDegrees(fov.angleUp)),
+            //        std::fabs(Math::ToDegrees(fov.angleDown))
+            //    };
+            //};
+            //info.eyeFov[0] = ToEyeFov(m_views[0].fov);
+            //info.eyeFov[1] = ToEyeFov(m_views[1].fov);
 
-            XrVector3f v;
-            XrVector3f_Sub(&v, &m_views[1].pose.position, &m_views[0].pose.position);
-            float ipd = std::fabs(XrVector3f_Length(&v));
-            if (ipd < 0.00001f)
-                ipd = 0.063f;
-            info.ipd = ipd;
+            //XrVector3f v;
+            //XrVector3f_Sub(&v, &m_views[1].pose.position, &m_views[0].pose.position);
+            //float ipd = std::fabs(XrVector3f_Length(&v));
+            //if (ipd < 0.00001f)
+            //    ipd = 0.063f;
+            //info.ipd = ipd;
 
             const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace);
             info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
             info.HeadPose_Pose_Position = ToTrackingVector3(hmdSpaceLoc.pose.position);
-            info.HeadPose_LinearVelocity = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
-            info.HeadPose_AngularVelocity = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
-
-            //XrVector3f_Add(&v, &m_views[0].pose.position, &m_views[1].pose.position);
-            //XrVector3f_Scale(&v, &v, 0.5f);
-
-            //XrQuaternionf result;
-            //XrQuaternionf_Lerp(&result, &m_views[0].pose.orientation, &m_views[1].pose.orientation, 0.5f);
-
-            //
-            //Log::Write(Log::Level::Info, Fmt("HMD rot from view data: %f %f %f %f", result.x, result.y, result.z, result.w));
-            //Log::Write(Log::Level::Info, Fmt("HMD rot from view space: %f %f %f %f", hmdSpaceLoc.pose.orientation.x, hmdSpaceLoc.pose.orientation.y, hmdSpaceLoc.pose.orientation.z, hmdSpaceLoc.pose.orientation.w));
-
-            //Log::Write(Log::Level::Info, Fmt("HMD pos from view data: %f %f %f %f", v.x, v.y, v.z));
-            //Log::Write(Log::Level::Info, Fmt("HMD pos from view space: %f %f %f %f", hmdSpaceLoc.pose.position.x, hmdSpaceLoc.pose.position.y, hmdSpaceLoc.pose.position.z));
-
         }
 
         GetControllerInfo(info, 0);// clientsidePrediction ? frame->displayTime : 0.);
@@ -2227,46 +2242,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         SpaceLoc loc;
         XrExtent2Df boundingArea;
         if (!GetBoundingStageSpace(time, loc, boundingArea))
-            return false;
-        
+            return false;        
         gd.shouldSync = true;
         gd.areaWidth = boundingArea.width;
         gd.areaHeight = boundingArea.height;
-        
-        const auto& pose = loc.pose;
-
-        gd.position[0] = pose.position.x;
-        gd.position[1] = pose.position.y;
-        gd.position[2] = pose.position.z;
-
-        gd.rotation[0] = pose.orientation.x;
-        gd.rotation[1] = pose.orientation.y;
-        gd.rotation[2] = pose.orientation.z;
-        gd.rotation[3] = pose.orientation.w;
-
-        static constexpr const unsigned int PointCount = 4;
-        thread_local float SquarePerimeter[PointCount][3]{};
-
-        const float halfWidth = gd.areaWidth * 0.5f;
-        const float halfHeight = gd.areaHeight * 0.5f;
-        SquarePerimeter[0][0] = gd.position[0] - halfWidth;
-        SquarePerimeter[0][1] = gd.position[1];
-        SquarePerimeter[0][2] = gd.position[2] - halfHeight;
-
-        SquarePerimeter[1][0] = gd.position[0] - halfWidth;
-        SquarePerimeter[1][1] = gd.position[1];
-        SquarePerimeter[1][2] = gd.position[2] + halfHeight;
-
-        SquarePerimeter[2][0] = gd.position[0] + halfWidth;
-        SquarePerimeter[2][1] = gd.position[1];
-        SquarePerimeter[2][2] = gd.position[2] + halfHeight;
-
-        SquarePerimeter[3][0] = gd.position[0] + halfWidth;
-        SquarePerimeter[3][1] = gd.position[1];
-        SquarePerimeter[3][2] = gd.position[2] - halfHeight;
-
-        gd.perimeterPoints = SquarePerimeter;
-        gd.perimeterPointsCount = PointCount;
         return true;
     }
 
@@ -2313,6 +2292,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     bool m_sessionRunning{false};
 
     XrEventDataBuffer m_eventDataBuffer;
+    ALXRPaths  m_alxrPaths;
     InputState m_input;
 
     // XR_EXT_hand_tracking fun pointers.

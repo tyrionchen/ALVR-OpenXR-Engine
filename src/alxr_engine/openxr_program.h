@@ -5,12 +5,30 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 
 struct ALXRStreamConfig;
 struct ALXRSystemProperties;
 struct ALXRGuardianData;
+struct ALXREyeInfo;
 struct TrackingInfo;
-struct HapticsFeedback;
+
+struct ALXRPaths {
+    constexpr static const std::uint64_t INVALID_PATH = std::uint64_t(-1);
+
+    std::uint64_t head;
+    std::uint64_t left_hand;
+    std::uint64_t right_hand;
+    std::uint64_t left_haptics;
+    std::uint64_t right_haptics;
+};
+
+struct HapticsFeedback {
+    std::uint64_t alxrPath;
+    float amplitude;
+    float duration;
+    float frequency;
+};
 
 struct IOpenXrProgram {
     virtual ~IOpenXrProgram() = default;
@@ -20,7 +38,7 @@ struct IOpenXrProgram {
 
     // Select a System for the view configuration specified in the Options and initialize the graphics device for the selected
     // system.
-    virtual void InitializeSystem() = 0;
+    virtual void InitializeSystem(const ALXRPaths& xrPaths) = 0;
 
     // Create a Session and other basic session-level initialization.
     virtual void InitializeSession() = 0;
@@ -55,6 +73,8 @@ struct IOpenXrProgram {
     virtual void RequestExitSession() = 0;
 
     virtual bool GetGuardianData(ALXRGuardianData& gd) /*const*/ = 0;
+
+    virtual bool GetEyeInfo(ALXREyeInfo&) const = 0;
 };
 
 struct Swapchain {

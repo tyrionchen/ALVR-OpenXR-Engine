@@ -21,8 +21,8 @@ if(POLICY CMP0075)
     cmake_policy(SET CMP0075 NEW)
 endif()
 
-# Entire project uses C++17
-set(CMAKE_CXX_STANDARD 17)
+# Entire project uses C++20
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 

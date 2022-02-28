@@ -50,9 +50,17 @@ struct ALXRSystemProperties
     unsigned int recommendedEyeHeight;
 };
 
+struct ALXREyeInfo
+{
+    EyeFov eveFov[2];
+    float ipd;
+};
+
 struct ALXRRustCtx
 {
     void (*inputSend)(const TrackingInfo* data);
+    void (*viewsConfigSend)(const ALXREyeInfo* eyeInfo);
+    unsigned long long (*pathStringToHash)(const char* path);
 
     ALXRGraphicsApi graphicsApi; // TODO: make this a part of StreamConfig structure and exposes available APIs in the server UI.
     bool verbose;
@@ -64,12 +72,8 @@ struct ALXRRustCtx
 
 struct ALXRGuardianData {
     bool shouldSync;
-    float position[3];
-    float rotation[4]; // convention: x, y, z, w
     float areaWidth;
     float areaHeight;
-    const float (*perimeterPoints)[3];
-    unsigned int perimeterPointsCount;
 };
 
 struct ALXRStreamConfig {
@@ -96,7 +100,7 @@ DLLEXPORT ALXRGuardianData alxr_get_guardian_data();
 
 DLLEXPORT void alxr_on_receive(const unsigned char* packet, unsigned int packetSize);
 DLLEXPORT void alxr_on_tracking_update(bool clientsidePrediction);
-
+DLLEXPORT void alxr_on_haptics_feedback(unsigned long long path, float duration_s, float frequency, float amplitude);
 #ifdef __cplusplus
 }
 #endif

@@ -48,9 +48,16 @@ constexpr inline auto graphics_api_str(const ALXRGraphicsApi gcp)
     }
 }
 
+constexpr inline bool is_valid(const ALXRRustCtx& rCtx)
+{
+    return  rCtx.inputSend != nullptr &&
+            rCtx.viewsConfigSend != nullptr &&
+            rCtx.pathStringToHash != nullptr; 
+}
+
 bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemProperties) {
     try {
-        if (rCtx == nullptr || rCtx->inputSend == nullptr)
+        if (rCtx == nullptr || !is_valid(*rCtx))
         {
             Log::Write(Log::Level::Error, "Rust context has not been setup!");
             return false;
@@ -92,7 +99,13 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         gProgram = CreateOpenXrProgram(options, platformPlugin);
 
         gProgram->CreateInstance();
-        gProgram->InitializeSystem();
+        gProgram->InitializeSystem(ALXRPaths {
+            .head           = rCtx->pathStringToHash("/user/head"),
+            .left_hand      = rCtx->pathStringToHash("/user/hand/left"),
+            .right_hand     = rCtx->pathStringToHash("/user/hand/right"),
+            .left_haptics   = rCtx->pathStringToHash("/user/hand/left/output/haptic"),
+            .right_haptics  = rCtx->pathStringToHash("/user/hand/right/output/haptic")
+        });
         gProgram->InitializeSession();
         gProgram->CreateSwapchains();
 
@@ -142,6 +155,22 @@ void alxr_process_frame(bool* exitRenderLoop /*= non-null */, bool* requestResta
         std::unique_lock<std::shared_mutex> lock(gTrackingMutex);
         gLastTrackingInfo = newInfo;
     }
+
+    thread_local ALXREyeInfo gLastEyeInfo{
+        .eveFov = { {0,0,0,0}, {0,0,0,0} },
+        .ipd = 0.0f
+    };
+    ALXREyeInfo newEyeInfo{};
+    if (!gProgram->GetEyeInfo(newEyeInfo))
+        return;
+    if (std::abs(newEyeInfo.ipd - gLastEyeInfo.ipd) > 0.001 ||
+        std::abs(newEyeInfo.eveFov[0].left - gLastEyeInfo.eveFov[0].left) > 0.001 ||
+        std::abs(newEyeInfo.eveFov[1].left - gLastEyeInfo.eveFov[1].left) > 0.001)
+    {
+        gLastEyeInfo = newEyeInfo;
+        gRustCtx->viewsConfigSend(&newEyeInfo);
+        //Log::Write(Log::Level::Info, "new viewConfig sent.");
+    }
 }
 
 bool alxr_is_session_running()
@@ -162,8 +191,6 @@ ALXRGuardianData alxr_get_guardian_data()
 {
     ALXRGuardianData gd{};
     gd.shouldSync = false;
-    gd.perimeterPoints = 0;
-    gd.perimeterPoints = nullptr;
     if (const auto programPtr = gProgram) {
         programPtr->GetGuardianData(gd);
     }
@@ -180,25 +207,35 @@ void alxr_on_tracking_update(bool /*clientsidePrediction*/)
         std::shared_lock<std::shared_mutex> l(gTrackingMutex);
         newInfo = gLastTrackingInfo;
     }
-    if (newInfo.type != ALVR_PACKET_TYPE_TRACKING_INFO)
-        return;
     //++FrameIndex;
     //newInfo.FrameIndex = FrameIndex;
     //newInfo.clientTime = GetTimestampUs();
     rustCtx->inputSend(&newInfo);
 }
 
-void alxr_on_receive(const unsigned char* packet, unsigned int packetSize)
+void alxr_on_receive(const unsigned char* /*packet*/, unsigned int /*packetSize*/)
 {
     const auto programPtr = gProgram;
     if (programPtr == nullptr)
         return;
 
-    const std::uint32_t type = *reinterpret_cast<const uint32_t*>(packet);
-    if (type == ALVR_PACKET_TYPE_HAPTICS)
-    {
-        if (packetSize < sizeof(HapticsFeedback))
-            return;  
-        programPtr->EnqueueHapticFeedback(*reinterpret_cast<const HapticsFeedback*>(packet));
+    //const std::uint32_t type = *reinterpret_cast<const uint32_t*>(packet);
+    //if (type == ALVR_PACKET_TYPE_HAPTICS)
+    //{
+    //    if (packetSize < sizeof(HapticsFeedback))
+    //        return;  
+    //    programPtr->EnqueueHapticFeedback(*reinterpret_cast<const HapticsFeedback*>(packet));
+    //}
+}
+
+void alxr_on_haptics_feedback(unsigned long long path, float duration_s, float frequency, float amplitude)
+{
+    if (const auto programPtr = gProgram) {
+        programPtr->EnqueueHapticFeedback(HapticsFeedback {
+            .alxrPath   = path,
+            .amplitude  = amplitude,
+            .duration   = duration_s,
+            .frequency  = frequency
+        });
     }
 }
