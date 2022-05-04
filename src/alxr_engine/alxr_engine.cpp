@@ -1,6 +1,7 @@
 // Copyright (c) 2017-2021, The Khronos Group Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+#include "logger.h"
 #define ENGINE_DLL_EXPORTS
 
 #include "pch.h"
@@ -11,21 +12,38 @@
 #include "graphicsplugin.h"
 #include "openxr_program.h"
 
-#include <array>
 #include <cassert>
-#include <atomic>
-#include <shared_mutex>
-#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <mutex>
 
 #include "alxr_engine.h"
-#include "ALVR-common/packet_types.h"
+
+#include "timing.h"
+#include "latency_manager.h"
+#include "decoder_thread.h"
+
+constexpr inline const ALXREyeInfo EyeInfoZero {
+    .eyeFov = { {0,0,0,0}, {0,0,0,0} },
+    .ipd = 0.0f
+};
 
 using IOpenXrProgramPtr = std::shared_ptr<IOpenXrProgram>;
 using RustCtxPtr = std::shared_ptr<const ALXRRustCtx>;
-RustCtxPtr          gRustCtx{ nullptr };
-IOpenXrProgramPtr   gProgram{ nullptr };
-std::shared_mutex   gTrackingMutex;
-TrackingInfo        gLastTrackingInfo{};
+
+RustCtxPtr        gRustCtx{ nullptr };
+IOpenXrProgramPtr gProgram{ nullptr };
+XrDecoderThread   gDecoderThread{};
+std::mutex        gRenderMutex{};
+ALXREyeInfo       gLastEyeInfo = EyeInfoZero;
+
+namespace ALXRStrings {
+    constexpr inline const char* const HeadPath         = "/user/head";
+    constexpr inline const char* const LeftHandPath     = "/user/hand/left";
+    constexpr inline const char* const RightHandPath    = "/user/hand/right";
+    constexpr inline const char* const LeftHandHaptics  = "/user/hand/left/output/haptic";
+    constexpr inline const char* const RightHandHaptics = "/user/hand/right/output/haptic";
+};
 
 constexpr inline auto graphics_api_str(const ALXRGraphicsApi gcp)
 {
@@ -52,7 +70,8 @@ constexpr inline bool is_valid(const ALXRRustCtx& rCtx)
 {
     return  rCtx.inputSend != nullptr &&
             rCtx.viewsConfigSend != nullptr &&
-            rCtx.pathStringToHash != nullptr; 
+            rCtx.pathStringToHash != nullptr &&
+            rCtx.requestIDR != nullptr;
 }
 
 bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemProperties) {
@@ -64,9 +83,17 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         }
         
         gRustCtx = std::make_shared<ALXRRustCtx>(*rCtx);
-        const auto &ctx = *gRustCtx;//.load();
+        const auto &ctx = *gRustCtx;
+#ifndef XR_USE_PLATFORM_ANDROID
         if (ctx.verbose)
+#endif
             Log::SetLevel(Log::Level::Verbose);
+
+        LatencyManager::Instance().Init(LatencyManager::CallbackCtx {
+            .sendFn = ctx.inputSend,
+            .timeSyncSendFn = ctx.timeSyncSend,
+            .videoErrorReportSendFn = ctx.videoErrorReportSend
+        });
 
         const auto options = std::make_shared<Options>();
         assert(options->AppSpace == "Stage");
@@ -76,35 +103,36 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
 
         const auto platformData = std::make_shared<PlatformData>();
 #ifdef XR_USE_PLATFORM_ANDROID
+#pragma message ("Android Loader Enabled.")
         platformData->applicationVM = ctx.applicationVM;
         platformData->applicationActivity = ctx.applicationActivity;
 
         // Initialize the loader for this platform
         PFN_xrInitializeLoaderKHR initializeLoader = nullptr;
-        if (XR_SUCCEEDED(
-                xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR",
+        if (XR_SUCCEEDED(xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR",
                                       (PFN_xrVoidFunction *) (&initializeLoader)))) {
-            XrLoaderInitInfoAndroidKHR loaderInitInfoAndroid;
-            memset(&loaderInitInfoAndroid, 0, sizeof(loaderInitInfoAndroid));
-            loaderInitInfoAndroid.type = XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR;
-            loaderInitInfoAndroid.next = NULL;
-            loaderInitInfoAndroid.applicationVM = ctx.applicationVM;
-            loaderInitInfoAndroid.applicationContext = ctx.applicationActivity;
+            const XrLoaderInitInfoAndroidKHR loaderInitInfoAndroid {
+                .type = XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR,
+                .next = nullptr,
+                .applicationVM = ctx.applicationVM,
+                .applicationContext = ctx.applicationActivity
+            };
             initializeLoader((const XrLoaderInitInfoBaseHeaderKHR *) &loaderInitInfoAndroid);
         }
+
+        //av_jni_set_java_vm(ctx.applicationVM, nullptr);
 #endif
         // Create platform-specific implementation.
         const auto platformPlugin = CreatePlatformPlugin(options, platformData);        
         // Initialize the OpenXR gProgram.
         gProgram = CreateOpenXrProgram(options, platformPlugin);
-
         gProgram->CreateInstance();
         gProgram->InitializeSystem(ALXRPaths {
-            .head           = rCtx->pathStringToHash("/user/head"),
-            .left_hand      = rCtx->pathStringToHash("/user/hand/left"),
-            .right_hand     = rCtx->pathStringToHash("/user/hand/right"),
-            .left_haptics   = rCtx->pathStringToHash("/user/hand/left/output/haptic"),
-            .right_haptics  = rCtx->pathStringToHash("/user/hand/right/output/haptic")
+            .head           = rCtx->pathStringToHash(ALXRStrings::HeadPath),
+            .left_hand      = rCtx->pathStringToHash(ALXRStrings::LeftHandPath),
+            .right_hand     = rCtx->pathStringToHash(ALXRStrings::RightHandPath),
+            .left_haptics   = rCtx->pathStringToHash(ALXRStrings::LeftHandHaptics),
+            .right_haptics  = rCtx->pathStringToHash(ALXRStrings::RightHandHaptics)
         });
         gProgram->InitializeSession();
         gProgram->CreateSwapchains();
@@ -116,7 +144,7 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
 
         Log::Write(Log::Level::Info, Fmt("device name: %s", rustSysProp.systemName));
         Log::Write(Log::Level::Info, "openxrInit finished successfully");
-        
+
         return true;
     } catch (const std::exception& ex) {
         Log::Write(Log::Level::Error, ex.what());
@@ -127,14 +155,22 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
     }
 }
 
+void alxr_stop_decoder_thread()
+{
+#ifndef XR_DISABLE_DECODER_THREAD
+    gDecoderThread.Stop();
+#endif
+}
+
 void alxr_destroy() {
     Log::Write(Log::Level::Info, "openxrShutdown: Shuttingdown");
+    alxr_stop_decoder_thread();
     gProgram.reset();
     gRustCtx.reset();
 }
 
 void alxr_request_exit_session() {
-    if (auto programPtr = gProgram) {
+    if (const auto programPtr = gProgram) {
         programPtr->RequestExitSession();
     }
 }
@@ -146,86 +182,164 @@ void alxr_process_frame(bool* exitRenderLoop /*= non-null */, bool* requestResta
     if (*exitRenderLoop || !gProgram->IsSessionRunning())
         return;
     
-    gProgram->PollActions();
-    gProgram->RenderFrame();
-
-    TrackingInfo newInfo;
-    gProgram->GetTrackingInfo(newInfo);
+    //gProgram->PollActions();
     {
-        std::unique_lock<std::shared_mutex> lock(gTrackingMutex);
-        gLastTrackingInfo = newInfo;
-    }
-
-    thread_local ALXREyeInfo gLastEyeInfo{
-        .eveFov = { {0,0,0,0}, {0,0,0,0} },
-        .ipd = 0.0f
-    };
-    ALXREyeInfo newEyeInfo{};
-    if (!gProgram->GetEyeInfo(newEyeInfo))
-        return;
-    if (std::abs(newEyeInfo.ipd - gLastEyeInfo.ipd) > 0.001 ||
-        std::abs(newEyeInfo.eveFov[0].left - gLastEyeInfo.eveFov[0].left) > 0.001 ||
-        std::abs(newEyeInfo.eveFov[1].left - gLastEyeInfo.eveFov[1].left) > 0.001)
-    {
-        gLastEyeInfo = newEyeInfo;
-        gRustCtx->viewsConfigSend(&newEyeInfo);
-        //Log::Write(Log::Level::Info, "new viewConfig sent.");
+        std::scoped_lock lk(gRenderMutex);
+        gProgram->RenderFrame();
     }
 }
 
 bool alxr_is_session_running()
 {
-    if (auto programPtr = gProgram)
+    if (const auto programPtr = gProgram)
         return gProgram->IsSessionRunning();
     return false;
 }
 
-void alxr_set_stream_config(ALXRStreamConfig config)
+void alxr_set_stream_config(const ALXRStreamConfig config)
+{
+    const auto programPtr = gProgram;
+    if (programPtr == nullptr)
+        return;
+    alxr_stop_decoder_thread();
+    if (const auto graphicsPtr = programPtr->GetGraphicsPlugin()) {
+        const auto& rc = config.renderConfig;
+        std::scoped_lock lk(gRenderMutex);
+        programPtr->SetRenderMode(IOpenXrProgram::RenderMode::Lobby);
+        graphicsPtr->ClearVideoTextures();
+        programPtr->CreateSwapchains(rc.eyeWidth, rc.eyeHeight);
+    }
+
+    Log::Write(Log::Level::Info, "Starting decoder thread.");
+
+    gLastEyeInfo = EyeInfoZero;
+#ifndef XR_DISABLE_DECODER_THREAD
+    const XrDecoderThread::StartCtx startCtx {
+        .decoderConfig = config.decoderConfig,
+        .programPtr = programPtr,
+        .rustCtx = gRustCtx
+    };
+    gDecoderThread.Start(startCtx);
+    Log::Write(Log::Level::Info, "Decoder Thread started.");
+#endif
+    // OpenXR does not have functions to query the battery levels of devices.
+    const auto SendDummyBatteryLevels = []() {
+        const auto rCtx = gRustCtx;
+        if (rCtx == nullptr)
+            return;
+        const auto head_path        = rCtx->pathStringToHash(ALXRStrings::HeadPath);
+        const auto left_hand_path   = rCtx->pathStringToHash(ALXRStrings::LeftHandPath);
+        const auto right_hand_path  = rCtx->pathStringToHash(ALXRStrings::RightHandPath);
+        // TODO: On android we can still get the real battery levels of the "HMD"
+        //       by registering an IntentFilter battery change event.
+        rCtx->batterySend(head_path, 1.0f, true);
+        rCtx->batterySend(left_hand_path, 1.0f, true);
+        rCtx->batterySend(right_hand_path, 1.0f, true);
+    };
+    SendDummyBatteryLevels();
+    programPtr->SetStreamConfig(config);
+}
+
+void alxr_on_server_disconnect()
 {
     if (const auto programPtr = gProgram) {
-        programPtr->SetStreamConfig(config);
+        programPtr->SetRenderMode(IOpenXrProgram::RenderMode::Lobby);
     }
 }
 
 ALXRGuardianData alxr_get_guardian_data()
 {
-    ALXRGuardianData gd{};
-    gd.shouldSync = false;
+    ALXRGuardianData gd {
+        .shouldSync = false,
+        .areaWidth = 0,
+        .areaHeight = 0
+    };
     if (const auto programPtr = gProgram) {
         programPtr->GetGuardianData(gd);
     }
     return gd;
 }
 
+void alxr_on_pause()
+{
+    if (const auto programPtr = gProgram)
+        programPtr->Pause();    
+}
+
+void alxr_on_resume()
+{
+    if (const auto programPtr = gProgram)
+        programPtr->Resume();
+}
+
+inline void LogViewConfig(const ALXREyeInfo& newEyeInfo)
+{
+    constexpr const auto FmtEyeFov = [](const EyeFov& eye) {
+        constexpr const float deg = 180.0f / 3.14159265358979323846f;
+        return Fmt("{ .left=%f, .right=%f, .top=%f, .bottom=%f }",
+            eye.left * deg, eye.right * deg, eye.top * deg, eye.bottom * deg);
+    };
+    const auto lEyeFovStr = FmtEyeFov(newEyeInfo.eyeFov[0]);
+    const auto rEyeFovStr = FmtEyeFov(newEyeInfo.eyeFov[1]);
+    Log::Write(Log::Level::Info, Fmt("New view config sent:\n"
+        "\tViewConfig {\n"
+        "\t  .ipd = %f,\n"
+        "\t  .eyeFov {\n"
+        "\t    .leftEye  = %s,\n"
+        "\t    .rightEye = %s\n"
+        "\t  }\n"
+        "\t}",
+        newEyeInfo.ipd * 1000.0f, lEyeFovStr.c_str(), rEyeFovStr.c_str()));
+}
+
 void alxr_on_tracking_update(bool /*clientsidePrediction*/)
 {
     const auto rustCtx = gRustCtx;
-    if (rustCtx == nullptr || rustCtx->inputSend == nullptr)
+    if (rustCtx == nullptr)
         return;
-    TrackingInfo newInfo;
+    const auto xrProgram = gProgram;
+    if (xrProgram == nullptr || !xrProgram->IsSessionRunning())
+        return;
+
+    ALXREyeInfo newEyeInfo{};
+    if (!gProgram->GetEyeInfo(newEyeInfo))
+        return;
+    if (std::abs(newEyeInfo.ipd - gLastEyeInfo.ipd) > 0.00001f ||
+        std::abs(newEyeInfo.eyeFov[0].left - gLastEyeInfo.eyeFov[0].left) > 0.00001f ||
+        std::abs(newEyeInfo.eyeFov[1].left - gLastEyeInfo.eyeFov[1].left) > 0.00001f)
     {
-        std::shared_lock<std::shared_mutex> l(gTrackingMutex);
-        newInfo = gLastTrackingInfo;
+        gLastEyeInfo = newEyeInfo;
+        gRustCtx->viewsConfigSend(&newEyeInfo);
+        LogViewConfig(newEyeInfo);
     }
-    //++FrameIndex;
-    //newInfo.FrameIndex = FrameIndex;
-    //newInfo.clientTime = GetTimestampUs();
+
+    xrProgram->PollActions();
+
+    TrackingInfo newInfo;
+    if (!xrProgram->GetTrackingInfo(newInfo))
+        return;
     rustCtx->inputSend(&newInfo);
 }
 
-void alxr_on_receive(const unsigned char* /*packet*/, unsigned int /*packetSize*/)
+void alxr_on_receive(const unsigned char* packet, unsigned int packetSize)
 {
     const auto programPtr = gProgram;
     if (programPtr == nullptr)
         return;
-
-    //const std::uint32_t type = *reinterpret_cast<const uint32_t*>(packet);
-    //if (type == ALVR_PACKET_TYPE_HAPTICS)
-    //{
-    //    if (packetSize < sizeof(HapticsFeedback))
-    //        return;  
-    //    programPtr->EnqueueHapticFeedback(*reinterpret_cast<const HapticsFeedback*>(packet));
-    //}
+    const std::uint32_t type = *reinterpret_cast<const uint32_t*>(packet);
+    switch (type) {
+        case ALVR_PACKET_TYPE_VIDEO_FRAME: {
+#ifndef XR_DISABLE_DECODER_THREAD
+            assert(packetSize >= sizeof(VideoFrame));
+            const auto& header = *reinterpret_cast<const VideoFrame*>(packet);
+            gDecoderThread.QueuePacket(header, packetSize);
+#endif
+        } break;        
+        case ALVR_PACKET_TYPE_TIME_SYNC: {
+            assert(packetSize >= sizeof(TimeSync));
+            LatencyManager::Instance().OnTimeSyncRecieved(*(TimeSync*)packet);
+        } break;
+    }
 }
 
 void alxr_on_haptics_feedback(unsigned long long path, float duration_s, float frequency, float amplitude)

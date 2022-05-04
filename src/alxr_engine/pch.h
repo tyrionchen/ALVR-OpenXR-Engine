@@ -69,6 +69,7 @@
 // Graphics Headers
 //
 #ifdef XR_USE_GRAPHICS_API_D3D11
+#include <dxgi1_6.h>
 #include <d3d11_4.h>
 #endif
 
@@ -109,3 +110,6 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include <openxr/openxr_reflection.h>
+#ifdef XR_USE_OXR_PICO
+#include <openxr/openxr_pico.h>
+#endif

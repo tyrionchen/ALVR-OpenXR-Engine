@@ -21,8 +21,12 @@ if(POLICY CMP0075)
     cmake_policy(SET CMP0075 NEW)
 endif()
 
-# Entire project uses C++20
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -34,8 +38,17 @@ set(OPENGLES_INCOMPATIBLE TRUE)
 set(OPENGL_INCOMPATIBLE FALSE)
 set(VULKAN_INCOMPATIBLE FALSE)
 
+
+set(IS_TARGET_MSVC_ARM FALSE)
+if (WIN32 AND (MSVC_CXX_ARCHITECTURE_ID MATCHES "^ARM")) # MSVC_C_ARCHITECTURE_ID MATCHES "^ARM" OR ))
+    set(IS_TARGET_MSVC_ARM TRUE)
+    set(XR_TARGET_CPU_ARCH ${MSVC_CXX_ARCHITECTURE_ID})
+endif()
+
 # CMake will detect OpenGL/Vulkan which are not compatible with UWP and ARM/ARM64 on Windows so skip it in these cases.
-if(CMAKE_SYSTEM_NAME STREQUAL "WindowsStore" OR (WIN32 AND CMAKE_GENERATOR_PLATFORM_UPPER MATCHES "ARM.*"))
+if(CMAKE_SYSTEM_NAME STREQUAL "WindowsStore" OR
+    IS_TARGET_MSVC_ARM OR
+    (WIN32 AND CMAKE_GENERATOR_PLATFORM_UPPER MATCHES "ARM.*"))
     set(OPENGL_INCOMPATIBLE TRUE)
     set(VULKAN_INCOMPATIBLE TRUE)
     message(STATUS "OpenGL/Vulkan disabled due to incompatibility")
@@ -100,6 +113,7 @@ option(
     ON
 )
 option(USE_OCULUS_MOBILE_LOADER "Links to the Oculus Mobile OpenXR SDK to use this loader (BUILD_LOADER will be ignored)" OFF)
+option(USE_PICO_MOBILE_LOADER "Links to the Pico Neo (3) OpenXR SDK to use this loader (BUILD_LOADER will be ignored)" OFF)
 
 if(WIN32)
     set(OPENXR_DEBUG_POSTFIX d CACHE STRING "OpenXR loader debug postfix.")
@@ -251,9 +265,10 @@ endif()
 
 function(compile_glsl run_target_name)
     set(glsl_output_files "")
-    foreach(in_file IN LISTS ARGN)
-        get_filename_component(glsl_stage ${in_file} NAME_WE)
-        set(out_file ${CMAKE_CURRENT_BINARY_DIR}/${glsl_stage}.spv)
+    foreach(in_file IN LISTS ARGN)        
+        get_filename_component(glsl_file ${in_file} NAME_WE)
+        string(REGEX REPLACE "([A-Za-z0-9]*)[_]" "" glsl_stage ${glsl_file})
+        set(out_file ${CMAKE_CURRENT_BINARY_DIR}/${glsl_file}.spv)
         if(GLSL_COMPILER)
             # Run glslc if we can find it
             add_custom_command(
@@ -272,7 +287,7 @@ function(compile_glsl run_target_name)
         else()
             # Use the precompiled .spv files
             get_filename_component(glsl_src_dir ${in_file} DIRECTORY)
-            set(precompiled_file ${glsl_src_dir}/${glsl_stage}.spv)
+            set(precompiled_file ${glsl_src_dir}/${glsl_file}.spv)
             configure_file(${precompiled_file} ${out_file} COPYONLY)
         endif()
         list(APPEND glsl_output_files ${out_file})
@@ -301,8 +316,13 @@ add_definitions(-DOPENXR_HAVE_COMMON_CONFIG)
 # Be able to find pre-generated files, if used.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include ${CMAKE_CURRENT_SOURCE_DIR})
 
-include(CheckSymbolExists)
-check_symbol_exists(timespec_get time.h HAVE_TIMESPEC_GET)
+if(NOT ANDROID)
+    include(CheckSymbolExists)
+     # This symbol check does not work with ndk, even with force c11 required or setting CMAKE_REQUIRED_FLAGS as per cmake docs.
+    check_symbol_exists(timespec_get time.h HAVE_TIMESPEC_GET)
+else()
+    set(HAVE_TIMESPEC_GET TRUE)
+endif()
 if(HAVE_TIMESPEC_GET)
     add_definitions(-DXR_USE_TIMESPEC)
 endif()
@@ -417,7 +437,7 @@ if(ANDROID)
     find_library(ANDROID_LOG_LIBRARY NAMES log)
 endif()
 
-if (USE_OCULUS_MOBILE_LOADER)
+if (USE_OCULUS_MOBILE_LOADER AND ANDROID)
     message(STATUS "Using Oculus Mobile OpenXR Loader.")
     set(OCULUS_OPENXR_MOBILE_SDK ${PROJECT_SOURCE_DIR}/src/external/oculus/OpenXR)
     string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE_LOWERED)
@@ -434,6 +454,25 @@ if (USE_OCULUS_MOBILE_LOADER)
             IMPORTED_LOCATION
             ${OCULUS_OPENXR_MOBILE_SDK}/Libs/Android/${ANDROID_ABI}/${BUILD_TYPE_DIR}/libopenxr_loader.so
     )
+elseif (USE_PICO_MOBILE_LOADER AND ANDROID)
+    message(STATUS "Using Pico Neo (3) Mobile OpenXR Loader.")
+    set(PICO_OPENXR_MOBILE_SDK ${PROJECT_SOURCE_DIR}/src/external/pico-neo/OpenXR)
+    add_library(openxr_loader SHARED IMPORTED)
+    set_property(
+            TARGET
+            openxr_loader
+            PROPERTY
+            INTERFACE_INCLUDE_DIRECTORIES
+            ${PICO_OPENXR_MOBILE_SDK}/Include
+    )
+    set_property(
+            TARGET
+            openxr_loader
+            PROPERTY
+            IMPORTED_LOCATION
+            ${PICO_OPENXR_MOBILE_SDK}/Libs/Android/${ANDROID_ABI}/libopenxr_loader.so
+    )
+    add_definitions(-DXR_USE_OXR_PICO)
 else()
     if(BUILD_LOADER)
         add_subdirectory(loader)
@@ -444,9 +483,6 @@ if(BUILD_API_LAYERS)
     add_subdirectory(api_layers)
 endif()
 
-#if(BUILD_TESTS)
-#    add_subdirectory(tests)
-#endif()
 add_subdirectory(alxr_engine)
 
 if(BUILD_CONFORMANCE_TESTS)

@@ -42,7 +42,7 @@ static const char* FragmentShaderGlsl = R"_(
     }
     )_";
 
-struct OpenGLGraphicsPlugin : public IGraphicsPlugin {
+struct OpenGLGraphicsPlugin final : public IGraphicsPlugin {
     OpenGLGraphicsPlugin(const std::shared_ptr<Options>& /*unused*/, const std::shared_ptr<IPlatformPlugin> /*unused*/&){};
 
     OpenGLGraphicsPlugin(const OpenGLGraphicsPlugin&) = delete;

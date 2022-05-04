@@ -17,16 +17,25 @@
 #include <cstddef>
 #include <cassert>
 #include <cstring>
+#include <ctime>
 #include <tuple>
 #include <numeric>
+#include <span>
 #include <unordered_map>
+#include <map>
 #include <string_view>
 #include <string>
+#include <ratio>
 #include <chrono>
+#include <algorithm>
+#include <mutex>
+#include <shared_mutex>
 
 #include "concurrent_queue.h"
 #include "alxr_engine.h"
 #include "ALVR-common/packet_types.h"
+#include "timing.h"
+#include "latency_manager.h"
 
 #ifdef XR_USE_PLATFORM_ANDROID
 #ifndef ALXR_ENGINE_DISABLE_QUIT_ACTION
@@ -89,7 +98,6 @@ constexpr inline RealT ToDegrees(const RealT radians)
 {
     return static_cast<RealT>(radians * (180.0 / 3.14159265358979323846));
 }
-
 
 inline void XrMatrix4x4f_CreateFromPose(XrMatrix4x4f& m, const XrPosef& pose)
 {
@@ -228,15 +236,6 @@ inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const ALXRTracki
     return GetXrReferenceSpaceCreateInfo(ToTrackingSpaceName(ts));
 }
 
-inline std::uint64_t GetTimestampUs()
-{
-    using namespace std::chrono;
-    using PeriodType = high_resolution_clock::period;
-    using DurationType = high_resolution_clock::duration;
-    using microsecondsU64 = std::chrono::duration<std::uint64_t, std::chrono::microseconds::period>;
-    return duration_cast<microsecondsU64>(high_resolution_clock::now().time_since_epoch()).count();
-}
-
 constexpr inline TrackingVector3 ToTrackingVector3(const XrVector3f& v)
 {
     return { v.x, v.y, v.z };
@@ -249,6 +248,12 @@ constexpr inline TrackingQuat ToTrackingQuat(const XrQuaternionf& v)
 
 constexpr inline XrPosef IdentityPose = { {0,0,0,1},{0,0,0} };
 constexpr inline XrPosef ZeroPose = { {0,0,0,0},{0,0,0} };
+constexpr inline const XrView IdentityView {
+    .type = XR_TYPE_VIEW,
+    .next = nullptr,
+    .pose = IdentityPose,
+    .fov = { 0,0,0,0 }
+};
 
 constexpr inline XrHandJointEXT GetJointParent(const XrHandJointEXT h)
 {
@@ -306,27 +311,28 @@ constexpr inline XrHandJointEXT ToXRHandJointType(const ALVR_HAND h)
     case ALVR_HAND::alvrHandBone_Pinky1: return XR_HAND_JOINT_LITTLE_PROXIMAL_EXT;
     case ALVR_HAND::alvrHandBone_Pinky2: return XR_HAND_JOINT_LITTLE_INTERMEDIATE_EXT;
     case ALVR_HAND::alvrHandBone_Pinky3: return XR_HAND_JOINT_LITTLE_DISTAL_EXT;
+    default: return XR_HAND_JOINT_MAX_ENUM_EXT;
     }
-    return XR_HAND_JOINT_MAX_ENUM_EXT;
 }
 
 struct OpenXrProgram final : IOpenXrProgram {
     OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin,
-                  const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin)
+        const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin)
         : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin(graphicsPlugin)
     {
         LogLayersAndExtensions();
     }
 
     OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin)
-    : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin { nullptr }
+        : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin{ nullptr }
     {
         LogLayersAndExtensions();
         auto& graphicsApi = options->GraphicsPlugin;
         if (graphicsApi.empty() || graphicsApi == "auto")
         {
             Log::Write(Log::Level::Info, "Running auto graphics api selection.");
-            constexpr const auto to_graphics_api_str = [](const ALXRGraphicsApi gapi) -> std::tuple<std::string_view, std::string_view> {
+            constexpr const auto to_graphics_api_str = [](const ALXRGraphicsApi gapi) -> std::tuple<std::string_view, std::string_view>
+            {
                 using namespace std::string_view_literals;
                 switch (gapi)
                 {
@@ -364,7 +370,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
 
         if (m_input.actionSet != XR_NULL_HANDLE) {
-            for (auto hand : {Side::LEFT, Side::RIGHT}) {
+            for (auto hand : { Side::LEFT, Side::RIGHT }) {
                 xrDestroySpace(m_input.handSpace[hand]);
             }
             xrDestroyActionSet(m_input.actionSet);
@@ -404,8 +410,20 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     using ExtensionMap = std::unordered_map<std::string_view, bool>;
     ExtensionMap m_availableSupportedExtMap = {
-       { "XR_EXT_hand_tracking", false },
-       { "XR_FB_display_refresh_rate", false }
+        { "XR_KHR_convert_timespec_time", false },
+        { "XR_KHR_win32_convert_performance_counter_time", false },
+        { "XR_EXT_hand_tracking", false },
+        { "XR_FB_display_refresh_rate", false },
+        { "XR_FB_color_space", false },
+        //{ XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
+#ifdef XR_USE_OXR_PICO
+#pragma message ("Pico Neo 3 OXR Extensions Enabled.")
+        { XR_PICO_VIEW_STATE_EXT_ENABLE_EXTENSION_NAME, false },
+        { XR_PICO_FRAME_END_INFO_EXT_EXTENSION_NAME, false },
+        { XR_PICO_ANDROID_CONTROLLER_FUNCTION_EXT_ENABLE_EXTENSION_NAME, false },
+        { XR_PICO_CONFIGS_EXT_EXTENSION_NAME, false },
+        { XR_PICO_RESET_SENSOR_EXTENSION_NAME, false },
+#endif
     };
     ExtensionMap m_supportedGraphicsContexts = {
         { "XR_KHR_vulkan_enable2",   false },
@@ -413,7 +431,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         { "XR_KHR_D3D12_enable",     false },
         { "XR_KHR_D3D11_enable",     false },
         { "XR_KHR_opengl_enable",    false },
-        { "XR_KHR_opengl_es_enable", false },
+        { "XR_KHR_opengl_es_enable", false }
     };
 
     void LogLayersAndExtensions() {
@@ -422,13 +440,13 @@ struct OpenXrProgram final : IOpenXrProgram {
             uint32_t instanceExtensionCount;
             CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, 0, &instanceExtensionCount, nullptr));
 
-            std::vector<XrExtensionProperties> extensions(instanceExtensionCount);
-            for (XrExtensionProperties& extension : extensions) {
-                extension.type = XR_TYPE_EXTENSION_PROPERTIES;
-            }
+            std::vector<XrExtensionProperties> extensions(instanceExtensionCount, {
+                .type = XR_TYPE_EXTENSION_PROPERTIES,
+                .next = nullptr
+            });
 
             CHECK_XRCMD(xrEnumerateInstanceExtensionProperties(layerName, (uint32_t)extensions.size(), &instanceExtensionCount,
-                                                               extensions.data()));
+                extensions.data()));
 
             constexpr const auto SetExtensionMap = [](auto& extMap, const std::string_view extName)
             {
@@ -440,11 +458,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             const std::string indentStr(indent, ' ');
             Log::Write(Log::Level::Verbose, Fmt("%sAvailable Extensions: (%d)", indentStr.c_str(), instanceExtensionCount));
             for (const XrExtensionProperties& extension : extensions) {
-                
+
                 SetExtensionMap(m_availableSupportedExtMap, extension.extensionName);
                 SetExtensionMap(m_supportedGraphicsContexts, extension.extensionName);
                 Log::Write(Log::Level::Verbose, Fmt("%s  Name=%s SpecVersion=%d", indentStr.c_str(), extension.extensionName,
-                                                    extension.extensionVersion));
+                    extension.extensionVersion));
             }
         };
 
@@ -456,31 +474,38 @@ struct OpenXrProgram final : IOpenXrProgram {
             uint32_t layerCount;
             CHECK_XRCMD(xrEnumerateApiLayerProperties(0, &layerCount, nullptr));
 
-            std::vector<XrApiLayerProperties> layers(layerCount);
-            for (XrApiLayerProperties& layer : layers) {
-                layer.type = XR_TYPE_API_LAYER_PROPERTIES;
-            }
-
+            std::vector<XrApiLayerProperties> layers(layerCount, {
+                .type = XR_TYPE_API_LAYER_PROPERTIES,
+                .next = nullptr
+            });
             CHECK_XRCMD(xrEnumerateApiLayerProperties((uint32_t)layers.size(), &layerCount, layers.data()));
 
             Log::Write(Log::Level::Info, Fmt("Available Layers: (%d)", layerCount));
             for (const XrApiLayerProperties& layer : layers) {
                 Log::Write(Log::Level::Verbose,
-                           Fmt("  Name=%s SpecVersion=%s LayerVersion=%d Description=%s", layer.layerName,
-                               GetXrVersionString(layer.specVersion).c_str(), layer.layerVersion, layer.description));
+                    Fmt("  Name=%s SpecVersion=%s LayerVersion=%d Description=%s", layer.layerName,
+                        GetXrVersionString(layer.specVersion).c_str(), layer.layerVersion, layer.description));
                 logExtensions(layer.layerName, 4);
             }
         }
     }
 
     void LogInstanceInfo() {
-        CHECK(m_instance != XR_NULL_HANDLE);
+        CHECK(m_instance != XR_NULL_HANDLE && m_graphicsPlugin != nullptr);
 
-        XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES};
+        XrInstanceProperties instanceProperties{
+            .type = XR_TYPE_INSTANCE_PROPERTIES,
+            .next = nullptr
+        };
         CHECK_XRCMD(xrGetInstanceProperties(m_instance, &instanceProperties));
 
         Log::Write(Log::Level::Info, Fmt("Instance RuntimeName=%s RuntimeVersion=%s", instanceProperties.runtimeName,
-                                         GetXrVersionString(instanceProperties.runtimeVersion).c_str()));
+            GetXrVersionString(instanceProperties.runtimeVersion).c_str()));
+
+        m_runtimeType = FromString(instanceProperties.runtimeName);
+#ifdef XR_USE_PLATFORM_ANDROID
+        m_graphicsPlugin->SetEnableLinearizeRGB(m_runtimeType != OxrRuntimeType::Monado);
+#endif
     }
 
     void CreateInstanceInternal() {
@@ -492,29 +517,31 @@ struct OpenXrProgram final : IOpenXrProgram {
         // Transform platform and graphics extension std::strings to C strings.
         const std::vector<std::string> platformExtensions = m_platformPlugin->GetInstanceExtensions();
         std::transform(platformExtensions.begin(), platformExtensions.end(), std::back_inserter(extensions),
-                       [](const std::string& ext) { return ext.c_str(); });
+            [](const std::string& ext) { return ext.c_str(); });
         const std::vector<std::string> graphicsExtensions = m_graphicsPlugin->GetInstanceExtensions();
         std::transform(graphicsExtensions.begin(), graphicsExtensions.end(), std::back_inserter(extensions),
-                       [](const std::string& ext) { return ext.c_str(); });
-                       
-        for (const auto& [extName,extAvaileble] : m_availableSupportedExtMap) {
+            [](const std::string& ext) { return ext.c_str(); });
+
+        for (const auto& [extName, extAvaileble] : m_availableSupportedExtMap) {
             if (extAvaileble) {
                 extensions.push_back(extName.data());
             }
         }
-        
-        XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
-        createInfo.next = m_platformPlugin->GetInstanceCreateExtension();
-        createInfo.enabledExtensionCount = (uint32_t)extensions.size();
-        createInfo.enabledExtensionNames = extensions.data();
 
-        strcpy(createInfo.applicationInfo.applicationName, "openxr_client");
-        createInfo.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-
+        XrInstanceCreateInfo createInfo {
+            .type = XR_TYPE_INSTANCE_CREATE_INFO,
+            .next = m_platformPlugin->GetInstanceCreateExtension(),
+            .applicationInfo {
+                .apiVersion = XR_CURRENT_API_VERSION
+            },
+            .enabledExtensionCount = (uint32_t)extensions.size(),
+            .enabledExtensionNames = extensions.data()
+        };
+        strcpy(createInfo.applicationInfo.applicationName, "alxr-client");
         CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
     }
 
-    void CreateInstance() override {        
+    void CreateInstance() override {
         //LogLayersAndExtensions();
 
         CreateInstanceInternal();
@@ -530,38 +557,39 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrEnumerateViewConfigurations(m_instance, m_systemId, 0, &viewConfigTypeCount, nullptr));
         std::vector<XrViewConfigurationType> viewConfigTypes(viewConfigTypeCount);
         CHECK_XRCMD(xrEnumerateViewConfigurations(m_instance, m_systemId, viewConfigTypeCount, &viewConfigTypeCount,
-                                                  viewConfigTypes.data()));
+            viewConfigTypes.data()));
         CHECK((uint32_t)viewConfigTypes.size() == viewConfigTypeCount);
 
         Log::Write(Log::Level::Info, Fmt("Available View Configuration Types: (%d)", viewConfigTypeCount));
         for (XrViewConfigurationType viewConfigType : viewConfigTypes) {
             Log::Write(Log::Level::Verbose, Fmt("  View Configuration Type: %s %s", to_string(viewConfigType),
-                                                viewConfigType == m_viewConfigType ? "(Selected)" : ""));
+                viewConfigType == m_viewConfigType ? "(Selected)" : ""));
 
-            XrViewConfigurationProperties viewConfigProperties{XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
+            XrViewConfigurationProperties viewConfigProperties{ .type=XR_TYPE_VIEW_CONFIGURATION_PROPERTIES, .next=nullptr };
             CHECK_XRCMD(xrGetViewConfigurationProperties(m_instance, m_systemId, viewConfigType, &viewConfigProperties));
 
             Log::Write(Log::Level::Verbose,
-                       Fmt("  View configuration FovMutable=%s", viewConfigProperties.fovMutable == XR_TRUE ? "True" : "False"));
+                Fmt("  View configuration FovMutable=%s", viewConfigProperties.fovMutable == XR_TRUE ? "True" : "False"));
 
             uint32_t viewCount;
             CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, viewConfigType, 0, &viewCount, nullptr));
             if (viewCount > 0) {
-                std::vector<XrViewConfigurationView> views(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
+                std::vector<XrViewConfigurationView> views(viewCount, { .type=XR_TYPE_VIEW_CONFIGURATION_VIEW, .next=nullptr });
                 CHECK_XRCMD(
                     xrEnumerateViewConfigurationViews(m_instance, m_systemId, viewConfigType, viewCount, &viewCount, views.data()));
 
-                for (uint32_t i = 0; i < views.size(); i++) {
+                for (uint32_t i = 0; i < views.size(); ++i) {
                     const XrViewConfigurationView& view = views[i];
 
                     Log::Write(Log::Level::Verbose, Fmt("    View [%d]: Recommended Width=%d Height=%d SampleCount=%d", i,
-                                                        view.recommendedImageRectWidth, view.recommendedImageRectHeight,
-                                                        view.recommendedSwapchainSampleCount));
+                        view.recommendedImageRectWidth, view.recommendedImageRectHeight,
+                        view.recommendedSwapchainSampleCount));
                     Log::Write(Log::Level::Verbose,
-                               Fmt("    View [%d]:     Maximum Width=%d Height=%d SampleCount=%d", i, view.maxImageRectWidth,
-                                   view.maxImageRectHeight, view.maxSwapchainSampleCount));
+                        Fmt("    View [%d]:     Maximum Width=%d Height=%d SampleCount=%d", i, view.maxImageRectWidth,
+                            view.maxImageRectHeight, view.maxSwapchainSampleCount));
                 }
-            } else {
+            }
+            else {
                 Log::Write(Log::Level::Error, Fmt("Empty view configuration type"));
             }
 
@@ -586,24 +614,26 @@ struct OpenXrProgram final : IOpenXrProgram {
         for (XrEnvironmentBlendMode mode : blendModes) {
             const bool blendModeMatch = (mode == m_environmentBlendMode);
             Log::Write(Log::Level::Info,
-                       Fmt("Environment Blend Mode (%s) : %s", to_string(mode), blendModeMatch ? "(Selected)" : ""));
+                Fmt("Environment Blend Mode (%s) : %s", to_string(mode), blendModeMatch ? "(Selected)" : ""));
             blendModeFound |= blendModeMatch;
         }
         CHECK(blendModeFound);
     }
 
-    void InitializeSystem(const ALXRPaths& xrPaths) override {
+    void InitializeSystem(const ALXRPaths& alxrPaths) override {
         CHECK(m_instance != XR_NULL_HANDLE);
         CHECK(m_systemId == XR_NULL_SYSTEM_ID);
 
-        m_alxrPaths = xrPaths;
+        m_alxrPaths = alxrPaths;
 
         m_formFactor = GetXrFormFactor(m_options->FormFactor);
         m_viewConfigType = GetXrViewConfigurationType(m_options->ViewConfiguration);
         m_environmentBlendMode = GetXrEnvironmentBlendMode(m_options->EnvironmentBlendMode);
 
-        XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
-        systemInfo.formFactor = m_formFactor;
+        const XrSystemGetInfo systemInfo{
+            .type = XR_TYPE_SYSTEM_GET_INFO,
+            .formFactor = m_formFactor
+        };        
         CHECK_XRCMD(xrGetSystem(m_instance, &systemInfo, &m_systemId));
 
         Log::Write(Log::Level::Verbose, Fmt("Using system %d for form factor %s", m_systemId, to_string(m_formFactor)));
@@ -637,8 +667,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 case XR_REFERENCE_SPACE_TYPE_VIEW: return "View";
                 case XR_REFERENCE_SPACE_TYPE_LOCAL: return "Local";
                 case XR_REFERENCE_SPACE_TYPE_STAGE: return "Stage";
-                    //case XR_REFERENCE_SPACE_TYPE_UNBOUNDED_MSFT:
-                    //case XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO:
+                //case XR_REFERENCE_SPACE_TYPE_UNBOUNDED_MSFT:
+                //case XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO:
                 };
                 assert(false); // "Uknown HMD reference space type"
                 return "Stage";
@@ -657,6 +687,64 @@ struct OpenXrProgram final : IOpenXrProgram {
             return refSpaceName(availSpaces[0]);
         }();
         return GetXrReferenceSpaceCreateInfo(appReferenceSpaceType);
+    }
+
+#ifdef XR_USE_PLATFORM_WIN32
+    static inline std::uint64_t ToTimeUs(const LARGE_INTEGER& ctr)
+    {
+        const std::int64_t freq = _Query_perf_frequency(); // doesn't change after system boot
+        const std::int64_t whole = (ctr.QuadPart / freq) * std::micro::den;
+        const std::int64_t part = (ctr.QuadPart % freq) * std::micro::den / freq;
+        return static_cast<std::uint64_t>(whole + part);
+    }
+#else
+    static inline std::uint64_t ToTimeUs(const struct timespec& ts)
+    {
+        return (ts.tv_sec * 1000000) + (ts.tv_nsec / 1000);
+    }
+#endif
+
+    inline std::uint64_t FromXrTimeUs(const XrTime xrt, const std::uint64_t defaultVal = std::uint64_t(-1)) const
+    {
+#ifdef XR_USE_PLATFORM_WIN32
+        if (m_pfnConvertTimeToWin32PerformanceCounterKHR == nullptr)
+            return defaultVal;
+        LARGE_INTEGER ctr;
+        if (m_pfnConvertTimeToWin32PerformanceCounterKHR(m_instance, xrt, &ctr) == XR_ERROR_TIME_INVALID)
+            return defaultVal;
+        return ToTimeUs(ctr);
+#else
+        if (m_pfnConvertTimeToTimespecTimeKHR == nullptr)
+            return defaultVal;
+        struct timespec ts;
+        if (m_pfnConvertTimeToTimespecTimeKHR(m_instance, xrt, &ts) == XR_ERROR_TIME_INVALID)
+            return defaultVal;
+        return ToTimeUs(ts);
+#endif
+    }
+
+    virtual inline std::tuple<XrTime, std::uint64_t> XrTimeNow() const override
+    {
+#ifdef XR_USE_PLATFORM_WIN32
+        if (m_pfnConvertWin32PerformanceCounterToTimeKHR == nullptr)
+            return { -1, std::uint64_t(-1) };
+        LARGE_INTEGER ctr;
+        QueryPerformanceCounter(&ctr);
+        XrTime xrTimeNow;
+        if (m_pfnConvertWin32PerformanceCounterToTimeKHR(m_instance, &ctr, &xrTimeNow) == XR_ERROR_TIME_INVALID)
+            return { -1, std::uint64_t(-1) };
+        return { xrTimeNow, ToTimeUs(ctr) };
+#else
+        if (m_pfnConvertTimespecTimeToTimeKHR == nullptr)
+            return { -1, std::uint64_t(-1) };
+        struct timespec ts;
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+            return { -1, std::uint64_t(-1) };
+        XrTime xrTimeNow;
+        if (m_pfnConvertTimespecTimeToTimeKHR(m_instance, &ts, &xrTimeNow) == XR_ERROR_TIME_INVALID)
+            return { -1, std::uint64_t(-1) };
+        return { xrTimeNow, ToTimeUs(ts) };
+#endif
     }
 
     void LogReferenceSpaces() {
@@ -682,7 +770,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         std::array<XrBool32, Side::COUNT> handActive;
         std::array<TrackingInfo::Controller, Side::COUNT> controllerInfo{};
 
-        using time_point = std::chrono::steady_clock::time_point;
+        using ClockType = XrSteadyClock;
+        static_assert(ClockType::is_steady);
+        using time_point = ClockType::time_point;
         time_point quitStartTime{};
 
         struct HandTrackerData
@@ -701,6 +791,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             XrAction xrAction{ XR_NULL_HANDLE };
         };
         using ALVRActionMap = std::unordered_map<ALVR_INPUT, ALVRAction>;
+        struct ALVRScalarToBoolAction : ALVRAction
+        {
+            std::array<float,2> lastValues {0,0};
+        };
+        using ALVRScalarToBoolActionMap = std::unordered_map<ALVR_INPUT, ALVRScalarToBoolAction>;
 
         ALVRActionMap boolActionMap =
         {
@@ -708,7 +803,6 @@ struct OpenXrProgram final : IOpenXrProgram {
             { ALVR_INPUT_APPLICATION_MENU_CLICK, { "appliction_click", "Appliction Click" }},
             { ALVR_INPUT_GRIP_CLICK, { "grip_click", "Grip Click" }},
             { ALVR_INPUT_GRIP_TOUCH, { "grip_touch", "Grip Touch" }},
-            { ALVR_INPUT_GRIP_VALUE, { "grip_value_to_click", "Grip Value To Click" }},
             //{ ALVR_INPUT_DPAD_LEFT_CLICK, { "dpad_left_click", "Dpad Left Click" }},
             //{ ALVR_INPUT_DPAD_UP_CLICK, { "dpad_up_click", "Dpad Up Click" }},
             //{ ALVR_INPUT_DPAD_RIGHT_CLICK, { "dpad_right_click", "Dpad Right Click" }},
@@ -730,20 +824,27 @@ struct OpenXrProgram final : IOpenXrProgram {
             { ALVR_INPUT_TRIGGER_TOUCH, { "trigger_touch", "Trigger Touch" }},
             { ALVR_INPUT_TRACKPAD_CLICK, { "trackpad_click", "Trackpad Click" }},
             { ALVR_INPUT_TRACKPAD_TOUCH, { "trackpad_touch", "Trackpad Touch" }},
+
+            { ALVR_INPUT_THUMB_REST_TOUCH, { "thumbrest_touch", "Thumbrest Touch" }},
         };
         ALVRActionMap scalarActionMap =
         {
-            { ALVR_INPUT_GRIP_VALUE, { "grip_value", "Grip Value" }},
-            { ALVR_INPUT_JOYSTICK_X, { "joystick_x", "Joystick X" }},
-            { ALVR_INPUT_JOYSTICK_Y, { "joystick_y", "Joystick Y" }},
+            { ALVR_INPUT_GRIP_VALUE,    { "grip_value", "Grip Value" }},
+            { ALVR_INPUT_JOYSTICK_X,    { "joystick_x", "Joystick X" }},
+            { ALVR_INPUT_JOYSTICK_Y,    { "joystick_y", "Joystick Y" }},
             { ALVR_INPUT_TRIGGER_VALUE, { "trigger_value", "Trigger Value" }},
-            { ALVR_INPUT_TRACKPAD_X, { "trackpad_x", "Trackpad X" }},
-            { ALVR_INPUT_TRACKPAD_Y, { "trackpad_y", "Trackpad Y" }},
+            { ALVR_INPUT_TRACKPAD_X,    { "trackpad_x", "Trackpad X" }},
+            { ALVR_INPUT_TRACKPAD_Y,    { "trackpad_y", "Trackpad Y" }},
         };
-        //ALVRActionMap scalarToBoolActionMap =
-        //{
-        //    { ALVR_INPUT_GRIP_VALUE, { "grip_value_to_click", "Grip Value To Click" }}
-        //};
+        ALVRActionMap vector2fActionMap =
+        {
+            { ALVR_INPUT_JOYSTICK_X, { "joystick_pos", "Joystick Pos" }},
+        };
+        ALVRScalarToBoolActionMap scalarToBoolActionMap =
+        {
+            { ALVR_INPUT_GRIP_CLICK,    { "grip_value_to_click", "Grip Value To Click" }, },
+            { ALVR_INPUT_TRIGGER_CLICK, { "trigger_value_to_click", "Trigger Value To Click" } }
+        };
         ALVRActionMap boolToScalarActionMap =
         {
             { ALVR_INPUT_GRIP_VALUE, { "grip_click_to_value", "Grip Click To Value" }}
@@ -753,10 +854,13 @@ struct OpenXrProgram final : IOpenXrProgram {
     void InitializeActions() {
         // Create an action set.
         {
-            XrActionSetCreateInfo actionSetInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
-            strcpy_s(actionSetInfo.actionSetName, "gameplay");
-            strcpy_s(actionSetInfo.localizedActionSetName, "Gameplay");
-            actionSetInfo.priority = 0;
+            XrActionSetCreateInfo actionSetInfo{
+                .type= XR_TYPE_ACTION_SET_CREATE_INFO,
+                .next= nullptr,
+                .priority = 0
+            };
+            strcpy_s(actionSetInfo.actionSetName, "alxr");
+            strcpy_s(actionSetInfo.localizedActionSetName, "ALXR");
             CHECK_XRCMD(xrCreateActionSet(m_instance, &actionSetInfo, &m_input.actionSet));
         }
 
@@ -767,8 +871,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         // Create actions.
         {
             //// Create an input action for grabbing objects with the left and right hands.
-            XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
-
+            XrActionCreateInfo actionInfo {
+                .type = XR_TYPE_ACTION_CREATE_INFO,
+                .next = nullptr
+            };
             // Create an input action getting the left and right hand poses.
             actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
             strcpy_s(actionInfo.actionName, "hand_pose");
@@ -809,18 +915,19 @@ struct OpenXrProgram final : IOpenXrProgram {
                 }
             };
             CreateActions(XR_ACTION_TYPE_BOOLEAN_INPUT, m_input.boolActionMap);
-            CreateActions(XR_ACTION_TYPE_BOOLEAN_INPUT, m_input.boolToScalarActionMap);
             CreateActions(XR_ACTION_TYPE_FLOAT_INPUT, m_input.scalarActionMap);
-            //CreateActions(XR_ACTION_TYPE_FLOAT_INPUT, m_input.scalarToBoolActionMap);
+            CreateActions(XR_ACTION_TYPE_VECTOR2F_INPUT, m_input.vector2fActionMap);
+            CreateActions(XR_ACTION_TYPE_BOOLEAN_INPUT, m_input.boolToScalarActionMap);
+            CreateActions(XR_ACTION_TYPE_FLOAT_INPUT, m_input.scalarToBoolActionMap);
         }
 
         std::array<XrPath, Side::COUNT> selectPath;
         std::array<XrPath, Side::COUNT> squeezeClickPath, squeezeValuePath, squeezeForcePath;
         std::array<XrPath, Side::COUNT> posePath;
         std::array<XrPath, Side::COUNT> hapticPath;
-        std::array<XrPath, Side::COUNT> menuClickPath, systemClickPath;
+        std::array<XrPath, Side::COUNT> menuClickPath, systemClickPath, backClickPath;
         std::array<XrPath, Side::COUNT> triggerClickPath, triggerTouchPath, triggerValuePath;
-        std::array<XrPath, Side::COUNT> thumbstickXPath, thumbstickYPath,
+        std::array<XrPath, Side::COUNT> thumbstickXPath, thumbstickYPath, thumbstickPosPath,
                                         thumbstickClickPath, thumbstickTouchPath,
                                         thumbrestTouchPath;
         std::array<XrPath, Side::COUNT> trackpadXPath, trackpadYPath, trackpadForcePath,
@@ -845,6 +952,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/system/click", &systemClickPath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/back/click", &backClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/back/click", &backClickPath[Side::RIGHT]));
         
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/a/click", &aClickPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/a/click", &aClickPath[Side::RIGHT]));
@@ -872,6 +982,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/touch", &triggerTouchPath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trigger/value", &triggerValuePath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trigger/value", &triggerValuePath[Side::RIGHT]));
+
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick", &thumbstickPosPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick", &thumbstickPosPath[Side::RIGHT]));
 
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/thumbstick/x", &thumbstickXPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/thumbstick/x", &thumbstickXPath[Side::RIGHT]));
@@ -915,10 +1028,13 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]},
                 {m_input.quitAction, menuClickPath[Side::LEFT]},
                 {m_input.quitAction, menuClickPath[Side::RIGHT]}} };
-            XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
-            suggestedBindings.interactionProfile = khrSimpleInteractionProfilePath;
-            suggestedBindings.suggestedBindings = bindings.data();
-            suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = khrSimpleInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()
+            };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
         // Suggest bindings for the Oculus Touch.
@@ -945,8 +1061,6 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
                 {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
                 //// grip_value_to_click.
-                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
-                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
                 
                 {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
                 {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
@@ -961,7 +1075,14 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
                 {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
                 {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
-                // atm ALVL has no input type for thumbrest touch
+
+                {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::RIGHT]},
+
+                {m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeValuePath[Side::LEFT]},
+                {m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeValuePath[Side::RIGHT]},
+                {m_input.scalarToBoolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerValuePath[Side::LEFT]},
+                {m_input.scalarToBoolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerValuePath[Side::RIGHT]},
 
                 {m_input.poseAction, posePath[Side::LEFT]},
                 {m_input.poseAction, posePath[Side::RIGHT]},
@@ -969,10 +1090,13 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]},
                 {m_input.quitAction, menuClickPath[Side::LEFT]}} };
-            XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
-            suggestedBindings.interactionProfile = oculusTouchInteractionProfilePath;
-            suggestedBindings.suggestedBindings = bindings.data();
-            suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = oculusTouchInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()                
+            };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
         // Suggest bindings for the Vive Controller.
@@ -998,10 +1122,14 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_X].xrAction, trackpadXPath[Side::RIGHT]},
                 {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::LEFT]},
                 {m_input.scalarActionMap[ALVR_INPUT_TRACKPAD_Y].xrAction, trackpadYPath[Side::RIGHT]},
-                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::LEFT]},
-                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::RIGHT]},
-                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
-                {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
+                //{m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_TRACKPAD_CLICK].xrAction, trackpadClickPath[Side::RIGHT]},
+                //{m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, trackpadClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, trackpadClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
 
                 {m_input.poseAction, posePath[Side::LEFT]},
                 {m_input.poseAction, posePath[Side::RIGHT]},
@@ -1011,10 +1139,13 @@ struct OpenXrProgram final : IOpenXrProgram {
                 
                 {m_input.quitAction, menuClickPath[Side::LEFT]},
                 {m_input.quitAction, menuClickPath[Side::RIGHT]}} };
-            XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
-            suggestedBindings.interactionProfile = viveControllerInteractionProfilePath;
-            suggestedBindings.suggestedBindings = bindings.data();
-            suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = viveControllerInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()                
+            };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
 
@@ -1039,8 +1170,6 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
                 {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
                 //// grip_value_to_click
-                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
-                //{m_input.scalarToBoolActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
                 
                 {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::LEFT]},
                 {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::RIGHT]},
@@ -1073,10 +1202,13 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.quitAction, thumbstickClickPath[Side::RIGHT]},
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
-            XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
-            suggestedBindings.interactionProfile = indexControllerInteractionProfilePath;
-            suggestedBindings.suggestedBindings = bindings.data();
-            suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = indexControllerInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()                
+            };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
 
@@ -1086,11 +1218,12 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/microsoft/motion_controller",
                                        &microsoftMixedRealityInteractionProfilePath));
             const std::vector<XrActionSuggestedBinding> bindings{ {
-                //ALVR servers currently does not use APP_MENU_CLICK event.
                 //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
                 //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::RIGHT]},
-                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::LEFT]},
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
                 {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
 
                 {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
                 {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
@@ -1124,23 +1257,103 @@ struct OpenXrProgram final : IOpenXrProgram {
 
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]}} };
-            XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
-            suggestedBindings.interactionProfile = microsoftMixedRealityInteractionProfilePath;
-            suggestedBindings.suggestedBindings = bindings.data();
-            suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = microsoftMixedRealityInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()                
+            };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
-        XrActionSpaceCreateInfo actionSpaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
-        actionSpaceInfo.action = m_input.poseAction;
-        actionSpaceInfo.poseInActionSpace.orientation.w = 1.f;
-        actionSpaceInfo.subactionPath = m_input.handSubactionPath[Side::LEFT];
+
+#ifdef XR_USE_OXR_PICO
+        // Suggest bindings for the Pico Neo 3 Controller.
+        {
+            XrPath picoMixedRealityInteractionProfilePath;
+            CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/pico/neo3_controller",
+                &picoMixedRealityInteractionProfilePath));
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                    //ALVR servers currently does not use APP_MENU_CLICK event.
+                    //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                    //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_BACK_CLICK].xrAction, backClickPath[Side::LEFT]},
+                    //{m_input.boolActionMap[ALVR_INPUT_BACK_CLICK].xrAction, backClickPath[Side::RIGHT]},
+
+                    // TODO: Find out and imp batteryPath/Action.
+                    //{m_input.batteryAction, batteryPath[Side::LEFT]},
+                    //{m_input.batteryAction, batteryPath[Side::RIGHT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
+                    {m_input.boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeClickPath[Side::LEFT]},
+                    {m_input.boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeClickPath[Side::RIGHT]},
+                    {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                    {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
+
+                    {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
+                    {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::RIGHT]},
+
+                    {m_input.vector2fActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickPosPath[Side::LEFT]},
+                    {m_input.vector2fActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickPosPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::RIGHT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_X_CLICK].xrAction, xClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_X_TOUCH].xrAction, xTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_Y_CLICK].xrAction, yClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_Y_TOUCH].xrAction, yTouchPath[Side::LEFT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_A_TOUCH].xrAction, aTouchPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_B_TOUCH].xrAction, bTouchPath[Side::RIGHT]},
+
+                    {m_input.poseAction, posePath[Side::LEFT]},
+                    {m_input.poseAction, posePath[Side::RIGHT]},
+                    //{m_input.aimAction, aimPath[Side::LEFT]},
+                    //{m_input.aimAction, aimPath[Side::RIGHT]}
+
+                    //{m_input.quitAction, menuClickPath[Side::LEFT]},
+                    {m_input.quitAction, backClickPath[Side::RIGHT]}} };
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = picoMixedRealityInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()
+            };
+            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+        }
+#endif
+
+        XrActionSpaceCreateInfo actionSpaceInfo {
+            .type = XR_TYPE_ACTION_SPACE_CREATE_INFO,
+            .next = nullptr,
+            .action = m_input.poseAction,
+            .subactionPath = m_input.handSubactionPath[Side::LEFT],
+            .poseInActionSpace{.orientation{.w = 1.f}},            
+        };
         CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::LEFT]));
         actionSpaceInfo.subactionPath = m_input.handSubactionPath[Side::RIGHT];
         CHECK_XRCMD(xrCreateActionSpace(m_session, &actionSpaceInfo, &m_input.handSpace[Side::RIGHT]));
 
-        XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
-        attachInfo.countActionSets = 1;
-        attachInfo.actionSets = &m_input.actionSet;
+        const XrSessionActionSetsAttachInfo attachInfo {
+            .type = XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO,
+            .next = nullptr,
+            .countActionSets = 1,
+            .actionSets = &m_input.actionSet,
+        };
         CHECK_XRCMD(xrAttachSessionActionSets(m_session, &attachInfo));
     }
 
@@ -1152,8 +1365,37 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     bool InitializeExtensions()
     {
+#ifdef XR_USE_PLATFORM_WIN32
+        if (IsExtEnabled("XR_KHR_win32_convert_performance_counter_time"))
+        {
+            Log::Write(Log::Level::Info, "XR_KHR_win32_convert_performance_counter_time enabled.");
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertTimeToWin32PerformanceCounterKHR",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertTimeToWin32PerformanceCounterKHR)));
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertWin32PerformanceCounterToTimeKHR",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertWin32PerformanceCounterToTimeKHR)));
+        }
+#endif
+        if (IsExtEnabled("XR_KHR_convert_timespec_time"))
+        {
+            Log::Write(Log::Level::Info, "XR_KHR_convert_timespec_time enabled.");
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertTimespecTimeToTimeKHR",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertTimespecTimeToTimeKHR)));
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertTimeToTimespecTimeKHR",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertTimeToTimespecTimeKHR)));
+        }
+
+        if (IsExtEnabled("XR_FB_color_space"))
+        {
+            Log::Write(Log::Level::Info, "XR_FB_color_space enabled.");
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrEnumerateColorSpacesFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnEnumerateColorSpacesFB)));
+            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetColorSpaceFB",
+                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetColorSpaceFB)));
+        }
+
         if (IsExtEnabled("XR_FB_display_refresh_rate"))
         {
+            Log::Write(Log::Level::Info, "XR_FB_display_refresh_rate enabled.");
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrEnumerateDisplayRefreshRatesFB",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnEnumerateDisplayRefreshRatesFB)));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrGetDisplayRefreshRateFB",
@@ -1161,8 +1403,83 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrRequestDisplayRefreshRateFB",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnRequestDisplayRefreshRateFB)));
         }
+
+#if 0
+#define CAT(x,y) x ## y
+#define INIT_PFN(ExtName)\
+    CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xr"#ExtName, reinterpret_cast<PFN_xrVoidFunction*>(&CAT(m_pfn,ExtName))));
+
+        if (IsExtEnabled(XR_FB_PASSTHROUGH_EXTENSION_NAME))
+        {
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_FB_PASSTHROUGH_EXTENSION_NAME));
+            INIT_PFN(CreatePassthroughFB);
+            INIT_PFN(DestroyPassthroughFB);
+            INIT_PFN(PassthroughStartFB);
+            INIT_PFN(PassthroughPauseFB);
+            INIT_PFN(CreatePassthroughLayerFB);
+            INIT_PFN(DestroyPassthroughLayerFB);
+            INIT_PFN(PassthroughLayerSetStyleFB);
+            INIT_PFN(PassthroughLayerPauseFB);
+            INIT_PFN(PassthroughLayerResumeFB);
+        }
+#undef INIT_PFN
+#undef CAT
+#endif
+
+#ifdef XR_USE_OXR_PICO
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrGetConfigPICO",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnGetConfigPICO)));
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetConfigPICO",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetConfigPICO)));
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrResetSensorPICO",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnResetSensorPICO)));
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetEngineVersionPico",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetEngineVersionPico)));
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrStartCVControllerThreadPico",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnStartCVControllerThreadPico)));
+        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrStopCVControllerThreadPico",
+            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnStopCVControllerThreadPico)));
+
+        //set eye level
+        m_pfnSetConfigPICO(m_session, TRACKING_ORIGIN, "0");
+#endif
+
+        SetDeviceColorSpace();
         UpdateSupportedDisplayRefreshRates();
+        //InitializePassthroughAPI();
         return InitializeHandTrackers();
+    }
+
+    bool SetDeviceColorSpace()
+    {
+        if (m_pfnSetColorSpaceFB == nullptr)
+            return false;
+
+        //constexpr const auto to_string = [](const XrColorSpaceFB csType)
+        //{
+        //    switch (csType)
+        //    {
+        //    case XR_COLOR_SPACE_UNMANAGED_FB: return "UNMANAGED";
+        //    case XR_COLOR_SPACE_REC2020_FB: return "REC2020";
+        //    case XR_COLOR_SPACE_REC709_FB: return "REC709";
+        //    case XR_COLOR_SPACE_RIFT_CV1_FB: return "RIFT_CV1";
+        //    case XR_COLOR_SPACE_RIFT_S_FB: return "RIFT_S";
+        //    case XR_COLOR_SPACE_QUEST_FB: return "QUEST";
+        //    case XR_COLOR_SPACE_P3_FB: return "P3";
+        //    case XR_COLOR_SPACE_ADOBE_RGB_FB: return "ADOBE_RGB";
+        //    }
+        //    return "unknown-color-space-type";
+        //};
+
+        //uint32_t colorSpaceCount = 0;
+        //CHECK_XRCMD(m_pfnEnumerateColorSpacesFB(m_session, 0, &colorSpaceCount, nullptr));
+
+        //std::vector<XrColorSpaceFB> colorSpaceTypes{ colorSpaceCount, XR_COLOR_SPACE_UNMANAGED_FB };
+        //CHECK_XRCMD(m_pfnEnumerateColorSpacesFB(m_session, colorSpaceCount, &colorSpaceCount, colorSpaceTypes.data()));
+
+        CHECK_XRCMD(m_pfnSetColorSpaceFB(m_session, XR_COLOR_SPACE_REC2020_FB));
+        Log::Write(Log::Level::Info, "Color space set.");
+        return true;
     }
 
     bool InitializeHandTrackers()
@@ -1171,8 +1488,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         //    return false;
 
         // Inspect hand tracking system properties
-        XrSystemHandTrackingPropertiesEXT handTrackingSystemProperties{ XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
-        XrSystemProperties systemProperties{ XR_TYPE_SYSTEM_PROPERTIES, &handTrackingSystemProperties };
+        XrSystemHandTrackingPropertiesEXT handTrackingSystemProperties{ .type=XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, .next=nullptr };
+        XrSystemProperties systemProperties{ .type=XR_TYPE_SYSTEM_PROPERTIES, .next = &handTrackingSystemProperties };
         CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
         if (!handTrackingSystemProperties.supportsHandTracking) {
             Log::Write(Log::Level::Info, "XR_EXT_hand_tracking is not supported.");
@@ -1200,22 +1517,75 @@ struct OpenXrProgram final : IOpenXrProgram {
         // Create a hand tracker for left hand that tracks default set of hand joints.
         const auto createHandTracker = [&](auto& handerTracker, const XrHandEXT hand)
         {
-            XrHandTrackerCreateInfoEXT createInfo{ XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
-            createInfo.hand = hand;
-            createInfo.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+            const XrHandTrackerCreateInfoEXT createInfo{
+                .type = XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT,
+                .hand = hand,
+                .handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT
+            };
             CHECK_XRCMD(m_pfnCreateHandTrackerEXT(m_session, &createInfo, &handerTracker.tracker));
         };
         createHandTracker(m_input.handerTrackers[0], XR_HAND_LEFT_EXT);
         createHandTracker(m_input.handerTrackers[1], XR_HAND_RIGHT_EXT);
 
         auto& leftHandBaseOrientation = m_input.handerTrackers[0].baseOrientation;
-        auto& rightHandBaseOrientation = m_input.handerTrackers[1].baseOrientation;        
+        auto& rightHandBaseOrientation = m_input.handerTrackers[1].baseOrientation;   
         XrMatrix4x4f zRot;
         XrMatrix4x4f& yRot = rightHandBaseOrientation;
         XrMatrix4x4f_CreateRotation(&yRot, 0.0, -90.0f, 0.0f);
         XrMatrix4x4f_CreateRotation(&zRot, 0.0, 0.0f, 180.0f);
         XrMatrix4x4f_Multiply(&leftHandBaseOrientation, &yRot, &zRot);
         return true;
+    }
+
+    void InitializePassthroughAPI()
+    {
+        if (m_session == XR_NULL_HANDLE ||
+            !IsExtEnabled(XR_FB_PASSTHROUGH_EXTENSION_NAME) ||
+            m_pfnCreatePassthroughFB == nullptr)
+            return;
+
+        constexpr const XrPassthroughCreateInfoFB ptci {
+            .type = XR_TYPE_PASSTHROUGH_CREATE_INFO_FB,
+            .next = nullptr            
+        };
+        if (XR_FAILED(m_pfnCreatePassthroughFB(m_session, &ptci, &m_ptLayerData.passthrough))) {
+            Log::Write(Log::Level::Error, "Failed to create passthrough object!");
+            m_ptLayerData = {};
+            return;
+        }
+
+        const XrPassthroughLayerCreateInfoFB plci {
+            .type = XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB,
+            .next = nullptr,
+            .passthrough = m_ptLayerData.passthrough,
+            .purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB
+        };
+        if (XR_FAILED(m_pfnCreatePassthroughLayerFB(m_session, &plci, &m_ptLayerData.reconPassthroughLayer))) {
+            Log::Write(Log::Level::Error, "Failed to create passthrough layer!");
+            m_ptLayerData = {};
+            return;
+        }
+
+        Log::Write(Log::Level::Info, "Passthrough API is initialized.");
+    }
+
+    void SetMaskedPassthrough() {
+        if (&m_ptLayerData.reconPassthroughLayer == XR_NULL_HANDLE)
+            return;
+
+        static std::once_flag once{};
+        std::call_once(once, [&]() {
+            CHECK_XRCMD(m_pfnPassthroughStartFB(m_ptLayerData.passthrough));
+            CHECK_XRCMD(m_pfnPassthroughLayerResumeFB(m_ptLayerData.reconPassthroughLayer));
+            Log::Write(Log::Level::Info, "Passthrough Layer is resumed.");
+        });
+        constexpr const XrPassthroughStyleFB style {
+            .type = XR_TYPE_PASSTHROUGH_STYLE_FB,
+            .next = nullptr,
+            .textureOpacityFactor = 0.5f,
+            .edgeColor = { 0.0f, 0.0f, 0.0f, 0.0f },
+        };
+        CHECK_XRCMD(m_pfnPassthroughLayerSetStyleFB(m_ptLayerData.reconPassthroughLayer, &style));
     }
 
     void CreateVisualizedSpaces() {
@@ -1243,13 +1613,15 @@ struct OpenXrProgram final : IOpenXrProgram {
     void InitializeSession() override {
         CHECK(m_instance != XR_NULL_HANDLE);
         CHECK(m_session == XR_NULL_HANDLE);
-
         {
             Log::Write(Log::Level::Verbose, Fmt("Creating session..."));
 
-            XrSessionCreateInfo createInfo{XR_TYPE_SESSION_CREATE_INFO};
-            createInfo.next = m_graphicsPlugin->GetGraphicsBinding();
-            createInfo.systemId = m_systemId;
+            const XrSessionCreateInfo createInfo{
+                .type = XR_TYPE_SESSION_CREATE_INFO,
+                .next = m_graphicsPlugin->GetGraphicsBinding(),
+                .createFlags = 0,
+                .systemId = m_systemId
+            };
             CHECK_XRCMD(xrCreateSession(m_instance, &createInfo, &m_session));
         }
 
@@ -1274,13 +1646,45 @@ struct OpenXrProgram final : IOpenXrProgram {
         InitializeExtensions();
     }
 
-    void CreateSwapchains() override {
+    void ClearSwapchains()
+    {
+        m_swapchainImages.clear();
+        m_graphicsPlugin->ClearSwapchainImageStructs();
+        for (const auto& swapchain : m_swapchains)
+            xrDestroySwapchain(swapchain.handle);
+        m_swapchains.clear();
+        m_configViews.clear();
+    }
+
+    void CreateSwapchains(const std::uint32_t eyeWidth /*= 0*/, const std::uint32_t eyeHeight /*= 0*/) override {
         CHECK(m_session != XR_NULL_HANDLE);
+
+        if (m_swapchains.size() > 0)
+        {
+            CHECK(m_configViews.size() > 0 && m_swapchainImages.size() > 0);
+            if (eyeWidth == 0 || eyeHeight == 0)
+                return;
+            const bool isSameSize = std::all_of(m_configViews.begin(), m_configViews.end(), [&](const auto& vp)
+            {
+                const auto eW = std::min(eyeWidth,  vp.maxImageRectWidth);
+                const auto eH = std::min(eyeHeight, vp.maxImageRectHeight);
+                return eW == vp.recommendedImageRectWidth && eH == vp.recommendedImageRectHeight;
+            });
+            if (isSameSize)
+                return;
+            Log::Write(Log::Level::Info, "Clearing current swapchains...");
+            ClearSwapchains();
+            Log::Write(Log::Level::Info, "Creating new swapchains...");
+        }
+        CHECK(m_swapchainImages.empty());
         CHECK(m_swapchains.empty());
         CHECK(m_configViews.empty());
 
         // Read graphics properties for preferred swapchain length and logging.
-        XrSystemProperties systemProperties{XR_TYPE_SYSTEM_PROPERTIES};
+        XrSystemProperties systemProperties{
+            .type = XR_TYPE_SYSTEM_PROPERTIES,
+            .next = nullptr
+        };
         CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
 
         // Log system properties.
@@ -1300,14 +1704,24 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_MSG(m_viewConfigType == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, "Unsupported view configuration type");
 
         // Query and cache view configuration views.
-        uint32_t viewCount;
+        uint32_t viewCount = 0;
         CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_viewConfigType, 0, &viewCount, nullptr));
-        m_configViews.resize(viewCount, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
+        m_configViews.resize(viewCount, {
+            .type = XR_TYPE_VIEW_CONFIGURATION_VIEW,
+            .next = nullptr
+        });
         CHECK_XRCMD(xrEnumerateViewConfigurationViews(m_instance, m_systemId, m_viewConfigType, viewCount, &viewCount,
                                                       m_configViews.data()));
+        // override recommended eye resolution
+        if (eyeWidth != 0 && eyeHeight != 0) {
+            for (auto& configView : m_configViews) {
+                configView.recommendedImageRectWidth  = std::min(eyeWidth, configView.maxImageRectWidth);
+                configView.recommendedImageRectHeight = std::min(eyeHeight, configView.maxImageRectHeight);
+            }
+        }
 
         // Create and cache view buffer for xrLocateViews later.
-        m_views.resize(viewCount, {XR_TYPE_VIEW});
+        m_views.resize(viewCount, IdentityView);
 
         // Create the swapchain and get the images.
         if (viewCount > 0) {
@@ -1345,18 +1759,22 @@ struct OpenXrProgram final : IOpenXrProgram {
                                vp.recommendedImageRectWidth, vp.recommendedImageRectHeight, vp.recommendedSwapchainSampleCount));
 
                 // Create the swapchain.
-                XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-                swapchainCreateInfo.arraySize = 1;
-                swapchainCreateInfo.format = m_colorSwapchainFormat;
-                swapchainCreateInfo.width = vp.recommendedImageRectWidth;
-                swapchainCreateInfo.height = vp.recommendedImageRectHeight;
-                swapchainCreateInfo.mipCount = 1;
-                swapchainCreateInfo.faceCount = 1;
-                swapchainCreateInfo.sampleCount = m_graphicsPlugin->GetSupportedSwapchainSampleCount(vp);
-                swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-                Swapchain swapchain;
-                swapchain.width = swapchainCreateInfo.width;
-                swapchain.height = swapchainCreateInfo.height;
+                const XrSwapchainCreateInfo swapchainCreateInfo{
+                    .type = XR_TYPE_SWAPCHAIN_CREATE_INFO,
+                    .next = nullptr,
+                    .usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT,
+                    .format = m_colorSwapchainFormat,
+                    .sampleCount = m_graphicsPlugin->GetSupportedSwapchainSampleCount(vp),
+                    .width = vp.recommendedImageRectWidth,
+                    .height = vp.recommendedImageRectHeight,
+                    .faceCount = 1,
+                    .arraySize = 1,
+                    .mipCount = 1,
+                };
+                Swapchain swapchain{
+                    .width  = static_cast<std::int32_t>(swapchainCreateInfo.width),
+                    .height = static_cast<std::int32_t>(swapchainCreateInfo.height)
+                };
                 CHECK_XRCMD(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle));
 
                 m_swapchains.push_back(swapchain);
@@ -1378,7 +1796,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         // It is sufficient to clear the just the XrEventDataBuffer header to
         // XR_TYPE_EVENT_DATA_BUFFER
         XrEventDataBaseHeader* baseHeader = reinterpret_cast<XrEventDataBaseHeader*>(&m_eventDataBuffer);
-        *baseHeader = {XR_TYPE_EVENT_DATA_BUFFER};
+        *baseHeader = {.type=XR_TYPE_EVENT_DATA_BUFFER, .next=nullptr};
         const XrResult xr = xrPollEvent(m_instance, &m_eventDataBuffer);
         if (xr == XR_SUCCESS) {
             if (baseHeader->type == XR_TYPE_EVENT_DATA_EVENTS_LOST) {
@@ -1405,7 +1823,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 case XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB: {
                     const auto& refreshRateChangedEvent = *reinterpret_cast<const XrEventDataDisplayRefreshRateChangedFB*>(event);
                     Log::Write(Log::Level::Info, Fmt("display refresh rate has changed from %f Hz to %f Hz", refreshRateChangedEvent.fromDisplayRefreshRate, refreshRateChangedEvent.toDisplayRefreshRate));
-                    m_streamConfig.refreshRate = refreshRateChangedEvent.toDisplayRefreshRate;
+                    m_streamConfig.renderConfig.refreshRate = refreshRateChangedEvent.toDisplayRefreshRate;
                     break;
                 }
                 case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
@@ -1429,6 +1847,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                     for (const auto& [k, v] : m_input.boolToScalarActionMap)
                         LogActionSourceName(v.xrAction, v.localizedName.data());
                     for (const auto& [k, v] : m_input.scalarActionMap)
+                        LogActionSourceName(v.xrAction, v.localizedName.data());
+                    for (const auto& [k, v] : m_input.vector2fActionMap)
                         LogActionSourceName(v.xrAction, v.localizedName.data());
                     break;
                 case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
@@ -1466,8 +1886,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             }
             case XR_SESSION_STATE_READY: {
                 CHECK(m_session != XR_NULL_HANDLE);
-                XrSessionBeginInfo sessionBeginInfo{XR_TYPE_SESSION_BEGIN_INFO};
-                sessionBeginInfo.primaryViewConfigurationType = m_viewConfigType;
+                const XrSessionBeginInfo sessionBeginInfo{
+                    .type = XR_TYPE_SESSION_BEGIN_INFO,
+                    .next = nullptr,
+                    .primaryViewConfigurationType = m_viewConfigType
+                };
                 XrResult result;
                 CHECK_XRCMD(result = xrBeginSession(m_session, &sessionBeginInfo));
                 m_sessionRunning = (result == XR_SUCCESS);
@@ -1510,10 +1933,12 @@ struct OpenXrProgram final : IOpenXrProgram {
                                                             XR_INPUT_SOURCE_LOCALIZED_NAME_INTERACTION_PROFILE_BIT |
                                                             XR_INPUT_SOURCE_LOCALIZED_NAME_COMPONENT_BIT;
 
-            XrInputSourceLocalizedNameGetInfo nameInfo = {XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO};
-            nameInfo.sourcePath = paths[i];
-            nameInfo.whichComponents = all;
-
+            const XrInputSourceLocalizedNameGetInfo nameInfo {
+                .type = XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO,
+                .next = nullptr,
+                .sourcePath = paths[i],
+                .whichComponents = all
+            };
             uint32_t size = 0;
             CHECK_XRCMD(xrGetInputSourceLocalizedName(m_session, &nameInfo, 0, &size, nullptr));
             if (size < 1) {
@@ -1537,29 +1962,44 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     bool IsSessionFocused() const override { return m_sessionState == XR_SESSION_STATE_FOCUSED; }
 
-    void PollHandTrackers()
+    template < typename ControllerInfoArray >
+    void PollHandTrackers(const XrTime time, ControllerInfoArray& controllerInfo) //std::array<TrackingInfo::Controller, Side::COUNT>& controllerInfo)
     {
-        if (m_pfnLocateHandJointsEXT == nullptr || m_lastDisplayTime == 0)
+        if (m_pfnLocateHandJointsEXT == nullptr || time == 0)
             return;
 
         std::array<XrMatrix4x4f, XR_HAND_JOINT_COUNT_EXT> oculusOrientedJointPoses;
         for (const auto hand : { Side::LEFT,Side::RIGHT })
         {
+            auto& controller = controllerInfo[hand];//m_input.controllerInfo[hand];
+            // TODO: v17/18 server does not allow for both controller & hand tracking data, this needs changing,
+            //       we don't want to override a controller device pose with potentially an emulated pose for
+            //       runtimes such as WMR & SteamVR.
+            if (controller.enabled)
+                continue;
+
             auto& handerTracker = m_input.handerTrackers[hand];
-            //XrHandJointVelocitiesEXT velocities{ XR_TYPE_HAND_JOINT_VELOCITIES_EXT };
-            //velocities.jointCount = XR_HAND_JOINT_COUNT_EXT;
-            //velocities.jointVelocities = handerTracker.jointVelocities.data();
-
-            XrHandJointLocationsEXT locations{ XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
-            //locations.next = &velocities;
-            locations.jointCount = XR_HAND_JOINT_COUNT_EXT;
-            locations.jointLocations = handerTracker.jointLocations.data();
-
-            XrHandJointsLocateInfoEXT locateInfo{ XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
-            locateInfo.baseSpace = m_appSpace;
-            locateInfo.time = m_lastDisplayTime;
+            //XrHandJointVelocitiesEXT velocities {
+            //    .type = XR_TYPE_HAND_JOINT_VELOCITIES_EXT,
+            //    .next = nullptr,
+            //    .jointCount = XR_HAND_JOINT_COUNT_EXT,
+            //    .jointVelocities = handerTracker.jointVelocities.data(),
+            //};
+            XrHandJointLocationsEXT locations {
+                .type = XR_TYPE_HAND_JOINT_LOCATIONS_EXT,
+                .isActive = XR_FALSE,
+                //.next = &velocities,
+                .jointCount = XR_HAND_JOINT_COUNT_EXT,
+                .jointLocations = handerTracker.jointLocations.data(),
+            };
+            const XrHandJointsLocateInfoEXT locateInfo{
+                .type = XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT,
+                .next = nullptr,
+                .baseSpace = m_appSpace,
+                .time = time
+            };
             CHECK_XRCMD(m_pfnLocateHandJointsEXT(handerTracker.tracker, &locateInfo, &locations));
-            if (!locations.isActive)
+            if (locations.isActive == XR_FALSE)
                 continue;
 
             const auto& jointLocations = handerTracker.jointLocations;
@@ -1577,8 +2017,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 XrMatrix4x4f_CreateIdentity(&jointMatFixed);
                 XrMatrix4x4f_Multiply(&jointMatFixed, &jointMat, &handBaseOrientation);
             }
-
-            auto& controller = m_input.controllerInfo[hand];
+            
             for (size_t boneIndex = 0; boneIndex < ALVR_HAND::alvrHandBone_MaxSkinnable; ++boneIndex)
             {
                 auto& boneRot = controller.boneRotations[boneIndex];
@@ -1607,6 +2046,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 bonePos = ToTrackingVector3(localizedPos);
             }
 
+            controller.enabled = true;
             controller.isHand = true;
 
             const XrMatrix4x4f& palmMatP = oculusOrientedJointPoses[XR_HAND_JOINT_PALM_EXT];
@@ -1617,60 +2057,82 @@ struct OpenXrProgram final : IOpenXrProgram {
             controller.boneRootPosition = ToTrackingVector3(palmPos);
             controller.boneRootOrientation = ToTrackingQuat(palmRot);
         }
-
     }
 
     void PollActions() override {
+        constexpr static const TrackingInfo::Controller ControllerIdentity {
+            .enabled = false,
+            .isHand = false,
+            .buttons = 0,
+            .trackpadPosition = { 0,0 },
+            .triggerValue = 0.0f,
+            .gripValue = 0.0f,
+            .orientation = { 0,0,0,1 },
+            .position = { 0,0,0 },
+            .angularVelocity = { 0,0,0 },
+            .linearVelocity = { 0,0,0 },
+            .boneRotations = {},
+            .bonePositionsBase = {},
+            .boneRootOrientation = {0,0,0,1},
+            .boneRootPosition = {0,0,0},
+            .handFingerConfidences = 0
+        };
         m_input.handActive = { XR_FALSE, XR_FALSE };
-        m_input.controllerInfo = { TrackingInfo::Controller {}, TrackingInfo::Controller {}, };
+        m_input.controllerInfo = { ControllerIdentity, ControllerIdentity };
 
         // Sync actions
-        const XrActiveActionSet activeActionSet{m_input.actionSet, XR_NULL_PATH};
-        XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
-        syncInfo.countActiveActionSets = 1;
-        syncInfo.activeActionSets = &activeActionSet;
+        const XrActiveActionSet activeActionSet {
+            .actionSet = m_input.actionSet,
+            .subactionPath = XR_NULL_PATH
+        };
+        const XrActionsSyncInfo syncInfo {
+            .type = XR_TYPE_ACTIONS_SYNC_INFO,
+            .next = nullptr,
+            .countActiveActionSets = 1,
+            .activeActionSets = &activeActionSet
+        };
         CHECK_XRCMD(xrSyncActions(m_session, &syncInfo));
 
         // Get pose and grab action state and start haptic vibrate when hand is 90% squeezed.
-        for (auto hand : {Side::LEFT, Side::RIGHT}) {
-            XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
-            getInfo.subactionPath = m_input.handSubactionPath[hand];
-            getInfo.action = m_input.poseAction;
-            XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
+        for (auto hand : {Side::LEFT, Side::RIGHT})
+        {
+            XrActionStateGetInfo getInfo {
+                .type = XR_TYPE_ACTION_STATE_GET_INFO,
+                .next = nullptr,
+                .action = m_input.poseAction,
+                .subactionPath = m_input.handSubactionPath[hand]
+            };
+            XrActionStatePose poseState{.type=XR_TYPE_ACTION_STATE_POSE, .next=nullptr};
             CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
             m_input.handActive[hand] = poseState.isActive;
 
-            //constexpr const std::uint32_t EnableRightControllerMask = TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
-            //                                                          TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST;
-            //constexpr const std::uint32_t EnableLeftControllerMask  = EnableRightControllerMask |
-            //                                                          TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
-            //
-            //const std::uint32_t enableControllerMask = hand == Side::LEFT ? EnableLeftControllerMask : EnableRightControllerMask;
-
             auto& controllerInfo = m_input.controllerInfo[hand];
-            // xrGetActionStatePose doesn't appear to be a reliable method to determine if a controller is active,
-            // at least with WMR's current OpenXR runtime.
-            // if (m_input.handActive[hand] == XR_TRUE) 
+            if (poseState.isActive == XR_TRUE)
                 controllerInfo.enabled = true;
-                //controllerInfo.flags |= enableControllerMask;
             
             for (const auto& [buttonType, v] : m_input.boolActionMap)
             {
+                if (v.xrAction == XR_NULL_HANDLE)
+                    continue;
                 getInfo.action = v.xrAction;
-                XrActionStateBoolean boolValue{XR_TYPE_ACTION_STATE_BOOLEAN};
+                XrActionStateBoolean boolValue{.type=XR_TYPE_ACTION_STATE_BOOLEAN, .next=nullptr};
                 CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &boolValue));
-                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
+                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE)) {
                     controllerInfo.buttons |= ALVR_BUTTON_FLAG(buttonType);
+                }
             }
 
             const auto GetFloatValue = [&](const InputState::ALVRAction& v, float& val)
             {
+                if (v.xrAction == XR_NULL_HANDLE)
+                    return;
                 getInfo.action = v.xrAction;
-                XrActionStateFloat floatValue{XR_TYPE_ACTION_STATE_FLOAT};
+                XrActionStateFloat floatValue{.type=XR_TYPE_ACTION_STATE_FLOAT, .next=nullptr};
                 CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &floatValue));
                 if (floatValue.isActive == XR_FALSE)
                     return;
                 val = floatValue.currentState;
+                controllerInfo.enabled = true;
             };
             /*const*/ auto& scalarActionMap = m_input.scalarActionMap;
             GetFloatValue(scalarActionMap[ALVR_INPUT_TRACKPAD_X], controllerInfo.trackpadPosition.x);
@@ -1680,19 +2142,57 @@ struct OpenXrProgram final : IOpenXrProgram {
             GetFloatValue(scalarActionMap[ALVR_INPUT_TRIGGER_VALUE], controllerInfo.triggerValue);
             GetFloatValue(scalarActionMap[ALVR_INPUT_GRIP_VALUE], controllerInfo.gripValue);
 
+            const auto GetVector2fValue = [&](const InputState::ALVRAction& v, auto& val)
+            {
+                if (v.xrAction == XR_NULL_HANDLE)
+                    return;
+                getInfo.action = v.xrAction;
+                XrActionStateVector2f vec2Value{.type=XR_TYPE_ACTION_STATE_VECTOR2F, .next=nullptr};
+                CHECK_XRCMD(xrGetActionStateVector2f(m_session, &getInfo, &vec2Value));
+                if (vec2Value.isActive == XR_FALSE)
+                    return;
+                val.x = vec2Value.currentState.x;
+                val.y = vec2Value.currentState.y;
+                controllerInfo.enabled = true;
+            };
+            /*const*/ auto& vec2fActionMap = m_input.vector2fActionMap;
+            GetVector2fValue(vec2fActionMap[ALVR_INPUT_JOYSTICK_X], controllerInfo.trackpadPosition);
+
+            for (auto& [buttonType, v] : m_input.scalarToBoolActionMap)
+            {
+                if (v.xrAction == XR_NULL_HANDLE)
+                    continue;
+                getInfo.action = v.xrAction;
+                XrActionStateFloat floatValue{.type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr};
+                CHECK_XRCMD(xrGetActionStateFloat(m_session, &getInfo, &floatValue));
+                if (!floatValue.isActive || !floatValue.changedSinceLastSync)
+                    continue;
+                if (floatValue.currentState < v.lastValues[hand]) {
+                    controllerInfo.buttons |= ALVR_BUTTON_FLAG(buttonType);
+                }
+                v.lastValues[hand] = floatValue.currentState;
+            }
+            
             const auto GetFloatFromBool = [&](const InputState::ALVRAction& v, float& val)
             {
+                if (v.xrAction == XR_NULL_HANDLE)
+                    return;
                 getInfo.action = v.xrAction;
-                XrActionStateBoolean boolValue{ XR_TYPE_ACTION_STATE_BOOLEAN };
+                XrActionStateBoolean boolValue{.type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr};
                 CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &boolValue));
-                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE))
+                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE)) {
                     val = 1.0f;
+                    controllerInfo.enabled = true;
+                }
             };
             auto& boolToScalarActionMap = m_input.boolToScalarActionMap;
             GetFloatFromBool(boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE], controllerInfo.gripValue);
+
+            if (controllerInfo.buttons != 0)
+                controllerInfo.enabled = true;
         }
 
-        PollHandTrackers();
+        //PollHandTrackers();
 
         // haptic feedback
         constexpr static const size_t MaxPopPerFrame = 20;
@@ -1704,32 +2204,42 @@ struct OpenXrProgram final : IOpenXrProgram {
             if (!m_input.controllerInfo[hand].isHand)
             {
                 //Log::Write(Log::Level::Info, Fmt("Haptics: amp:%f duration:%f freq:%f", hapticFeedback.amplitude, hapticFeedback.duration, hapticFeedback.frequency));
-                XrHapticVibration vibration{ XR_TYPE_HAPTIC_VIBRATION };
-                vibration.amplitude = hapticFeedback.amplitude;
-                vibration.duration = static_cast<XrDuration>(static_cast<double>(hapticFeedback.duration) * 1e+9);
-                vibration.frequency = hapticFeedback.frequency;
-
-                XrHapticActionInfo hapticActionInfo{ XR_TYPE_HAPTIC_ACTION_INFO };
-                hapticActionInfo.action = m_input.vibrateAction;
-                hapticActionInfo.subactionPath = m_input.handSubactionPath[hand];
-                CHECK_XRCMD(xrApplyHapticFeedback(m_session, &hapticActionInfo, reinterpret_cast<XrHapticBaseHeader*>(&vibration)));
+                const XrHapticVibration vibration {
+                    .type = XR_TYPE_HAPTIC_VIBRATION,
+                    .next = nullptr,
+                    .duration = static_cast<XrDuration>(static_cast<double>(hapticFeedback.duration) * 1e+9),
+                    .frequency = hapticFeedback.frequency,
+                    .amplitude = hapticFeedback.amplitude
+                };
+                const XrHapticActionInfo hapticActionInfo {
+                    .type = XR_TYPE_HAPTIC_ACTION_INFO,
+                    .next = nullptr,
+                    .action = m_input.vibrateAction,
+                    .subactionPath = m_input.handSubactionPath[hand]
+                };
+                /*CHECK_XRCMD*/(xrApplyHapticFeedback(m_session, &hapticActionInfo, reinterpret_cast<const XrHapticBaseHeader*>(&vibration)));
             }
             ++popCount;
         }
 
 #ifndef ALXR_ENGINE_DISABLE_QUIT_ACTION
         // There were no subaction paths specified for the quit action, because we don't care which hand did it.
-        XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO, nullptr, m_input.quitAction, XR_NULL_PATH};
-        XrActionStateBoolean quitValue{XR_TYPE_ACTION_STATE_BOOLEAN};
+        const XrActionStateGetInfo getInfo {
+            .type = XR_TYPE_ACTION_STATE_GET_INFO,
+            .next = nullptr,
+            .action = m_input.quitAction,
+            .subactionPath = XR_NULL_PATH            
+        };
+        XrActionStateBoolean quitValue{.type=XR_TYPE_ACTION_STATE_BOOLEAN, .next=nullptr};
         CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
         if (quitValue.isActive == XR_TRUE && quitValue.currentState == XR_TRUE) {
             using namespace std::literals::chrono_literals;
             if (quitValue.changedSinceLastSync == XR_TRUE) {
-                m_input.quitStartTime = std::chrono::steady_clock::now();
+                m_input.quitStartTime = InputState::ClockType::now();
             }
             else {
                 constexpr const auto QuitHoldTime = 4s;
-                const auto currTime = std::chrono::steady_clock::now();
+                const auto currTime = InputState::ClockType::now();
                 const auto holdTime = std::chrono::duration_cast<std::chrono::seconds>(currTime - m_input.quitStartTime);
                 if (holdTime >= QuitHoldTime)
                 {
@@ -1742,35 +2252,104 @@ struct OpenXrProgram final : IOpenXrProgram {
 #endif
     }
 
+    inline bool UseNetworkPredicatedDisplayTime() const
+    {
+        return  m_runtimeType != OxrRuntimeType::SteamVR &&
+                m_runtimeType != OxrRuntimeType::Monado;
+    }
+
     void RenderFrame() override {
         CHECK(m_session != XR_NULL_HANDLE);
+        const auto renderMode = m_renderMode.load();
+        const bool isVideoStream = renderMode == RenderMode::VideoStream;
+        std::uint64_t videoFrameDisplayTime = std::uint64_t(-1);
+        if (isVideoStream) {
+            m_graphicsPlugin->BeginVideoView();
+            videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
+        }
+        const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1);
+        // rendered1 appears to be unused.
+        //if (timeRender)
+        //    LatencyCollector::Instance().rendered1(videoFrameIndex);
 
-        XrFrameWaitInfo frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
-        XrFrameState frameState{XR_TYPE_FRAME_STATE};
+        constexpr const XrFrameWaitInfo frameWaitInfo{
+            .type = XR_TYPE_FRAME_WAIT_INFO,
+            .next = nullptr
+        };
+        XrFrameState frameState{
+            .type = XR_TYPE_FRAME_STATE,
+            .next = nullptr
+        };
         CHECK_XRCMD(xrWaitFrame(m_session, &frameWaitInfo, &frameState));
-        m_lastDisplayTime = frameState.predictedDisplayTime;
+        m_PredicatedLatencyOffset.store(frameState.predictedDisplayPeriod);
+        m_lastPredicatedDisplayTime.store(frameState.predictedDisplayTime);
 
-        XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+        XrTime predictedDisplayTime;
+        const auto predictedViews = GetPredicatedViews(frameState, renderMode, videoFrameDisplayTime, /*out*/ predictedDisplayTime);
+
+        constexpr const XrFrameBeginInfo frameBeginInfo{
+            .type = XR_TYPE_FRAME_BEGIN_INFO,
+            .next = nullptr
+        };
         CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
 
-        std::vector<XrCompositionLayerBaseHeader*> layers;
-        XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
-        std::vector<XrCompositionLayerProjectionView> projectionLayerViews;
+        //SetMaskedPassthrough();
+
+        std::uint32_t layerCount = 0;
+        std::array<const XrCompositionLayerBaseHeader*, 1> layers{};
+        //XrCompositionLayerPassthroughFB passthroughLayer;
+        //if (m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE) {
+        //    passthroughLayer = {
+        //        .type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
+        //        .next = nullptr,
+        //        .flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+        //        .space = XR_NULL_HANDLE,
+        //        .layerHandle = m_ptLayerData.reconPassthroughLayer,
+        //    };
+        //    layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughLayer);
+        //}
+
+        XrCompositionLayerProjection layer {
+            .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
+            .next = nullptr
+        };        
+        std::array<XrCompositionLayerProjectionView,2> projectionLayerViews;
         if (frameState.shouldRender == XR_TRUE) {
-            if (RenderLayer(frameState.predictedDisplayTime, projectionLayerViews, layer)) {
-                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
+            const std::span<const XrView> views { predictedViews.begin(), predictedViews.end() };
+            if (RenderLayer(predictedDisplayTime, views, projectionLayerViews, layer)) {
+                layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
             }
         }
+        if (timeRender)
+            LatencyCollector::Instance().rendered2(videoFrameDisplayTime);
 
-        XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-        frameEndInfo.displayTime = frameState.predictedDisplayTime;
-        frameEndInfo.environmentBlendMode = m_environmentBlendMode;
-        frameEndInfo.layerCount = (uint32_t)layers.size();
-        frameEndInfo.layers = layers.data();
+#ifdef XR_USE_OXR_PICO
+        const XrFrameEndInfoEXT xrFrameEndInfoEXT {
+            .type = XR_TYPE_FRAME_END_INFO,
+            .next = nullptr,
+            .useHeadposeExt = 1,
+            .gsIndex = m_gsIndex.load()
+        };
+#endif
+        const XrFrameEndInfo frameEndInfo{
+            .type = XR_TYPE_FRAME_END_INFO,
+#ifdef XR_USE_OXR_PICO
+            .next = &xrFrameEndInfoEXT,
+#else
+            .next = nullptr,
+#endif
+            // TODO: Figure out why steamvr doesn't like using custom predicated display times!!!
+            .displayTime = UseNetworkPredicatedDisplayTime() ?
+                predictedDisplayTime : frameState.predictedDisplayTime,
+            .environmentBlendMode = m_environmentBlendMode,
+            .layerCount = layerCount,
+            .layers = layers.data()
+        };
         CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
+        LatencyManager::Instance().SubmitAndSync(videoFrameDisplayTime);
+        if (isVideoStream)
+            m_graphicsPlugin->EndVideoView();
         
-        ++m_frameIndex;
-
         if (m_delayOnGuardianChanged)
         {
             m_delayOnGuardianChanged = false;
@@ -1778,38 +2357,75 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
     }
 
-    bool RenderLayer(XrTime predictedDisplayTime, std::vector<XrCompositionLayerProjectionView>& projectionLayerViews,
-                     XrCompositionLayerProjection& layer) {
-        XrResult res;
-
-        XrViewState viewState{XR_TYPE_VIEW_STATE};
-        uint32_t viewCapacityInput = (uint32_t)m_views.size();
-        uint32_t viewCountOutput;
-
-        XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
-        viewLocateInfo.viewConfigurationType = m_viewConfigType;
-        viewLocateInfo.displayTime = predictedDisplayTime;
-        viewLocateInfo.space = m_appSpace;
-
-        res = xrLocateViews(m_session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, m_views.data());
-        CHECK_XRRESULT(res, "xrLocateViews");
+    inline bool LocateViews(const XrTime predictedDisplayTime, const std::uint32_t viewCapacityInput, XrView* views) const
+    {
+#ifdef XR_USE_OXR_PICO
+        XrViewStatePICOEXT xrViewStatePICOEXT {};
+#endif
+        const XrViewLocateInfo viewLocateInfo{
+            .type = XR_TYPE_VIEW_LOCATE_INFO,
+#ifdef XR_USE_OXR_PICO
+            .next = &xrViewStatePICOEXT,
+#else
+            .next = nullptr,
+#endif
+            .viewConfigurationType = m_viewConfigType,
+            .displayTime = predictedDisplayTime,
+            .space = m_appSpace,
+        };
+        XrViewState viewState {
+            .type = XR_TYPE_VIEW_STATE,
+            .next = nullptr
+        };
+        uint32_t viewCountOutput = 0;
+        const XrResult res = xrLocateViews(m_session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, views);
+#ifdef XR_USE_OXR_PICO
+        m_gsIndex.store(xrViewStatePICOEXT.gsIndex);
+#endif
+        CHECK_XRRESULT(res, "LocateViews");
         if ((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
             (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
             return false;  // There is no valid tracking poses for the views.
         }
-
         CHECK(viewCountOutput == viewCapacityInput);
+#if 0
         CHECK(viewCountOutput == m_configViews.size());
         CHECK(viewCountOutput == m_swapchains.size());
+#endif
+        return true;
+    }
 
-        projectionLayerViews.resize(viewCountOutput);
+    bool RenderLayer(const XrTime predictedDisplayTime, std::array<XrCompositionLayerProjectionView,2>& projectionLayerViews,
+        XrCompositionLayerProjection& layer) {
+
+        const uint32_t viewCapacityInput = static_cast<std::uint32_t>(m_views.size());
+        if (!LocateViews(predictedDisplayTime, viewCapacityInput, m_views.data()))
+            return false;
+        const std::span<const XrView> views { m_views.data(), m_views.size() };
+        return RenderLayer
+        (
+            predictedDisplayTime, views,
+            projectionLayerViews, layer
+        );
+    }
+
+    bool RenderLayer
+    (
+        const XrTime predictedDisplayTime,
+        const std::span<const XrView>& views,
+        std::array<XrCompositionLayerProjectionView,2>& projectionLayerViews,
+        XrCompositionLayerProjection& layer
+    )
+    {
+        //projectionLayerViews.resize(views.size());
+        assert(projectionLayerViews.size() == views.size());
 
         // For each locatable space that we want to visualize, render a 25cm cube.
         std::vector<Cube> cubes;
 #ifdef ALXR_ENGINE_ENABLE_VIZ_SPACES
         for (XrSpace visualizedSpace : m_visualizedSpaces) {
-            XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
-            res = xrLocateSpace(visualizedSpace, m_appSpace, predictedDisplayTime, &spaceLocation);
+            XrSpaceLocation spaceLocation{.type=XR_TYPE_SPACE_LOCATION, .next=nullptr};
+            XrResult res = xrLocateSpace(visualizedSpace, m_appSpace, predictedDisplayTime, &spaceLocation);
             CHECK_XRRESULT(res, "xrLocateSpace");
             if (XR_UNQUALIFIED_SUCCESS(res)) {
                 if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
@@ -1821,77 +2437,122 @@ struct OpenXrProgram final : IOpenXrProgram {
             }
         }
 #endif
-
-        // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
-        // true when the application has focus.
-        for (auto hand : {Side::LEFT, Side::RIGHT}) {
-            XrSpaceLocation spaceLocation{XR_TYPE_SPACE_LOCATION};
-            res = xrLocateSpace(m_input.handSpace[hand], m_appSpace, predictedDisplayTime, &spaceLocation);
-            CHECK_XRRESULT(res, "xrLocateSpace");
-            if (XR_UNQUALIFIED_SUCCESS(res)) {
-                if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
-                    (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
-                    float scale = 0.1f * m_input.handScale[hand];
-                    cubes.push_back(Cube{spaceLocation.pose, {scale, scale, scale}});
+        const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
+        if (!isVideoStream) {
+            // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
+            // true when the application has focus.
+            cubes.reserve(2);
+            for (auto hand : { Side::LEFT, Side::RIGHT }) {
+                XrSpaceLocation spaceLocation {
+                    .type = XR_TYPE_SPACE_LOCATION,
+                    .next = nullptr
+                };
+                XrResult res = xrLocateSpace(m_input.handSpace[hand], m_appSpace, predictedDisplayTime, &spaceLocation);
+                CHECK_XRRESULT(res, "xrLocateSpace");
+                if (XR_UNQUALIFIED_SUCCESS(res)) {
+                    if ((spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
+                        (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+                        float scale = 0.1f * m_input.handScale[hand];
+                        cubes.push_back(Cube{ spaceLocation.pose, {scale, scale, scale} });
+                    }
                 }
-            } else {
-                // Tracking loss is expected when the hand is not active so only log a message
-                // if the hand is active.
-                if (m_input.handActive[hand] == XR_TRUE) {
-                    const char* handName[] = {"left", "right"};
-                    Log::Write(Log::Level::Verbose,
-                               Fmt("Unable to locate %s hand action space in app space: %d", handName[hand], res));
+                else {
+                    // Tracking loss is expected when the hand is not active so only log a message
+                    // if the hand is active.
+                    if (m_input.handActive[hand] == XR_TRUE) {
+                        const char* handName[] = { "left", "right" };
+                        Log::Write(Log::Level::Verbose,
+                            Fmt("Unable to locate %s hand action space in app space: %d", handName[hand], res));
+                    }
                 }
             }
         }
 
+        //if (isVideoStream)
+        //    m_graphicsPlugin->BeginVideoView();
+
         // Render view to the appropriate part of the swapchain image.
-        for (uint32_t i = 0; i < viewCountOutput; i++) {
+        for (std::uint32_t i = 0; i < views.size(); ++i) {
             // Each view has a separate swapchain which is acquired, rendered to, and released.
-            const Swapchain viewSwapchain = m_swapchains[i];
-
-            XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-
-            uint32_t swapchainImageIndex;
+            const Swapchain& viewSwapchain = m_swapchains[i];
+            
+            std::uint32_t swapchainImageIndex;
+            constexpr const XrSwapchainImageAcquireInfo acquireInfo {
+                .type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO,
+                .next = nullptr
+            };
             CHECK_XRCMD(xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
 
-            XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-            waitInfo.timeout = XR_INFINITE_DURATION;
+            constexpr const XrSwapchainImageWaitInfo waitInfo {
+                .type    = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO,
+                .next    = nullptr,
+                .timeout = XR_INFINITE_DURATION
+            };
             CHECK_XRCMD(xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
 
-            projectionLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
-            projectionLayerViews[i].pose = m_views[i].pose;
-            projectionLayerViews[i].fov = m_views[i].fov;
-            projectionLayerViews[i].subImage.swapchain = viewSwapchain.handle;
-            projectionLayerViews[i].subImage.imageRect.offset = {0, 0};
-            projectionLayerViews[i].subImage.imageRect.extent = {viewSwapchain.width, viewSwapchain.height};
-
+            const auto& view = views[i];
+            projectionLayerViews[i] = {
+                .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
+                .next = nullptr,
+                .pose = view.pose,
+                .fov  = view.fov,
+                .subImage = {
+                    .swapchain = viewSwapchain.handle,
+                    .imageRect = {
+                        .offset = {0, 0},
+                        .extent = {viewSwapchain.width, viewSwapchain.height}
+                    },
+                    .imageArrayIndex = 0
+                }
+            };
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
-            m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, cubes);
-
-            XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            if (isVideoStream)
+                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);//, cubes);
+            else
+                m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, cubes);
+            
+            constexpr const XrSwapchainImageReleaseInfo releaseInfo{
+                .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
+                .next = nullptr
+            };
             CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
         }
 
+        //if (isVideoStream)
+        //    m_graphicsPlugin->EndVideoView();
+
         layer.space = m_appSpace;
+        layer.layerFlags = XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT;
+        // passthrough api flags:
+        //layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+        //                   XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
+        //                   XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
         layer.viewCount = (uint32_t)projectionLayerViews.size();
         layer.views = projectionLayerViews.data();
         return true;
     }
 
+    virtual void SetRenderMode(const RenderMode newMode) override
+    {
+        m_renderMode = newMode;
+    }
+
+    virtual RenderMode GetRenderMode() const override {
+        return m_renderMode;
+    }
+
     float EstimateDisplayRefreshRate()
     {
-#if 0
+#ifdef ALXR_ENABLE_ESTIMATE_DISPLAY_REFRESH_RATE
         if (m_session == XR_NULL_HANDLE)
             return 60.0f;
 
-        using PeriodType = std::chrono::high_resolution_clock::period;
-        using DurationType = std::chrono::high_resolution_clock::duration;
+        using ClockType = XrSteadyClock;
+        static_assert(ClockType::is_steady);
         using secondsf = std::chrono::duration<float, std::chrono::seconds::period>;
 
         using namespace std::literals::chrono_literals;
         constexpr const auto OneSecond = 1s;
-
         constexpr const size_t SamplesPerSec = 30;
 
         std::vector<size_t> frame_count_per_sec;
@@ -1899,7 +2560,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         bool isStarted = false;
         size_t frameIdx = 0;
-        auto last = std::chrono::high_resolution_clock::now();       
+        auto last = XrSteadyClock::now();
         while (frame_count_per_sec.size() != SamplesPerSec) {
             bool exitRenderLoop = false, requestRestart = false;
             PollEvents(&exitRenderLoop, &requestRestart);
@@ -1909,24 +2570,27 @@ struct OpenXrProgram final : IOpenXrProgram {
                 continue;
             if (!isStarted)
             {
-                last = std::chrono::high_resolution_clock::now();
+                last = ClockType::now();
                 isStarted = true;
             }
-            XrFrameState frameState{ XR_TYPE_FRAME_STATE };
+            XrFrameState frameState{ .type=XR_TYPE_FRAME_STATE, .next=nullptr };
             CHECK_XRCMD(xrWaitFrame(m_session, nullptr, &frameState));            
             CHECK_XRCMD(xrBeginFrame(m_session, nullptr));
-            XrFrameEndInfo frameEndInfo{ XR_TYPE_FRAME_END_INFO };
-            frameEndInfo.displayTime = frameState.predictedDisplayTime;
-            frameEndInfo.environmentBlendMode = m_environmentBlendMode;
-            frameEndInfo.layerCount = 0;
-            frameEndInfo.layers = nullptr;
+            const XrFrameEndInfo frameEndInfo{
+                .type = XR_TYPE_FRAME_END_INFO,
+                .next = nullptr,
+                .displayTime = frameState.predictedDisplayTime,
+                .environmentBlendMode = m_environmentBlendMode,
+                .layerCount = 0,
+                .layers = nullptr
+            };
             CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
 
             if (!frameState.shouldRender)
                 continue;
             
             ++frameIdx;
-            auto curr = std::chrono::high_resolution_clock::now();
+            auto curr = ClockType::now();
             if ((curr - last) >= OneSecond)
             {
                 Log::Write(Log::Level::Info, Fmt("Frame Count at %d = %d frames", frame_count_per_sec.size(), frameIdx));
@@ -1948,7 +2612,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     void UpdateSupportedDisplayRefreshRates()
     {
         if (m_pfnGetDisplayRefreshRateFB) {
-            CHECK_XRCMD(m_pfnGetDisplayRefreshRateFB(m_session, &m_streamConfig.refreshRate));
+            CHECK_XRCMD(m_pfnGetDisplayRefreshRateFB(m_session, &m_streamConfig.renderConfig.refreshRate));
         }
 
         if (m_pfnEnumerateDisplayRefreshRatesFB) {
@@ -1969,13 +2633,13 @@ struct OpenXrProgram final : IOpenXrProgram {
     {
         if (m_instance == XR_NULL_HANDLE)
             return false;
-        XrSystemProperties xrSystemProps = { XR_TYPE_SYSTEM_PROPERTIES };
+        XrSystemProperties xrSystemProps = { .type=XR_TYPE_SYSTEM_PROPERTIES, .next=nullptr };
         CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &xrSystemProps));
         std::strncpy(systemProps.systemName, xrSystemProps.systemName, sizeof(systemProps.systemName));
         if (m_configViews.size() > 0)
         {
             const auto& configView = m_configViews[0];
-            systemProps.recommendedEyeWidth = configView.recommendedImageRectWidth;
+            systemProps.recommendedEyeWidth = configView.recommendedImageRectWidth;// / 2;
             systemProps.recommendedEyeHeight = configView.recommendedImageRectHeight;
         }
         assert(m_displayRefreshRates.size() > 0);
@@ -2001,10 +2665,9 @@ struct OpenXrProgram final : IOpenXrProgram {
                     pose.orientation.y == 0 &&
                     pose.orientation.z == 0 &&
                     pose.orientation.w == 0;
-
         }
     };
-    constexpr /*inline*/ static const SpaceLoc IdentitySpaceLoc = { IdentityPose, {0,0,0}, {0,0,0}};
+    constexpr /*inline*/ static const SpaceLoc IdentitySpaceLoc = { IdentityPose, {0,0,0}, {0,0,0} };
     constexpr /*inline*/ static const SpaceLoc ZeroSpaceLoc = { ZeroPose, {0,0,0}, {0,0,0} };
 
     inline SpaceLoc GetSpaceLocation
@@ -2015,11 +2678,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         const SpaceLoc& initLoc = IdentitySpaceLoc
     ) const
     {
-        XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
+        XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY, nullptr };
         XrSpaceLocation spaceLocation{ XR_TYPE_SPACE_LOCATION, &velocity };
         const auto res = xrLocateSpace(targetSpace, baseSpace, time, &spaceLocation);
-        CHECK_XRRESULT(res, "xrLocateSpace");
-        
+        //CHECK_XRRESULT(res, "xrLocateSpace");
+
         SpaceLoc result = initLoc;
         if (!XR_UNQUALIFIED_SUCCESS(res))
             return result;
@@ -2042,7 +2705,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const XrSpace& baseSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
     {
-        return GetSpaceLocation(targetSpace, baseSpace, m_lastDisplayTime, initLoc);
+        return GetSpaceLocation(targetSpace, baseSpace, m_lastPredicatedDisplayTime, initLoc);
     }
 
     inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const XrTime& time, const SpaceLoc& initLoc = IdentitySpaceLoc) const
@@ -2052,7 +2715,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     inline SpaceLoc GetSpaceLocation(const XrSpace& targetSpace, const SpaceLoc& initLoc = IdentitySpaceLoc) const
     {
-        return GetSpaceLocation(targetSpace, m_lastDisplayTime, initLoc);
+        return GetSpaceLocation(targetSpace, m_lastPredicatedDisplayTime, initLoc);
     }
 
     void GetControllerInfo(TrackingInfo& info, const double /*displayTime*/) const
@@ -2065,13 +2728,44 @@ struct OpenXrProgram final : IOpenXrProgram {
             //                      TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST);
             //if (hand == Side::LEFT)
             //    newContInfo.flags |= TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
-            
+
             const auto spaceLoc = GetSpaceLocation(m_input.handSpace[hand]);
-            newContInfo.position        = ToTrackingVector3(spaceLoc.pose.position);
-            newContInfo.orientation     = ToTrackingQuat(spaceLoc.pose.orientation);
-            newContInfo.linearVelocity  = ToTrackingVector3(spaceLoc.linearVelocity);
+            newContInfo.position = ToTrackingVector3(spaceLoc.pose.position);
+            newContInfo.orientation = ToTrackingQuat(spaceLoc.pose.orientation);
+            newContInfo.linearVelocity = ToTrackingVector3(spaceLoc.linearVelocity);
             newContInfo.angularVelocity = ToTrackingVector3(spaceLoc.angularVelocity);
         }
+    }
+
+    inline std::array<XrView,2> GetPredicatedViews
+    (
+        const XrFrameState& frameState, const RenderMode renderMode, const std::uint64_t videoTimeStampNs,
+        XrTime& predicateDisplayTime
+    )
+    {
+        assert(frameState.predictedDisplayPeriod >= 0);
+        const auto GetDefaultViews = [&]()-> std::array<XrView, 2> {
+            LocateViews(frameState.predictedDisplayTime, (uint32_t)m_views.size(), m_views.data());
+            return { m_views[0], m_views[1] };
+        };
+        predicateDisplayTime = frameState.predictedDisplayTime;
+        if (renderMode == RenderMode::Lobby)
+            return GetDefaultViews();
+
+        std::shared_lock<std::shared_mutex> l(m_trackingFrameMapMutex);
+        if (videoTimeStampNs != std::uint64_t(-1))
+        {
+            const auto trackingFrameItr = m_trackingFrameMap.find(videoTimeStampNs);
+            if (trackingFrameItr != m_trackingFrameMap.cend()) {
+                predicateDisplayTime = trackingFrameItr->second.displayTime;
+                return trackingFrameItr->second.views;
+            }
+        }
+        const auto result = m_trackingFrameMap.rbegin();
+        if (result == m_trackingFrameMap.rend())
+            return GetDefaultViews();
+        predicateDisplayTime = result->second.displayTime;
+        return result->second.views;
     }
 
     static inline ALXREyeInfo GetEyeInfo(const XrView& left_view, const XrView& right_view)
@@ -2084,14 +2778,14 @@ struct OpenXrProgram final : IOpenXrProgram {
         constexpr const auto ToEyeFov = [](const XrFovf& fov) -> EyeFov
         {
             return EyeFov{
-                std::fabs(Math::ToDegrees(fov.angleLeft)),
-                std::fabs(Math::ToDegrees(fov.angleRight)),
-                std::fabs(Math::ToDegrees(fov.angleUp)),
-                std::fabs(Math::ToDegrees(fov.angleDown))
+                .left   = fov.angleLeft,
+                .right  = fov.angleRight,
+                .top    = fov.angleUp,
+                .bottom = fov.angleDown
             };
         };
         return ALXREyeInfo{
-            .eveFov = {
+            .eyeFov = {
                 ToEyeFov(left_view.fov),
                 ToEyeFov(right_view.fov)
             },
@@ -2104,47 +2798,68 @@ struct OpenXrProgram final : IOpenXrProgram {
         return GetEyeInfo(views[0], views[1]);
     }
 
-    virtual inline bool GetEyeInfo(ALXREyeInfo& eyeInfo) const override
+    virtual inline bool GetEyeInfo(ALXREyeInfo& eyeInfo, const XrTime& time) const override
     {
-        if (m_views.size() < 2)
-            return false;
-        eyeInfo = GetEyeInfo(m_views[0], m_views[1]);
+        std::array<XrView, 2> newViews{ IdentityView, IdentityView };
+        LocateViews(time, static_cast<const std::uint32_t>(newViews.size()), newViews.data());
+        eyeInfo = GetEyeInfo(newViews[0], newViews[1]);
         return true;
     }
 
-    virtual bool GetTrackingInfo(TrackingInfo& info) const override
+    virtual inline bool GetEyeInfo(ALXREyeInfo& eyeInfo) const override
     {
-        info = {};
-        info.targetTimestampNs = static_cast<decltype(info.targetTimestampNs)>(m_lastDisplayTime);
-        info.mounted = true;
+        return GetEyeInfo(eyeInfo, m_lastPredicatedDisplayTime);
+    }
 
-        if (m_views.size() >= 2)
-        {
-            //const auto ToEyeFov = [](const XrFovf& fov) -> EyeFov
-            //{
-            //    return EyeFov {
-            //        std::fabs(Math::ToDegrees(fov.angleLeft)),
-            //        std::fabs(Math::ToDegrees(fov.angleRight)),
-            //        std::fabs(Math::ToDegrees(fov.angleUp)),
-            //        std::fabs(Math::ToDegrees(fov.angleDown))
-            //    };
-            //};
-            //info.eyeFov[0] = ToEyeFov(m_views[0].fov);
-            //info.eyeFov[1] = ToEyeFov(m_views[1].fov);
+    virtual bool GetTrackingInfo(TrackingInfo& info) /*const*/ override
+    {
+        const XrDuration predicatedLatencyOffsetNs = m_PredicatedLatencyOffset.load();
+        info = {
+            .mounted = true,
+            .controller = { m_input.controllerInfo[0], m_input.controllerInfo[1] }
+        };
+        assert(predicatedLatencyOffsetNs >= 0);
+        
+        const auto trackingPredictionLatencyUs = LatencyCollector::Instance().getTrackingPredictionLatency();
+        const auto [xrTimeStamp, timeStampUs] = XrTimeNow();
+        assert(timeStampUs != std::uint64_t(-1) && xrTimeStamp >= 0);
 
-            //XrVector3f v;
-            //XrVector3f_Sub(&v, &m_views[1].pose.position, &m_views[0].pose.position);
-            //float ipd = std::fabs(XrVector3f_Length(&v));
-            //if (ipd < 0.00001f)
-            //    ipd = 0.063f;
-            //info.ipd = ipd;
+        const XrDuration totalLatencyOffsetNs = static_cast<XrDuration>(trackingPredictionLatencyUs * 1000) + predicatedLatencyOffsetNs;
+        const auto predicatedDisplayTimeXR = xrTimeStamp + totalLatencyOffsetNs;
+        const auto predicatedDisplayTimeNs = (timeStampUs * 1000) + static_cast<std::uint64_t>(totalLatencyOffsetNs);
+        
+        std::array<XrView, 2> newViews { IdentityView, IdentityView };
+        LocateViews(predicatedDisplayTimeXR, (const std::uint32_t)newViews.size(), newViews.data());
+         {
+             std::unique_lock<std::shared_mutex> lock(m_trackingFrameMapMutex);
+             m_trackingFrameMap[predicatedDisplayTimeNs] = {
+                 .views       = newViews,
+                 //.timestamp   = predicatedDisplayTimeNs,
+                 .displayTime = predicatedDisplayTimeXR
+             };
+             if (m_trackingFrameMap.size() > MaxTrackingFrameCount)
+                 m_trackingFrameMap.erase(m_trackingFrameMap.begin());
+         }
+        info.targetTimestampNs = predicatedDisplayTimeNs;
+        
+        const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace, predicatedDisplayTimeXR);
+        info.HeadPose_Pose_Orientation  = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
+        info.HeadPose_Pose_Position     = ToTrackingVector3(hmdSpaceLoc.pose.position);
+        // info.HeadPose_LinearVelocity    = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
+        // info.HeadPose_AngularVelocity   = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
 
-            const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace);
-            info.HeadPose_Pose_Orientation = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
-            info.HeadPose_Pose_Position = ToTrackingVector3(hmdSpaceLoc.pose.position);
+        for (const auto hand : { Side::LEFT, Side::RIGHT }) {
+            auto& newContInfo = info.controller[hand];
+            const auto spaceLoc = GetSpaceLocation(m_input.handSpace[hand], predicatedDisplayTimeXR);
+            newContInfo.position        = ToTrackingVector3(spaceLoc.pose.position);
+            newContInfo.orientation     = ToTrackingQuat(spaceLoc.pose.orientation);
+            newContInfo.linearVelocity  = ToTrackingVector3(spaceLoc.linearVelocity);
+            newContInfo.angularVelocity = ToTrackingVector3(spaceLoc.angularVelocity);
         }
 
-        GetControllerInfo(info, 0);// clientsidePrediction ? frame->displayTime : 0.);
+        PollHandTrackers(predicatedDisplayTimeXR, info.controller);
+
+        LatencyCollector::Instance().tracking(predicatedDisplayTimeNs);
         return true;
     }
 
@@ -2156,6 +2871,13 @@ struct OpenXrProgram final : IOpenXrProgram {
     virtual inline void SetStreamConfig(const ALXRStreamConfig& config) override
     {
         m_streamConfigQueue.push(config);
+    }
+
+    virtual inline bool GetStreamConfig(ALXRStreamConfig& config) const override
+    {
+        // TODO: Check for thread sync!
+        config = m_streamConfig;
+        return true;
     }
 
     void PollStreamConfigEvents()
@@ -2188,22 +2910,24 @@ struct OpenXrProgram final : IOpenXrProgram {
             }
         }
 
-        if (newConfig.refreshRate != m_streamConfig.refreshRate) {
+        auto& currRenderConfig = m_streamConfig.renderConfig;
+        const auto& newRenderConfig = newConfig.renderConfig;        
+        if (newRenderConfig.refreshRate != currRenderConfig.refreshRate) {
             [&]() {
                 if (m_pfnRequestDisplayRefreshRateFB == nullptr) {
                     Log::Write(Log::Level::Warning, "This OpenXR runtime does not support setting the display refresh rate.");
                     return;
                 }
 
-                const auto itr = std::find(m_displayRefreshRates.begin(), m_displayRefreshRates.end(), newConfig.refreshRate);
+                const auto itr = std::find(m_displayRefreshRates.begin(), m_displayRefreshRates.end(), newRenderConfig.refreshRate);
                 if (itr == m_displayRefreshRates.end()) {
-                    Log::Write(Log::Level::Warning, Fmt("Selected new refresh rate %f Hz is not supported, no change has been made.", newConfig.refreshRate));
+                    Log::Write(Log::Level::Warning, Fmt("Selected new refresh rate %f Hz is not supported, no change has been made.", newRenderConfig.refreshRate));
                     return;
                 }
 
-                Log::Write(Log::Level::Info, Fmt("Setting display refresh rate from %f Hz to %f Hz.", m_streamConfig.refreshRate, newConfig.refreshRate));
-                CHECK_XRCMD(m_pfnRequestDisplayRefreshRateFB(m_session, newConfig.refreshRate));
-                m_streamConfig.refreshRate = newConfig.refreshRate;
+                Log::Write(Log::Level::Info, Fmt("Setting display refresh rate from %f Hz to %f Hz.", currRenderConfig.refreshRate, newRenderConfig.refreshRate));
+                CHECK_XRCMD(m_pfnRequestDisplayRefreshRateFB(m_session, newRenderConfig.refreshRate));
+                currRenderConfig.refreshRate = newRenderConfig.refreshRate;
             }();
         }
 
@@ -2242,18 +2966,21 @@ struct OpenXrProgram final : IOpenXrProgram {
         SpaceLoc loc;
         XrExtent2Df boundingArea;
         if (!GetBoundingStageSpace(time, loc, boundingArea))
-            return false;        
-        gd.shouldSync = true;
-        gd.areaWidth = boundingArea.width;
-        gd.areaHeight = boundingArea.height;
+            return false;
+        gd = {
+            .shouldSync = true,
+            .areaWidth = boundingArea.width,
+            .areaHeight = boundingArea.height
+        };
         return true;
     }
 
     inline bool enqueueGuardianChanged(const XrTime& time)
     {
         Log::Write(Log::Level::Verbose, "Enqueuing guardian changed");
-        ALXRGuardianData gd;
-        gd.shouldSync = false;
+        ALXRGuardianData gd {
+            .shouldSync = false
+        };
         if (!GetBoundingStageSpace(time, gd))
             return false;
         Log::Write(Log::Level::Verbose, "Guardian changed enqueud successfully.");
@@ -2262,7 +2989,46 @@ struct OpenXrProgram final : IOpenXrProgram {
     }
 
     bool enqueueGuardianChanged() {
-        return enqueueGuardianChanged(m_lastDisplayTime);
+        return enqueueGuardianChanged(m_lastPredicatedDisplayTime);
+    }
+
+#ifdef XR_USE_OXR_PICO
+    enum PxrHmdDof : int
+    {
+        PXR_HMD_3DOF = 0,
+        PXR_HMD_6DOF
+    };
+    enum PxrControllerDof : int
+    {
+        PXR_CONTROLLER_3DOF = 0,
+        PXR_CONTROLLER_6DOF
+    };
+#endif
+    virtual inline void Resume() override
+    {
+#ifdef XR_USE_OXR_PICO
+        if (m_instance == XR_NULL_HANDLE)
+            return;
+        m_pfnSetEngineVersionPico(m_instance, "2.8.0.1");
+        m_pfnStartCVControllerThreadPico(m_instance, PXR_HMD_6DOF, PXR_CONTROLLER_6DOF);
+#endif
+    }
+
+    virtual inline void Pause() override
+    {
+#ifdef XR_USE_OXR_PICO
+        if (m_instance == XR_NULL_HANDLE)
+            return;
+        m_pfnSetEngineVersionPico(m_instance, "2.7.0.0");
+        m_pfnStopCVControllerThreadPico(m_instance, PXR_HMD_6DOF, PXR_CONTROLLER_6DOF);
+#endif
+    }
+
+    virtual inline std::shared_ptr<const IGraphicsPlugin> GetGraphicsPlugin() const override {
+        return m_graphicsPlugin;
+    }
+    virtual inline std::shared_ptr<IGraphicsPlugin> GetGraphicsPlugin() override {
+        return m_graphicsPlugin;
     }
 
    private:
@@ -2284,16 +3050,38 @@ struct OpenXrProgram final : IOpenXrProgram {
     std::map<XrSwapchain, std::vector<XrSwapchainImageBaseHeader*>> m_swapchainImages;
     std::vector<XrView> m_views;
     int64_t m_colorSwapchainFormat{-1};
+    std::atomic<RenderMode> m_renderMode{ RenderMode::Lobby };
 
     std::vector<XrSpace> m_visualizedSpaces;
 
     // Application's current lifecycle state according to the runtime
     XrSessionState m_sessionState{XR_SESSION_STATE_UNKNOWN};
-    bool m_sessionRunning{false};
+    std::atomic<bool> m_sessionRunning{false};
+    OxrRuntimeType m_runtimeType { OxrRuntimeType::Unknown };
 
     XrEventDataBuffer m_eventDataBuffer;
     ALXRPaths  m_alxrPaths;
     InputState m_input;
+
+    struct PassthroughLayerData
+    {
+        XrPassthroughFB passthrough = XR_NULL_HANDLE;
+        XrPassthroughLayerFB reconPassthroughLayer = XR_NULL_HANDLE;
+    };
+    PassthroughLayerData m_ptLayerData {};
+
+#ifdef XR_USE_PLATFORM_WIN32
+    // XR_KHR_win32_convert_performance_counter_time
+    PFN_xrConvertTimeToWin32PerformanceCounterKHR m_pfnConvertTimeToWin32PerformanceCounterKHR = nullptr;
+    PFN_xrConvertWin32PerformanceCounterToTimeKHR m_pfnConvertWin32PerformanceCounterToTimeKHR = nullptr;
+#endif
+    // XR_KHR_convert_timespec_time
+    PFN_xrConvertTimespecTimeToTimeKHR  m_pfnConvertTimespecTimeToTimeKHR = nullptr;
+    PFN_xrConvertTimeToTimespecTimeKHR  m_pfnConvertTimeToTimespecTimeKHR = nullptr;
+    
+    // XR_FB_color_space
+    PFN_xrEnumerateColorSpacesFB m_pfnEnumerateColorSpacesFB = nullptr;
+    PFN_xrSetColorSpaceFB        m_pfnSetColorSpaceFB = nullptr;
 
     // XR_EXT_hand_tracking fun pointers.
     PFN_xrCreateHandTrackerEXT  m_pfnCreateHandTrackerEXT = nullptr;
@@ -2305,12 +3093,49 @@ struct OpenXrProgram final : IOpenXrProgram {
     PFN_xrGetDisplayRefreshRateFB m_pfnGetDisplayRefreshRateFB = nullptr;
     PFN_xrRequestDisplayRefreshRateFB m_pfnRequestDisplayRefreshRateFB = nullptr;
 
-    std::size_t m_frameIndex = 0;
-    XrTime m_lastDisplayTime = 0;
+    // XR_FB_PASSTHROUGH_EXTENSION_NAME fun pointers.
+    PFN_xrCreatePassthroughFB m_pfnCreatePassthroughFB = nullptr;
+    PFN_xrDestroyPassthroughFB m_pfnDestroyPassthroughFB = nullptr;
+    PFN_xrPassthroughStartFB m_pfnPassthroughStartFB = nullptr;
+    PFN_xrPassthroughPauseFB m_pfnPassthroughPauseFB = nullptr;
+    PFN_xrCreatePassthroughLayerFB m_pfnCreatePassthroughLayerFB = nullptr;
+    PFN_xrDestroyPassthroughLayerFB m_pfnDestroyPassthroughLayerFB = nullptr;
+    PFN_xrPassthroughLayerSetStyleFB m_pfnPassthroughLayerSetStyleFB = nullptr;
+    PFN_xrPassthroughLayerPauseFB m_pfnPassthroughLayerPauseFB = nullptr;
+    PFN_xrPassthroughLayerResumeFB m_pfnPassthroughLayerResumeFB = nullptr;
+
+#ifdef XR_USE_OXR_PICO
+    mutable std::atomic<int>    m_gsIndex{ 0 };
+    PFN_xrResetSensorPICO       m_pfnResetSensorPICO = nullptr;
+    PFN_xrGetConfigPICO         m_pfnGetConfigPICO = nullptr;
+    PFN_xrSetConfigPICO         m_pfnSetConfigPICO = nullptr;
+    PFN_xrSetEngineVersionPico  m_pfnSetEngineVersionPico = nullptr;
+    PFN_xrStartCVControllerThreadPico m_pfnStartCVControllerThreadPico = nullptr;
+    PFN_xrStopCVControllerThreadPico  m_pfnStopCVControllerThreadPico = nullptr;
+#endif
+
+    std::atomic<XrTime>      m_lastPredicatedDisplayTime{ 0 };
+
+/// Tracking Thread State ////////////////////////////////////////////////////////
+    struct TrackingFrame {
+        std::array<XrView, 2> views;
+        XrTime                displayTime;
+    };
+    using TrackingFrameMap = std::map<std::uint64_t, TrackingFrame>;
+    mutable std::shared_mutex m_trackingFrameMapMutex;        
+    TrackingFrameMap          m_trackingFrameMap{};
+    std::atomic<XrDuration>   m_PredicatedLatencyOffset{ 0 };
+    static constexpr const std::size_t MaxTrackingFrameCount = 360 * 3;
+/// End Tracking Thread State ////////////////////////////////////////////////////
 
     std::vector<float> m_displayRefreshRates;
-
-    ALXRStreamConfig m_streamConfig { 90.0, ALXRTrackingSpace::LocalRefSpace };
+    ALXRStreamConfig m_streamConfig {
+        .trackingSpaceType = ALXRTrackingSpace::LocalRefSpace,
+        .renderConfig {
+            .refreshRate = 90.0f,
+            .enableFoveation = false
+        }
+    };
 
     using HapticsFeedbackQueue  = xrconcurrency::concurrent_queue<HapticsFeedback>;
     using StreamConfigQueue     = xrconcurrency::concurrent_queue<ALXRStreamConfig>;

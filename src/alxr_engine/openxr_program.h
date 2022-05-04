@@ -5,7 +5,7 @@
 #pragma once
 
 #include <cstdint>
-#include <array>
+#include <string_view>
 
 struct ALXRStreamConfig;
 struct ALXRSystemProperties;
@@ -30,6 +30,38 @@ struct HapticsFeedback {
     float frequency;
 };
 
+enum class OxrRuntimeType
+{
+    SteamVR,
+    Monado,
+    WMR,
+    Oculus,
+    Pico,
+    Unknown,
+////////////////////////
+    TypeCount
+};
+
+constexpr inline std::string_view ToString(const OxrRuntimeType t) {
+    switch (t) {
+    case OxrRuntimeType::SteamVR: return "SteamVR";
+    case OxrRuntimeType::Monado:  return "Monado";
+    case OxrRuntimeType::WMR:     return "Windows Mixed Reality";
+    case OxrRuntimeType::Oculus:  return "Oculus";
+    case OxrRuntimeType::Pico:    return "Pico";
+    default: return "Unknown";
+    }
+}
+
+constexpr inline OxrRuntimeType FromString(const std::string_view runtimeName) {
+    for (std::size_t idx = 0; idx < std::size_t(OxrRuntimeType::TypeCount); ++idx) {
+        const std::string_view namePrefix = ToString(OxrRuntimeType(idx));
+        if (runtimeName.starts_with(namePrefix))
+            return static_cast<OxrRuntimeType>(idx);
+    }
+    return OxrRuntimeType::Unknown;
+}
+
 struct IOpenXrProgram {
     virtual ~IOpenXrProgram() = default;
 
@@ -38,14 +70,14 @@ struct IOpenXrProgram {
 
     // Select a System for the view configuration specified in the Options and initialize the graphics device for the selected
     // system.
-    virtual void InitializeSystem(const ALXRPaths& xrPaths) = 0;
+    virtual void InitializeSystem(const ALXRPaths& alxrPaths) = 0;
 
     // Create a Session and other basic session-level initialization.
     virtual void InitializeSession() = 0;
 
     // Create a Swapchain which requires coordinating with the graphics plugin to select the format, getting the system graphics
     // properties, getting the view configuration and grabbing the resulting swapchain images.
-    virtual void CreateSwapchains() = 0;
+    virtual void CreateSwapchains(const std::uint32_t eyeWidth = 0, const std::uint32_t eyeHeight = 0) = 0;
 
     // Process any events in the event queue.
     virtual void PollEvents(bool* exitRenderLoop, bool* requestRestart) = 0;
@@ -62,19 +94,37 @@ struct IOpenXrProgram {
     // Create and submit a frame.
     virtual void RenderFrame() = 0;
 
+    enum class RenderMode : std::size_t
+    {
+        Lobby,
+        VideoStream
+    };
+    virtual void SetRenderMode(const RenderMode) = 0;
+    virtual RenderMode GetRenderMode() const = 0;
+
     virtual bool GetSystemProperties(ALXRSystemProperties& systemProps) const = 0;
 
-    virtual bool GetTrackingInfo(TrackingInfo& info) const = 0;
+    virtual bool GetTrackingInfo(TrackingInfo& info) /*const*/ = 0;
 
     virtual void EnqueueHapticFeedback(const HapticsFeedback&) = 0;
 
     virtual void SetStreamConfig(const ALXRStreamConfig& config) = 0;
+    virtual bool GetStreamConfig(ALXRStreamConfig& config) const = 0;
 
     virtual void RequestExitSession() = 0;
 
     virtual bool GetGuardianData(ALXRGuardianData& gd) /*const*/ = 0;
 
+    virtual bool GetEyeInfo(ALXREyeInfo&, const XrTime& t) const = 0;
     virtual bool GetEyeInfo(ALXREyeInfo&) const = 0;
+
+    virtual std::shared_ptr<const IGraphicsPlugin> GetGraphicsPlugin() const = 0;
+    virtual std::shared_ptr<IGraphicsPlugin> GetGraphicsPlugin() = 0;
+
+    virtual std::tuple<XrTime, std::uint64_t> XrTimeNow() const = 0;
+
+    virtual void Pause() = 0;
+    virtual void Resume() = 0;
 };
 
 struct Swapchain {

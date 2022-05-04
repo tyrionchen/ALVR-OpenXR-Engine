@@ -1,19 +1,31 @@
 // Copyright (c) 2017-2022, The Khronos Group Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 #include "pch.h"
 #include "common.h"
 #include "geometry.h"
 #include "graphicsplugin.h"
 
 #if defined(XR_USE_GRAPHICS_API_D3D12) && !defined(MISSING_DIRECTX_COLORS)
-
+#include <array>
+#include <map>
+#include <unordered_map>
+#include <thread>
+#include <chrono>
 #include <common/xr_linear.h>
+
 #include <DirectXColors.h>
 #include <D3Dcompiler.h>
-
+#include <d3d11on12.h>
+#include "d3dx12.h"
 #include "d3d_common.h"
+#include "d3d_fence_event.h"
+
+#include "concurrent_queue.h"
+#include "cuda/WindowsSecurityAttributes.h"
+#ifdef XR_ENABLE_CUDA_INTEROP
+#include "cuda/d3d12cuda_interop.h"
+#endif
 
 using namespace Microsoft::WRL;
 using namespace DirectX;
@@ -28,6 +40,46 @@ void InitializeD3D12DeviceForAdapter(IDXGIAdapter1* adapter, D3D_FEATURE_LEVEL m
 #endif
 
     CHECK_HRCMD(D3D12CreateDevice(adapter, minimumFeatureLevel, __uuidof(ID3D12Device), reinterpret_cast<void**>(device)));
+}
+
+constexpr inline DXGI_FORMAT MapFormat(const XrPixelFormat pixfmt) {
+    switch (pixfmt) {
+    case XrPixelFormat::NV12: return DXGI_FORMAT_NV12;
+    case XrPixelFormat::P010LE: return DXGI_FORMAT_P010;
+    }
+    return DXGI_FORMAT_UNKNOWN;
+}
+
+constexpr inline DXGI_FORMAT GetLumaFormat(const XrPixelFormat yuvFmt) {
+    switch (yuvFmt) {
+    case XrPixelFormat::G8_B8_R8_3PLANE_420:          return DXGI_FORMAT_R8_UNORM;
+    case XrPixelFormat::G10X6_B10X6_R10X6_3PLANE_420: return DXGI_FORMAT_R16_UNORM;
+    }
+    return GetLumaFormat(MapFormat(yuvFmt));
+}
+
+constexpr inline DXGI_FORMAT GetChromaFormat(const XrPixelFormat yuvFmt) {
+    switch (yuvFmt) {
+    case XrPixelFormat::G8_B8_R8_3PLANE_420:          return DXGI_FORMAT_R8G8_UNORM;
+    case XrPixelFormat::G10X6_B10X6_R10X6_3PLANE_420: return DXGI_FORMAT_R16G16_UNORM;
+    }
+    return GetChromaFormat(MapFormat(yuvFmt));
+}
+
+constexpr inline DXGI_FORMAT GetChromaUFormat(const XrPixelFormat yuvFmt) {
+    switch (yuvFmt) {
+    case XrPixelFormat::G8_B8_R8_3PLANE_420:          return DXGI_FORMAT_R8_UNORM;
+    case XrPixelFormat::G10X6_B10X6_R10X6_3PLANE_420: return DXGI_FORMAT_R16_UNORM;
+    }
+    return GetChromaFormat(yuvFmt);
+}
+
+constexpr inline DXGI_FORMAT GetChromaVFormat(const XrPixelFormat yuvFmt) {
+    switch (yuvFmt) {
+    case XrPixelFormat::G8_B8_R8_3PLANE_420:          return DXGI_FORMAT_R8_UNORM;
+    case XrPixelFormat::G10X6_B10X6_R10X6_3PLANE_420: return DXGI_FORMAT_R16_UNORM;
+    }
+    return GetChromaFormat(yuvFmt);
 }
 
 template <uint32_t alignment>
@@ -45,24 +97,26 @@ ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device* d3d12Device, uint32_t size, D3
         d3d12ResourceState = D3D12_RESOURCE_STATE_COMMON;
     }
 
-    D3D12_HEAP_PROPERTIES heapProp{};
-    heapProp.Type = heapType;
-    heapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-    heapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-
-    D3D12_RESOURCE_DESC buffDesc{};
-    buffDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buffDesc.Alignment = 0;
-    buffDesc.Width = size;
-    buffDesc.Height = 1;
-    buffDesc.DepthOrArraySize = 1;
-    buffDesc.MipLevels = 1;
-    buffDesc.Format = DXGI_FORMAT_UNKNOWN;
-    buffDesc.SampleDesc.Count = 1;
-    buffDesc.SampleDesc.Quality = 0;
-    buffDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    buffDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
+    const D3D12_HEAP_PROPERTIES heapProp {
+        .Type = heapType,
+        .CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+        .MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN
+    };
+    const D3D12_RESOURCE_DESC buffDesc{
+        .Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+        .Alignment = 0,
+        .Width = size,
+        .Height = 1,
+        .DepthOrArraySize = 1,
+        .MipLevels = 1,
+        .Format = DXGI_FORMAT_UNKNOWN,
+        .SampleDesc {
+            .Count = 1,
+            .Quality = 0
+        },
+        .Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+        .Flags = D3D12_RESOURCE_FLAG_NONE
+    };
     ComPtr<ID3D12Resource> buffer;
     CHECK_HRCMD(d3d12Device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &buffDesc, d3d12ResourceState, nullptr,
                                                      __uuidof(ID3D12Resource),
@@ -70,61 +124,118 @@ ComPtr<ID3D12Resource> CreateBuffer(ID3D12Device* d3d12Device, uint32_t size, D3
     return buffer;
 }
 
+ComPtr<ID3D12Resource> CreateTexture2D
+(
+    ID3D12Device* d3d12Device, 
+    const std::size_t width, const std::size_t height, const DXGI_FORMAT pixfmt,
+    const D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE,
+    const D3D12_HEAP_FLAGS heap_flags = D3D12_HEAP_FLAG_NONE,
+    const std::size_t arraySize = 1
+)
+{
+    const D3D12_RESOURCE_DESC textureDesc {
+        .Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+        .Alignment = 0,
+        .Width = width,
+        .Height = static_cast<UINT>(height),
+        .DepthOrArraySize = static_cast<UINT16>(arraySize),
+        .MipLevels = 1,
+        .Format = pixfmt,
+        .SampleDesc {
+            .Count = 1,
+            .Quality = 0
+        },
+        .Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
+        .Flags = flags,
+    };
+    const auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+    ComPtr<ID3D12Resource> newTexture;
+    CHECK_HRCMD(d3d12Device->CreateCommittedResource(&heapProps,
+        heap_flags,
+        &textureDesc,
+        D3D12_RESOURCE_STATE_COMMON,//D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&newTexture)));
+    return newTexture;
+}
+
+ComPtr<ID3D12Resource> CreateTextureUploadBuffer
+(
+    ID3D12Device* d3d12Device, const ComPtr<ID3D12Resource>& texture,
+    const std::uint32_t firstSubResource = 0,
+    const std::uint32_t numSubResources = 1
+)
+{
+    const std::uint64_t uploadBufferSize = GetRequiredIntermediateSize(texture.Get(), firstSubResource, numSubResources);
+
+    const auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    const auto buffDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
+    ComPtr<ID3D12Resource> textureUploadHeap;
+    CHECK_HRCMD(d3d12Device->CreateCommittedResource(&heapProps,
+        D3D12_HEAP_FLAG_NONE, &buffDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&textureUploadHeap)));
+    return textureUploadHeap;
+}
+
 class SwapchainImageContext {
    public:
     std::vector<XrSwapchainImageBaseHeader*> Create(ID3D12Device* d3d12Device, uint32_t capacity) {
         m_d3d12Device = d3d12Device;
 
-        m_swapchainImages.resize(capacity);
+        m_swapchainImages.resize(capacity, {
+            .type = XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR,
+            .next = nullptr
+        });
         std::vector<XrSwapchainImageBaseHeader*> bases(capacity);
         for (uint32_t i = 0; i < capacity; ++i) {
-            m_swapchainImages[i] = {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR};
             bases[i] = reinterpret_cast<XrSwapchainImageBaseHeader*>(&m_swapchainImages[i]);
         }
 
         CHECK_HRCMD(m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator),
                                                           reinterpret_cast<void**>(m_commandAllocator.ReleaseAndGetAddressOf())));
-
+        m_commandAllocator->SetName(L"SwapchainImageCtx_CmdAllocator");
         m_viewProjectionCBuffer = CreateBuffer(m_d3d12Device, sizeof(ViewProjectionConstantBuffer), D3D12_HEAP_TYPE_UPLOAD);
-
+        m_viewProjectionCBuffer->SetName(L"SwapchainImageCtx_ViewProjectionCBuffer");
         return bases;
     }
 
-    uint32_t ImageIndex(const XrSwapchainImageBaseHeader* swapchainImageHeader) {
-        auto p = reinterpret_cast<const XrSwapchainImageD3D12KHR*>(swapchainImageHeader);
+    uint32_t ImageIndex(const XrSwapchainImageBaseHeader* swapchainImageHeader) const {
+        const auto p = reinterpret_cast<const XrSwapchainImageD3D12KHR*>(swapchainImageHeader);
         return (uint32_t)(p - &m_swapchainImages[0]);
     }
 
     ID3D12Resource* GetDepthStencilTexture(ID3D12Resource* colorTexture) {
         if (!m_depthStencilTexture) {
             // This back-buffer has no corresponding depth-stencil texture, so create one with matching dimensions.
-
             const D3D12_RESOURCE_DESC colorDesc = colorTexture->GetDesc();
-
-            D3D12_HEAP_PROPERTIES heapProp{};
-            heapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
-            heapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-            heapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-
-            D3D12_RESOURCE_DESC depthDesc{};
-            depthDesc.Dimension = colorDesc.Dimension;
-            depthDesc.Alignment = colorDesc.Alignment;
-            depthDesc.Width = colorDesc.Width;
-            depthDesc.Height = colorDesc.Height;
-            depthDesc.DepthOrArraySize = colorDesc.DepthOrArraySize;
-            depthDesc.MipLevels = 1;
-            depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-            depthDesc.SampleDesc.Count = 1;
-            depthDesc.Layout = colorDesc.Layout;
-            depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-            D3D12_CLEAR_VALUE clearValue{};
-            clearValue.DepthStencil.Depth = 1.0f;
-            clearValue.Format = DXGI_FORMAT_D32_FLOAT;
-
+            constexpr const D3D12_HEAP_PROPERTIES heapProp {
+                .Type = D3D12_HEAP_TYPE_DEFAULT,
+                .CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+                .MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN
+            };
+            const D3D12_RESOURCE_DESC depthDesc {
+                .Dimension = colorDesc.Dimension,
+                .Alignment = colorDesc.Alignment,
+                .Width = colorDesc.Width,
+                .Height = colorDesc.Height,
+                .DepthOrArraySize = colorDesc.DepthOrArraySize,
+                .MipLevels = 1,
+                .Format = DXGI_FORMAT_R32_TYPELESS,
+                .SampleDesc{.Count = 1},
+                .Layout = colorDesc.Layout,
+                .Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
+            };
+            constexpr const D3D12_CLEAR_VALUE clearValue {
+                .Format = DXGI_FORMAT_D32_FLOAT,
+                .DepthStencil{.Depth = 1.0f}
+            };
             CHECK_HRCMD(m_d3d12Device->CreateCommittedResource(
                 &heapProp, D3D12_HEAP_FLAG_NONE, &depthDesc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clearValue,
                 __uuidof(ID3D12Resource), reinterpret_cast<void**>(m_depthStencilTexture.ReleaseAndGetAddressOf())));
+
+            m_depthStencilTexture->SetName(L"SwapchainImageCtx_DepthStencilTexture");
         }
 
         return m_depthStencilTexture.Get();
@@ -132,14 +243,15 @@ class SwapchainImageContext {
 
     ID3D12CommandAllocator* GetCommandAllocator() const { return m_commandAllocator.Get(); }
 
-    uint64_t GetFrameFenceValue() const { return m_fenceValue; }
-    void SetFrameFenceValue(uint64_t fenceValue) { m_fenceValue = fenceValue; }
+    std::uint64_t GetFrameFenceValue() const { return m_fenceValue; }
+    void SetFrameFenceValue(std::uint64_t fenceValue) { m_fenceValue = fenceValue; }
 
     void ResetCommandAllocator() { CHECK_HRCMD(m_commandAllocator->Reset()); }
 
-    void RequestModelCBuffer(uint32_t requiredSize) {
+    void RequestModelCBuffer(const std::uint32_t requiredSize) {
         if (!m_modelCBuffer || (requiredSize > m_modelCBuffer->GetDesc().Width)) {
             m_modelCBuffer = CreateBuffer(m_d3d12Device, requiredSize, D3D12_HEAP_TYPE_UPLOAD);
+            m_modelCBuffer->SetName(L"SwapchainImageCtx_ModelCBuffer");
         }
     }
 
@@ -157,33 +269,39 @@ class SwapchainImageContext {
     uint64_t m_fenceValue = 0;
 };
 
-struct D3D12GraphicsPlugin : public IGraphicsPlugin {
+struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     D3D12GraphicsPlugin(const std::shared_ptr<Options>&, std::shared_ptr<IPlatformPlugin>)
         : m_vertexShaderBytes(CompileShader(ShaderHlsl, "MainVS", "vs_5_1")),
-          m_pixelShaderBytes(CompileShader(ShaderHlsl, "MainPS", "ps_5_1")) {}
+        m_pixelShaderBytes(CompileShader(ShaderHlsl, "MainPS", "ps_5_1")),
+        m_videoVShaderBytes(CompileShader(VideoShaderHlsl, "MainVS", "vs_5_1")),
+        m_videoPShaderBytes(CompileShader(VideoShaderHlsl, "MainPS", "ps_5_1")),
+        m_video3PlaneFmtPShaderBytes(CompileShader(VideoShaderHlsl, "Main3PlaneFmtPS", "ps_5_1"))  {}
 
     ~D3D12GraphicsPlugin() override { CloseHandle(m_fenceEvent); }
 
-    std::vector<std::string> GetInstanceExtensions() const override { return {XR_KHR_D3D12_ENABLE_EXTENSION_NAME}; }
+    std::vector<std::string> GetInstanceExtensions() const override { return { XR_KHR_D3D12_ENABLE_EXTENSION_NAME }; }
 
     void InitializeDevice(XrInstance instance, XrSystemId systemId) override {
         PFN_xrGetD3D12GraphicsRequirementsKHR pfnGetD3D12GraphicsRequirementsKHR = nullptr;
         CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetD3D12GraphicsRequirementsKHR",
-                                          reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D12GraphicsRequirementsKHR)));
+            reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D12GraphicsRequirementsKHR)));
 
         // Create the D3D12 device for the adapter associated with the system.
-        XrGraphicsRequirementsD3D12KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR};
+        XrGraphicsRequirementsD3D12KHR graphicsRequirements{ .type=XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR, .next=nullptr };
         CHECK_XRCMD(pfnGetD3D12GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
         const ComPtr<IDXGIAdapter1> adapter = GetAdapter(graphicsRequirements.adapterLuid);
 
         // Create a list of feature levels which are both supported by the OpenXR runtime and this application.
         InitializeD3D12DeviceForAdapter(adapter.Get(), graphicsRequirements.minFeatureLevel, m_device.ReleaseAndGetAddressOf());
-
-        D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-        queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-        queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        m_dx12deviceluid = graphicsRequirements.adapterLuid;
+        
+        const D3D12_COMMAND_QUEUE_DESC queueDesc{
+            .Type = D3D12_COMMAND_LIST_TYPE_DIRECT,
+            .Flags = D3D12_COMMAND_QUEUE_FLAG_NONE
+        };
         CHECK_HRCMD(m_device->CreateCommandQueue(&queueDesc, __uuidof(ID3D12CommandQueue),
-                                                 reinterpret_cast<void**>(m_cmdQueue.ReleaseAndGetAddressOf())));
+            reinterpret_cast<void**>(m_cmdQueue.ReleaseAndGetAddressOf())));
+        m_cmdQueue->SetName(L"MainRenderCMDQueue");
 
         InitializeResources();
 
@@ -192,68 +310,111 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
     }
 
     void InitializeResources() {
+        InitializeVideoTextureResources();
         {
-            D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
-            heapDesc.NumDescriptors = 1;
-            heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-            heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+            constexpr const D3D12_DESCRIPTOR_HEAP_DESC heapDesc{
+                .Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+                .NumDescriptors = 1,                
+                .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE
+            };
             CHECK_HRCMD(m_device->CreateDescriptorHeap(&heapDesc, __uuidof(ID3D12DescriptorHeap),
-                                                       reinterpret_cast<void**>(m_rtvHeap.ReleaseAndGetAddressOf())));
+                reinterpret_cast<void**>(m_rtvHeap.ReleaseAndGetAddressOf())));
         }
         {
-            D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
-            heapDesc.NumDescriptors = 1;
-            heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-            heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+            constexpr const D3D12_DESCRIPTOR_HEAP_DESC heapDesc{
+                .Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+                .NumDescriptors = 1,                
+                .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE
+            };
             CHECK_HRCMD(m_device->CreateDescriptorHeap(&heapDesc, __uuidof(ID3D12DescriptorHeap),
-                                                       reinterpret_cast<void**>(m_dsvHeap.ReleaseAndGetAddressOf())));
+                reinterpret_cast<void**>(m_dsvHeap.ReleaseAndGetAddressOf())));
+        }
+        {
+            constexpr const D3D12_DESCRIPTOR_HEAP_DESC heapDesc{
+                .Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                .NumDescriptors = 6,                
+                .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
+            };
+            CHECK_HRCMD(m_device->CreateDescriptorHeap(&heapDesc, __uuidof(ID3D12DescriptorHeap),
+                reinterpret_cast<void**>(m_srvHeap.ReleaseAndGetAddressOf())));
         }
 
-        D3D12_ROOT_PARAMETER rootParams[2];
-        rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-        rootParams[0].Descriptor.ShaderRegister = 0;
-        rootParams[0].Descriptor.RegisterSpace = 0;
-        rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
-        rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-        rootParams[1].Descriptor.ShaderRegister = 1;
-        rootParams[1].Descriptor.RegisterSpace = 0;
-        rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+        CD3DX12_DESCRIPTOR_RANGE1 texture1Range1, texture2Range1, texture3Range1;
+        texture1Range1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+        texture2Range1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+        texture3Range1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
 
-        D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc{};
-        rootSignatureDesc.NumParameters = (UINT)ArraySize(rootParams);
-        rootSignatureDesc.pParameters = rootParams;
-        rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+        CD3DX12_ROOT_PARAMETER1  rootParams1[5];
+        rootParams1[0].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+        rootParams1[1].InitAsConstantBufferView(1, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+        rootParams1[2].InitAsDescriptorTable(1, &texture1Range1, D3D12_SHADER_VISIBILITY_PIXEL);
+        rootParams1[3].InitAsDescriptorTable(1, &texture2Range1, D3D12_SHADER_VISIBILITY_PIXEL);
+        rootParams1[4].InitAsDescriptorTable(1, &texture3Range1, D3D12_SHADER_VISIBILITY_PIXEL);
+
+        constexpr const D3D12_STATIC_SAMPLER_DESC sampler {
+            .Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+            .AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            .AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            .AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            .MipLODBias = 0,
+            .MaxAnisotropy = 0,
+            .ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER,
+            .BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK,
+            .MinLOD = 0.0f,
+            .MaxLOD = D3D12_FLOAT32_MAX,
+            .ShaderRegister = 0,
+            .RegisterSpace = 0,
+            .ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL,
+        };
+        D3D12_STATIC_SAMPLER_DESC samplers[2]{ sampler, sampler };
+        samplers[1].ShaderRegister = 1;
+
+        CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc{};
+        rootSignatureDesc.Init_1_1
+        (
+            (UINT)ArraySize(rootParams1),
+            rootParams1,
+            (UINT)ArraySize(samplers), samplers,
+            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
+        );
+
+        D3D12_FEATURE_DATA_ROOT_SIGNATURE featureData {
+            .HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1
+        };
+        if (FAILED(m_device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &featureData, sizeof(featureData))))
+            featureData.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
 
         ComPtr<ID3DBlob> rootSignatureBlob;
         ComPtr<ID3DBlob> error;
-        CHECK_HRCMD(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1_0,
-                                                rootSignatureBlob.ReleaseAndGetAddressOf(), error.ReleaseAndGetAddressOf()));
+        
+        CHECK_HRCMD(D3DX12SerializeVersionedRootSignature(&rootSignatureDesc, featureData.HighestVersion,
+            rootSignatureBlob.ReleaseAndGetAddressOf(), error.ReleaseAndGetAddressOf()));
 
         CHECK_HRCMD(m_device->CreateRootSignature(0, rootSignatureBlob->GetBufferPointer(), rootSignatureBlob->GetBufferSize(),
-                                                  __uuidof(ID3D12RootSignature),
-                                                  reinterpret_cast<void**>(m_rootSignature.ReleaseAndGetAddressOf())));
+            __uuidof(ID3D12RootSignature),
+            reinterpret_cast<void**>(m_rootSignature.ReleaseAndGetAddressOf())));
 
         SwapchainImageContext initializeContext;
-        std::vector<XrSwapchainImageBaseHeader*> _ = initializeContext.Create(m_device.Get(), 1);
+        const auto _ = initializeContext.Create(m_device.Get(), 1);
 
         ComPtr<ID3D12GraphicsCommandList> cmdList;
         CHECK_HRCMD(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, initializeContext.GetCommandAllocator(), nullptr,
-                                                __uuidof(ID3D12GraphicsCommandList),
-                                                reinterpret_cast<void**>(cmdList.ReleaseAndGetAddressOf())));
+            __uuidof(ID3D12GraphicsCommandList),
+            reinterpret_cast<void**>(cmdList.ReleaseAndGetAddressOf())));
 
         ComPtr<ID3D12Resource> cubeVertexBufferUpload;
         m_cubeVertexBuffer = CreateBuffer(m_device.Get(), sizeof(Geometry::c_cubeVertices), D3D12_HEAP_TYPE_DEFAULT);
         {
             cubeVertexBufferUpload = CreateBuffer(m_device.Get(), sizeof(Geometry::c_cubeVertices), D3D12_HEAP_TYPE_UPLOAD);
 
-            void* data;
-            const D3D12_RANGE readRange{0, 0};
+            void* data = nullptr;
+            const D3D12_RANGE readRange{ 0, 0 };
             CHECK_HRCMD(cubeVertexBufferUpload->Map(0, &readRange, &data));
             memcpy(data, Geometry::c_cubeVertices, sizeof(Geometry::c_cubeVertices));
             cubeVertexBufferUpload->Unmap(0, nullptr);
 
             cmdList->CopyBufferRegion(m_cubeVertexBuffer.Get(), 0, cubeVertexBufferUpload.Get(), 0,
-                                      sizeof(Geometry::c_cubeVertices));
+                sizeof(Geometry::c_cubeVertices));
         }
 
         ComPtr<ID3D12Resource> cubeIndexBufferUpload;
@@ -261,8 +422,8 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
         {
             cubeIndexBufferUpload = CreateBuffer(m_device.Get(), sizeof(Geometry::c_cubeIndices), D3D12_HEAP_TYPE_UPLOAD);
 
-            void* data;
-            const D3D12_RANGE readRange{0, 0};
+            void* data = nullptr;
+            const D3D12_RANGE readRange{ 0, 0 };
             CHECK_HRCMD(cubeIndexBufferUpload->Map(0, &readRange, &data));
             memcpy(data, Geometry::c_cubeIndices, sizeof(Geometry::c_cubeIndices));
             cubeIndexBufferUpload->Unmap(0, nullptr);
@@ -270,30 +431,85 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
             cmdList->CopyBufferRegion(m_cubeIndexBuffer.Get(), 0, cubeIndexBufferUpload.Get(), 0, sizeof(Geometry::c_cubeIndices));
         }
 
+        // screen quad ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        using namespace Geometry;
+        ComPtr<ID3D12Resource> quadVertexBufferUpload;
+        m_quadVertexBuffer = CreateBuffer(m_device.Get(), QuadVerticesSize, D3D12_HEAP_TYPE_DEFAULT);
+        {
+            quadVertexBufferUpload = CreateBuffer(m_device.Get(), QuadVerticesSize, D3D12_HEAP_TYPE_UPLOAD);
+
+            void* data = nullptr;
+            const D3D12_RANGE readRange{ 0, 0 };
+            CHECK_HRCMD(quadVertexBufferUpload->Map(0, &readRange, &data));
+            std::memcpy(data, QuadVertices.data(), QuadVerticesSize);
+            quadVertexBufferUpload->Unmap(0, nullptr);
+
+            cmdList->CopyBufferRegion(m_quadVertexBuffer.Get(), 0, quadVertexBufferUpload.Get(), 0, QuadVerticesSize);
+        }
+
+        ComPtr<ID3D12Resource> quadIndexBufferUpload;
+        m_quadIndexBuffer = CreateBuffer(m_device.Get(), QuadIndicesSize, D3D12_HEAP_TYPE_DEFAULT);
+        {
+            quadIndexBufferUpload = CreateBuffer(m_device.Get(), QuadIndicesSize, D3D12_HEAP_TYPE_UPLOAD);
+
+            void* data = nullptr;
+            const D3D12_RANGE readRange{ 0, 0 };
+            CHECK_HRCMD(quadIndexBufferUpload->Map(0, &readRange, &data));
+            memcpy(data, QuadIndices.data(), QuadIndicesSize);
+            quadIndexBufferUpload->Unmap(0, nullptr);
+
+            cmdList->CopyBufferRegion(m_quadIndexBuffer.Get(), 0, quadIndexBufferUpload.Get(), 0, QuadIndicesSize);
+        }
+        // screen quad ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
         CHECK_HRCMD(cmdList->Close());
-        ID3D12CommandList* cmdLists[] = {cmdList.Get()};
+        ID3D12CommandList* cmdLists[] = { cmdList.Get() };
         m_cmdQueue->ExecuteCommandLists((UINT)ArraySize(cmdLists), cmdLists);
 
         CHECK_HRCMD(m_device->CreateFence(m_fenceValue, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence),
-                                          reinterpret_cast<void**>(m_fence.ReleaseAndGetAddressOf())));
+            reinterpret_cast<void**>(m_fence.ReleaseAndGetAddressOf())));
         m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
         CHECK(m_fenceEvent != nullptr);
 
         WaitForGpu();
     }
 
+    void InitializeVideoTextureResources() {
+
+        m_texRendereComplete.CreateFence(m_device, D3D12_FENCE_FLAG_SHARED);
+
+        constexpr const D3D12_COMMAND_QUEUE_DESC queueDesc {
+            .Type = D3D12_COMMAND_LIST_TYPE_DIRECT,//D3D12_COMMAND_LIST_TYPE_COPY,
+            .Flags = D3D12_COMMAND_QUEUE_FLAG_NONE            
+        };
+        CHECK_HRCMD(m_device->CreateCommandQueue(&queueDesc, __uuidof(ID3D12CommandQueue),
+            reinterpret_cast<void**>(m_videoTexCmdCpyQueue.ReleaseAndGetAddressOf())));
+        m_videoTexCmdCpyQueue->SetName(L"VideoTextureCpyQueue");
+
+        m_texCopy.CreateFence(m_device, D3D12_FENCE_FLAG_SHARED);
+
+        assert(m_videoTexCmdAllocator == nullptr);
+        CHECK_HRCMD(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT/*COPY*/, __uuidof(ID3D12CommandAllocator),
+            reinterpret_cast<void**>(m_videoTexCmdAllocator.ReleaseAndGetAddressOf())));
+
+        InitD3D11OnD3D12();
+#ifdef XR_ENABLE_CUDA_INTEROP
+        InitCuda();
+#endif
+    }
+
     int64_t SelectColorSwapchainFormat(const std::vector<int64_t>& runtimeFormats) const override {
         // List of supported color swapchain formats.
-        constexpr DXGI_FORMAT SupportedColorSwapchainFormats[] = {
+        constexpr const DXGI_FORMAT SupportedColorSwapchainFormats[] = {
             DXGI_FORMAT_R8G8B8A8_UNORM,
             DXGI_FORMAT_B8G8R8A8_UNORM,
             DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
             DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
         };
 
-        auto swapchainFormatIt =
+        const auto swapchainFormatIt =
             std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), std::begin(SupportedColorSwapchainFormats),
-                               std::end(SupportedColorSwapchainFormats));
+                std::end(SupportedColorSwapchainFormats));
         if (swapchainFormatIt == runtimeFormats.end()) {
             THROW("No runtime swapchain format supported for color swapchain");
         }
@@ -323,83 +539,119 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
         return bases;
     }
 
-    ID3D12PipelineState* GetOrCreatePipelineState(DXGI_FORMAT swapchainFormat) {
-        auto iter = m_pipelineStates.find(swapchainFormat);
-        if (iter != m_pipelineStates.end()) {
-            return iter->second.Get();
+    virtual void ClearSwapchainImageStructs() override
+    {
+        m_swapchainImageContextMap.clear();
+        for (auto& swapchainContext : m_swapchainImageContexts) {
+            CpuWaitForFence(swapchainContext.GetFrameFenceValue());
         }
+        m_swapchainImageContexts.clear();
+    }
 
-        const D3D12_INPUT_ELEMENT_DESC inputElementDescs[] = {
-            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
-             D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
-             0},
-        };
-
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineStateDesc{};
-        pipelineStateDesc.pRootSignature = m_rootSignature.Get();
-        pipelineStateDesc.VS = {m_vertexShaderBytes->GetBufferPointer(), m_vertexShaderBytes->GetBufferSize()};
-        pipelineStateDesc.PS = {m_pixelShaderBytes->GetBufferPointer(), m_pixelShaderBytes->GetBufferSize()};
+    template < const std::size_t N >
+    static void MakeDefaultPipelineStateDesc
+    (
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC& pipelineStateDesc,
+        const DXGI_FORMAT swapchainFormat,
+        const std::array<ComPtr<ID3DBlob>, 2>& shaders,
+        const std::array<D3D12_INPUT_ELEMENT_DESC, N>& inputElementDescs
+    )
+    {
+        pipelineStateDesc.VS = { shaders[0]->GetBufferPointer(), shaders[0]->GetBufferSize() };
+        pipelineStateDesc.PS = { shaders[1]->GetBufferPointer(), shaders[1]->GetBufferSize() };
         {
-            pipelineStateDesc.BlendState.AlphaToCoverageEnable = false;
-            pipelineStateDesc.BlendState.IndependentBlendEnable = false;
-
+            pipelineStateDesc.BlendState = {
+                .AlphaToCoverageEnable = false,
+                .IndependentBlendEnable = false
+            };
             for (size_t i = 0; i < ArraySize(pipelineStateDesc.BlendState.RenderTarget); ++i) {
-                pipelineStateDesc.BlendState.RenderTarget[i].BlendEnable = false;
-
-                pipelineStateDesc.BlendState.RenderTarget[i].SrcBlend = D3D12_BLEND_ONE;
-                pipelineStateDesc.BlendState.RenderTarget[i].DestBlend = D3D12_BLEND_ZERO;
-                pipelineStateDesc.BlendState.RenderTarget[i].BlendOp = D3D12_BLEND_OP_ADD;
-
-                pipelineStateDesc.BlendState.RenderTarget[i].SrcBlendAlpha = D3D12_BLEND_ONE;
-                pipelineStateDesc.BlendState.RenderTarget[i].DestBlendAlpha = D3D12_BLEND_ZERO;
-                pipelineStateDesc.BlendState.RenderTarget[i].BlendOpAlpha = D3D12_BLEND_OP_ADD;
-
-                pipelineStateDesc.BlendState.RenderTarget[i].LogicOp = D3D12_LOGIC_OP_NOOP;
-                pipelineStateDesc.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+                pipelineStateDesc.BlendState.RenderTarget[i] = {
+                    .BlendEnable = false,
+                    .SrcBlend = D3D12_BLEND_ONE,
+                    .DestBlend = D3D12_BLEND_ZERO,
+                    .BlendOp = D3D12_BLEND_OP_ADD,
+                    .SrcBlendAlpha = D3D12_BLEND_ONE,
+                    .DestBlendAlpha = D3D12_BLEND_ZERO,
+                    .BlendOpAlpha = D3D12_BLEND_OP_ADD,
+                    .LogicOp = D3D12_LOGIC_OP_NOOP,
+                    .RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL
+                };
             }
         }
         pipelineStateDesc.SampleMask = 0xFFFFFFFF;
         {
-            pipelineStateDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-            pipelineStateDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
-            pipelineStateDesc.RasterizerState.FrontCounterClockwise = FALSE;
-            pipelineStateDesc.RasterizerState.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
-            pipelineStateDesc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
-            pipelineStateDesc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
-            pipelineStateDesc.RasterizerState.DepthClipEnable = TRUE;
-            pipelineStateDesc.RasterizerState.MultisampleEnable = FALSE;
-            pipelineStateDesc.RasterizerState.AntialiasedLineEnable = FALSE;
-            pipelineStateDesc.RasterizerState.ForcedSampleCount = 0;
-            pipelineStateDesc.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+            pipelineStateDesc.RasterizerState = {
+                .FillMode = D3D12_FILL_MODE_SOLID,
+                .CullMode = D3D12_CULL_MODE_BACK,
+                .FrontCounterClockwise = FALSE,
+                .DepthBias = D3D12_DEFAULT_DEPTH_BIAS,
+                .DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP,
+                .SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS,
+                .DepthClipEnable = TRUE,
+                .MultisampleEnable = FALSE,
+                .AntialiasedLineEnable = FALSE,
+                .ForcedSampleCount = 0,
+                .ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF,
+            };
         }
         {
-            pipelineStateDesc.DepthStencilState.DepthEnable = TRUE;
-            pipelineStateDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-            pipelineStateDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-            pipelineStateDesc.DepthStencilState.StencilEnable = FALSE;
-            pipelineStateDesc.DepthStencilState.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
-            pipelineStateDesc.DepthStencilState.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
-            pipelineStateDesc.DepthStencilState.FrontFace = pipelineStateDesc.DepthStencilState.BackFace = {
-                D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_COMPARISON_FUNC_ALWAYS};
+            constexpr const D3D12_DEPTH_STENCILOP_DESC stencil_op {
+                D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_COMPARISON_FUNC_ALWAYS
+            };
+            pipelineStateDesc.DepthStencilState = {
+                .DepthEnable = TRUE,
+                .DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL,
+                .DepthFunc = D3D12_COMPARISON_FUNC_LESS,
+                .StencilEnable = FALSE,
+                .StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK,
+                .StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK,
+                .FrontFace = stencil_op,
+                .BackFace = stencil_op
+            };
         }
         {
-            pipelineStateDesc.InputLayout.pInputElementDescs = inputElementDescs;
-            pipelineStateDesc.InputLayout.NumElements = (UINT)ArraySize(inputElementDescs);
+            pipelineStateDesc.InputLayout = {
+                .pInputElementDescs = inputElementDescs.data(),
+                .NumElements = static_cast<std::uint32_t>(inputElementDescs.size())
+            };
         }
         pipelineStateDesc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF;
         pipelineStateDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pipelineStateDesc.NumRenderTargets = 1;
         pipelineStateDesc.RTVFormats[0] = swapchainFormat;
         pipelineStateDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
-        pipelineStateDesc.SampleDesc = {1, 0};
+        pipelineStateDesc.SampleDesc = { 1, 0 };
         pipelineStateDesc.NodeMask = 0;
-        pipelineStateDesc.CachedPSO = {nullptr, 0};
+        pipelineStateDesc.CachedPSO = { nullptr, 0 };
         pipelineStateDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+    }
+
+    ID3D12PipelineState* GetOrCreateDefaultPipelineState(const DXGI_FORMAT swapchainFormat) {
+        auto iter = m_pipelineStates.find(swapchainFormat);
+        if (iter != m_pipelineStates.end()) {
+            return iter->second.Get();
+        }
+
+        constexpr const std::array<D3D12_INPUT_ELEMENT_DESC, 2> inputElementDescs = {
+            D3D12_INPUT_ELEMENT_DESC {
+                "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+                 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+            },
+            D3D12_INPUT_ELEMENT_DESC {
+                "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+                D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+            },
+        };
+        const std::array<ComPtr<ID3DBlob>, 2> shaders{ m_vertexShaderBytes, m_pixelShaderBytes };
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineStateDesc{
+            .pRootSignature = m_rootSignature.Get()
+        };
+        MakeDefaultPipelineStateDesc(pipelineStateDesc, swapchainFormat, shaders, inputElementDescs);
 
         ComPtr<ID3D12PipelineState> pipelineState;
         CHECK_HRCMD(m_device->CreateGraphicsPipelineState(&pipelineStateDesc, __uuidof(ID3D12PipelineState),
-                                                          reinterpret_cast<void**>(pipelineState.ReleaseAndGetAddressOf())));
+            reinterpret_cast<void**>(pipelineState.ReleaseAndGetAddressOf())));
         ID3D12PipelineState* pipelineStateRaw = pipelineState.Get();
 
         m_pipelineStates.emplace(swapchainFormat, std::move(pipelineState));
@@ -407,8 +659,65 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
         return pipelineStateRaw;
     }
 
-    void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-                    int64_t swapchainFormat, const std::vector<Cube>& cubes) override {
+    ID3D12PipelineState* GetOrCreateVideoPipelineState(const DXGI_FORMAT swapchainFormat) {
+        const std::size_t pipelineIndex = m_is3PlaneFormat.load();
+        const auto iter = m_VideoPipelineStates.find(swapchainFormat);
+        if (iter != m_VideoPipelineStates.end()) {
+            return iter->second[pipelineIndex].Get();
+        }
+
+        constexpr const std::array<D3D12_INPUT_ELEMENT_DESC, 2> inputElementDescs {
+            D3D12_INPUT_ELEMENT_DESC {
+                "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+                 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+            },
+            D3D12_INPUT_ELEMENT_DESC {
+                "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+                D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+            },
+        };
+
+        using BlobList = std::array<ComPtr<ID3DBlob>, 2>;
+        const auto makePipeline = [&](const BlobList& shaders) -> ComPtr<ID3D12PipelineState>
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineStateDesc{
+                .pRootSignature = m_rootSignature.Get()
+            };
+            MakeDefaultPipelineStateDesc(pipelineStateDesc, swapchainFormat, shaders, inputElementDescs);
+
+            ComPtr<ID3D12PipelineState> pipelineState;
+            CHECK_HRCMD(m_device->CreateGraphicsPipelineState(&pipelineStateDesc, __uuidof(ID3D12PipelineState),
+                reinterpret_cast<void**>(pipelineState.ReleaseAndGetAddressOf())));
+            return pipelineState;
+        };
+        const auto newPipelineState = m_VideoPipelineStates.emplace(swapchainFormat, VidePipelineStateList{
+            makePipeline({ m_videoVShaderBytes, m_videoPShaderBytes }),
+            makePipeline({ m_videoVShaderBytes, m_video3PlaneFmtPShaderBytes })
+        });
+        CHECK(newPipelineState.second);
+        return newPipelineState.first->second[pipelineIndex].Get();
+    }
+
+    enum class RenderPipelineType {
+        Default,
+        Video
+    };
+    inline ID3D12PipelineState* GetOrCreatePipelineState(const DXGI_FORMAT swapchainFormat, const RenderPipelineType pt = RenderPipelineType::Default) {
+        switch (pt) {
+        case RenderPipelineType::Video:
+            return GetOrCreateVideoPipelineState(swapchainFormat);
+        case RenderPipelineType::Default:
+        default: return GetOrCreateDefaultPipelineState(swapchainFormat);
+        }
+    }
+
+    template < typename RenderFun >
+    void RenderViewImpl
+    (
+        const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage, const int64_t swapchainFormat,
+        RenderFun&& renderFn, const RenderPipelineType pt = RenderPipelineType::Default
+    )
+    {
         CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
 
         auto& swapchainContext = *m_swapchainImageContextMap[swapchainImage];
@@ -417,27 +726,27 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
 
         ComPtr<ID3D12GraphicsCommandList> cmdList;
         CHECK_HRCMD(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, swapchainContext.GetCommandAllocator(), nullptr,
-                                                __uuidof(ID3D12GraphicsCommandList),
-                                                reinterpret_cast<void**>(cmdList.ReleaseAndGetAddressOf())));
+            __uuidof(ID3D12GraphicsCommandList),
+            reinterpret_cast<void**>(cmdList.ReleaseAndGetAddressOf())));
 
-        ID3D12PipelineState* pipelineState = GetOrCreatePipelineState((DXGI_FORMAT)swapchainFormat);
+        ID3D12PipelineState* pipelineState = GetOrCreatePipelineState((DXGI_FORMAT)swapchainFormat, pt);
         cmdList->SetPipelineState(pipelineState);
         cmdList->SetGraphicsRootSignature(m_rootSignature.Get());
 
         ID3D12Resource* const colorTexture = reinterpret_cast<const XrSwapchainImageD3D12KHR*>(swapchainImage)->texture;
         const D3D12_RESOURCE_DESC colorTextureDesc = colorTexture->GetDesc();
 
-        const D3D12_VIEWPORT viewport = {(float)layerView.subImage.imageRect.offset.x,
+        const D3D12_VIEWPORT viewport = { (float)layerView.subImage.imageRect.offset.x,
                                          (float)layerView.subImage.imageRect.offset.y,
                                          (float)layerView.subImage.imageRect.extent.width,
                                          (float)layerView.subImage.imageRect.extent.height,
                                          0,
-                                         1};
+                                         1 };
         cmdList->RSSetViewports(1, &viewport);
 
-        const D3D12_RECT scissorRect = {layerView.subImage.imageRect.offset.x, layerView.subImage.imageRect.offset.y,
+        const D3D12_RECT scissorRect = { layerView.subImage.imageRect.offset.x, layerView.subImage.imageRect.offset.y,
                                         layerView.subImage.imageRect.offset.x + layerView.subImage.imageRect.extent.width,
-                                        layerView.subImage.imageRect.offset.y + layerView.subImage.imageRect.extent.height};
+                                        layerView.subImage.imageRect.offset.y + layerView.subImage.imageRect.extent.height };
         cmdList->RSSetScissorRects(1, &scissorRect);
 
         // Create RenderTargetView with original swapchain format (swapchain is typeless).
@@ -448,14 +757,17 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
             if (colorTextureDesc.SampleDesc.Count > 1) {
                 renderTargetViewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DMSARRAY;
                 renderTargetViewDesc.Texture2DMSArray.ArraySize = colorTextureDesc.DepthOrArraySize;
-            } else {
+            }
+            else {
                 renderTargetViewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
                 renderTargetViewDesc.Texture2DArray.ArraySize = colorTextureDesc.DepthOrArraySize;
             }
-        } else {
+        }
+        else {
             if (colorTextureDesc.SampleDesc.Count > 1) {
                 renderTargetViewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DMS;
-            } else {
+            }
+            else {
                 renderTargetViewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
             }
         }
@@ -470,92 +782,112 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
             if (depthStencilTextureDesc.SampleDesc.Count > 1) {
                 depthStencilViewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DMSARRAY;
                 depthStencilViewDesc.Texture2DMSArray.ArraySize = colorTextureDesc.DepthOrArraySize;
-            } else {
+            }
+            else {
                 depthStencilViewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
                 depthStencilViewDesc.Texture2DArray.ArraySize = colorTextureDesc.DepthOrArraySize;
             }
-        } else {
+        }
+        else {
             if (depthStencilTextureDesc.SampleDesc.Count > 1) {
                 depthStencilViewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DMS;
-            } else {
+            }
+            else {
                 depthStencilViewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
             }
         }
         m_device->CreateDepthStencilView(depthStencilTexture, &depthStencilViewDesc, depthStencilView);
 
-        // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
-        // TODO: Do not clear to a color when using a pass-through view configuration.
-        cmdList->ClearRenderTargetView(renderTargetView, DirectX::Colors::DarkSlateGray, 0, nullptr);
-        cmdList->ClearDepthStencilView(depthStencilView, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-
-        D3D12_CPU_DESCRIPTOR_HANDLE renderTargets[] = {renderTargetView};
-        cmdList->OMSetRenderTargets((UINT)ArraySize(renderTargets), renderTargets, true, &depthStencilView);
-
-        const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(layerView.pose));
-        XrMatrix4x4f projectionMatrix;
-        XrMatrix4x4f_CreateProjectionFov(&projectionMatrix, GRAPHICS_D3D, layerView.fov, 0.05f, 100.0f);
-
-        // Set shaders and constant buffers.
-        ID3D12Resource* viewProjectionCBuffer = swapchainContext.GetViewProjectionCBuffer();
-        ViewProjectionConstantBuffer viewProjection;
-        XMStoreFloat4x4(&viewProjection.ViewProjection, XMMatrixTranspose(spaceToView * LoadXrMatrix(projectionMatrix)));
-        {
-            void* data;
-            const D3D12_RANGE readRange{0, 0};
-            CHECK_HRCMD(viewProjectionCBuffer->Map(0, &readRange, &data));
-            memcpy(data, &viewProjection, sizeof(viewProjection));
-            viewProjectionCBuffer->Unmap(0, nullptr);
-        }
-
-        cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
-
-        // Set cube primitive data.
-        if (cubes.size() > 0) {
-            const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {
-                {m_cubeVertexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeVertices), sizeof(Geometry::Vertex)} };
-            cmdList->IASetVertexBuffers(0, (UINT)ArraySize(vertexBufferView), vertexBufferView);
-
-            D3D12_INDEX_BUFFER_VIEW indexBufferView{ m_cubeIndexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeIndices),
-                                                    DXGI_FORMAT_R16_UINT };
-            cmdList->IASetIndexBuffer(&indexBufferView);
-
-            cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-            constexpr uint32_t cubeCBufferSize = AlignTo<D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT>(sizeof(ModelConstantBuffer));
-            swapchainContext.RequestModelCBuffer(static_cast<uint32_t>(cubeCBufferSize * cubes.size()));
-            ID3D12Resource* modelCBuffer = swapchainContext.GetModelCBuffer();
-
-            // Render each cube
-            uint32_t offset = 0;
-            for (const Cube& cube : cubes) {
-                // Compute and update the model transform.
-                ModelConstantBuffer model;
-                XMStoreFloat4x4(&model.Model,
-                    XMMatrixTranspose(XMMatrixScaling(cube.Scale.x, cube.Scale.y, cube.Scale.z) * LoadXrPose(cube.Pose)));
-                {
-                    uint8_t* data;
-                    const D3D12_RANGE readRange{ 0, 0 };
-                    CHECK_HRCMD(modelCBuffer->Map(0, &readRange, reinterpret_cast<void**>(&data)));
-                    memcpy(data + offset, &model, sizeof(model));
-                    const D3D12_RANGE writeRange{ offset, offset + cubeCBufferSize };
-                    modelCBuffer->Unmap(0, &writeRange);
-                }
-
-                cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress() + offset);
-
-                // Draw the cube.
-                cmdList->DrawIndexedInstanced((UINT)ArraySize(Geometry::c_cubeIndices), 1, 0, 0, 0);
-
-                offset += cubeCBufferSize;
-            }
-        }
+        renderFn(cmdList, renderTargetView, depthStencilView, swapchainContext);
 
         CHECK_HRCMD(cmdList->Close());
-        ID3D12CommandList* cmdLists[] = {cmdList.Get()};
+        ID3D12CommandList* cmdLists[] = { cmdList.Get() };
         m_cmdQueue->ExecuteCommandLists((UINT)ArraySize(cmdLists), cmdLists);
 
         SignalFence();
         swapchainContext.SetFrameFenceValue(m_fenceValue);
+    }
+
+    virtual void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
+        int64_t swapchainFormat, const std::vector<Cube>& cubes) override
+    {
+        using CpuDescHandle = D3D12_CPU_DESCRIPTOR_HANDLE;
+        using CommandListPtr = ComPtr<ID3D12GraphicsCommandList>;
+        RenderViewImpl(layerView, swapchainImage, swapchainFormat, [&]
+        (
+            const CommandListPtr& cmdList,
+            const CpuDescHandle& renderTargetView,
+            const CpuDescHandle& depthStencilView,
+            SwapchainImageContext& swapchainContext
+        )
+        {
+            // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
+            // TODO: Do not clear to a color when using a pass-through view configuration.
+            cmdList->ClearRenderTargetView(renderTargetView, DirectX::Colors::DarkSlateGray, 0, nullptr);
+            cmdList->ClearDepthStencilView(depthStencilView, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+            const D3D12_CPU_DESCRIPTOR_HANDLE renderTargets[] = { renderTargetView };
+            cmdList->OMSetRenderTargets((UINT)ArraySize(renderTargets), renderTargets, true, &depthStencilView);
+
+            const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(layerView.pose));
+            XrMatrix4x4f projectionMatrix;
+            XrMatrix4x4f_CreateProjectionFov(&projectionMatrix, GRAPHICS_D3D, layerView.fov, 0.05f, 100.0f);
+
+            // Set shaders and constant buffers.
+            ID3D12Resource* viewProjectionCBuffer = swapchainContext.GetViewProjectionCBuffer();
+            ViewProjectionConstantBuffer viewProjection{ {}, 0 };
+            XMStoreFloat4x4(&viewProjection.ViewProjection, XMMatrixTranspose(spaceToView * LoadXrMatrix(projectionMatrix)));
+            {
+                void* data;
+                const D3D12_RANGE readRange{ 0, 0 };
+                CHECK_HRCMD(viewProjectionCBuffer->Map(0, &readRange, &data));
+                memcpy(data, &viewProjection, sizeof(viewProjection));
+                viewProjectionCBuffer->Unmap(0, nullptr);
+            }
+
+            cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
+
+            // Set cube primitive data.
+            if (cubes.size() > 0) {
+                const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {
+                    {m_cubeVertexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeVertices), sizeof(Geometry::Vertex)} };
+                cmdList->IASetVertexBuffers(0, (UINT)ArraySize(vertexBufferView), vertexBufferView);
+
+                const D3D12_INDEX_BUFFER_VIEW indexBufferView{ m_cubeIndexBuffer->GetGPUVirtualAddress(), sizeof(Geometry::c_cubeIndices),
+                                                        DXGI_FORMAT_R16_UINT };
+                cmdList->IASetIndexBuffer(&indexBufferView);
+
+                cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+                constexpr uint32_t cubeCBufferSize = AlignTo<D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT>(sizeof(ModelConstantBuffer));
+                swapchainContext.RequestModelCBuffer(static_cast<uint32_t>(cubeCBufferSize * cubes.size()));
+                ID3D12Resource* modelCBuffer = swapchainContext.GetModelCBuffer();
+
+                // Render each cube
+                uint32_t offset = 0;
+                for (const Cube& cube : cubes) {
+                    // Compute and update the model transform.
+                    ModelConstantBuffer model;
+                    XMStoreFloat4x4(&model.Model,
+                        XMMatrixTranspose(XMMatrixScaling(cube.Scale.x, cube.Scale.y, cube.Scale.z) * LoadXrPose(cube.Pose)));
+                    {
+                        uint8_t* data;
+                        const D3D12_RANGE readRange{ 0, 0 };
+                        CHECK_HRCMD(modelCBuffer->Map(0, &readRange, reinterpret_cast<void**>(&data)));
+                        memcpy(data + offset, &model, sizeof(model));
+                        const D3D12_RANGE writeRange{ offset, offset + cubeCBufferSize };
+                        modelCBuffer->Unmap(0, &writeRange);
+                    }
+
+                    cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress() + offset);
+
+                    // Draw the cube.
+                    cmdList->DrawIndexedInstanced((UINT)ArraySize(Geometry::c_cubeIndices), 1, 0, 0, 0);
+
+                    offset += cubeCBufferSize;
+                }
+            }
+        }, RenderPipelineType::Default);
     }
 
     void SignalFence() {
@@ -578,10 +910,527 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
         CpuWaitForFence(m_fenceValue);
     }
 
+    void CreateVideoTextures
+    (
+        const std::size_t width, const std::size_t height, const XrPixelFormat pixfmt,
+        const bool createUploadBuffer,
+        const D3D12_HEAP_FLAGS heap_flags = D3D12_HEAP_FLAG_NONE,
+        const D3D12_RESOURCE_FLAGS res_flags = D3D12_RESOURCE_FLAG_NONE
+    )
+    {
+        if (m_device == nullptr)
+            return;
+
+        ClearVideoTextures();
+
+        CHECK(width % 2 == 0);
+
+        const bool is3PlaneFmt = PlaneCount(pixfmt) > 2;
+
+        /*constexpr*/ const DXGI_FORMAT LUMA_FORMAT     = GetLumaFormat(pixfmt);
+        /*constexpr*/ const DXGI_FORMAT CHROMA_FORMAT   = GetChromaFormat(pixfmt);
+        /*constexpr*/ const DXGI_FORMAT CHROMAU_FORMAT  = GetChromaUFormat(pixfmt);
+        /*constexpr*/ const DXGI_FORMAT CHROMAV_FORMAT  = GetChromaVFormat(pixfmt);
+
+        const std::uint32_t descriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(m_srvHeap->GetCPUDescriptorHandleForHeapStart());
+        CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(m_srvHeap->GetGPUDescriptorHandleForHeapStart());
+        for (auto& videoTex : m_videoTextures)
+        {
+            if (!is3PlaneFmt)
+            {
+                videoTex.texture = ::CreateTexture2D(m_device.Get(), width, height, MapFormat(pixfmt), res_flags, heap_flags);
+                CHECK(videoTex.texture != nullptr);
+                if (createUploadBuffer) {
+                    videoTex.uploadTexture = CreateTextureUploadBuffer(m_device.Get(), videoTex.texture, 0, 2);
+                    CHECK(videoTex.uploadTexture != nullptr);
+                }
+
+                D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc {
+                    .Format = LUMA_FORMAT,
+                    .ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
+                    .Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+                    .Texture2D {
+                        .MipLevels = 1,
+                        .PlaneSlice = 0
+                    }
+                };
+                m_device->CreateShaderResourceView(videoTex.texture.Get(), &srvDesc, cpuHandle);
+                videoTex.lumaHandle = cpuHandle;
+                videoTex.lumaGpuHandle = gpuHandle;
+                cpuHandle.Offset(1, descriptorSize);
+                gpuHandle.Offset(1, descriptorSize);
+
+                srvDesc.Texture2D.PlaneSlice = 1;
+                srvDesc.Format = CHROMA_FORMAT;
+                m_device->CreateShaderResourceView(videoTex.texture.Get(), &srvDesc, cpuHandle);
+                videoTex.chromaHandle = cpuHandle;
+                videoTex.chromaGpuHandle = gpuHandle;
+                cpuHandle.Offset(1, descriptorSize);
+                gpuHandle.Offset(1, descriptorSize);
+
+            }
+            else
+            {
+                const std::size_t chromaWidth  = width / 2;
+                const std::size_t chromaHeight = height / 2;
+                videoTex.lumaTexture    = ::CreateTexture2D(m_device.Get(), width, height, LUMA_FORMAT);
+                assert(CHROMAU_FORMAT == CHROMAV_FORMAT);
+                videoTex.chromaTexture  = ::CreateTexture2D
+                (
+                    m_device.Get(), chromaWidth, chromaHeight, CHROMAU_FORMAT//,
+                    //D3D12_RESOURCE_FLAG_NONE, D3D12_HEAP_FLAG_NONE, 2
+                );
+                videoTex.chromaVTexture = ::CreateTexture2D(m_device.Get(), chromaWidth, chromaHeight, CHROMAV_FORMAT);
+                ///////////
+                if (createUploadBuffer)
+                {
+                    videoTex.lumaStagingBuffer = CreateTextureUploadBuffer(m_device.Get(), videoTex.lumaTexture);
+                    videoTex.chromaUStagingBuffer = CreateTextureUploadBuffer(m_device.Get(), videoTex.chromaTexture);// , 0, 2);
+                    videoTex.chromaVStagingBuffer = CreateTextureUploadBuffer(m_device.Get(), videoTex.chromaVTexture);
+                }
+
+                //////////////
+                // Describe and create a SRV for the texture.
+                D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{
+                    .Format = LUMA_FORMAT,
+                    .ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
+                    .Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+                    .Texture2D {
+                        .MipLevels = 1,
+                        .PlaneSlice = 0
+                    }
+                };
+                m_device->CreateShaderResourceView(videoTex.lumaTexture.Get(), &srvDesc, cpuHandle);
+                videoTex.lumaHandle = cpuHandle;
+                videoTex.lumaGpuHandle = gpuHandle;
+                cpuHandle.Offset(1, descriptorSize);
+                gpuHandle.Offset(1, descriptorSize);
+
+                srvDesc.Format = CHROMAU_FORMAT;
+                m_device->CreateShaderResourceView(videoTex.chromaTexture.Get(), &srvDesc, cpuHandle);
+                videoTex.chromaHandle = cpuHandle;
+                videoTex.chromaGpuHandle = gpuHandle;
+                cpuHandle.Offset(1, descriptorSize);
+                gpuHandle.Offset(1, descriptorSize);
+
+                srvDesc.Format = CHROMAV_FORMAT;
+                m_device->CreateShaderResourceView(videoTex.chromaVTexture.Get(), &srvDesc, cpuHandle);
+                videoTex.chromaVHandle = cpuHandle;
+                videoTex.chromaVGpuHandle = gpuHandle;
+                cpuHandle.Offset(1, descriptorSize);
+                gpuHandle.Offset(1, descriptorSize);
+            }
+        }
+
+        m_is3PlaneFormat = is3PlaneFmt;
+    }
+
+    virtual void CreateVideoTextures(const std::size_t width, const std::size_t height, const XrPixelFormat pixfmt) override
+    {
+        CreateVideoTextures(width, height, pixfmt, true);
+    }
+
+    ComPtr<ID3D11Device> m_d3d11Device{};
+    ComPtr<ID3D11DeviceContext> m_d3d11DeviceContext{};
+    ComPtr<ID3D11On12Device> m_d3d11On12Device{};
+
+    virtual const void* GetD3D11AVDevice() const override
+    {
+        return m_d3d11Device.Get();
+    }
+
+    virtual void* GetD3D11AVDevice() override {
+        return m_d3d11Device.Get();
+    }
+
+    virtual const void* GetD3D11VADeviceContext() const override {
+        return m_d3d11DeviceContext.Get();
+    }
+
+    virtual void* GetD3D11VADeviceContext() override {
+        return m_d3d11DeviceContext.Get();
+    }
+
+    void InitD3D11OnD3D12()
+    {
+        //assert(false);
+        if (m_device == nullptr)
+            return;
+        UINT d3d11DeviceFlags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT;// | D3D11_CREATE_DEVICE_BGRA_SUPPORT;//0;//
+#ifndef NDEBUG
+        d3d11DeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+        //const D3D_FEATURE_LEVEL features[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
+        CHECK_HRCMD(D3D11On12CreateDevice(
+            m_device.Get(),
+            d3d11DeviceFlags,
+            nullptr,
+            0,
+            reinterpret_cast<IUnknown**>(m_videoTexCmdCpyQueue.GetAddressOf()),
+            1,
+            0,
+            &m_d3d11Device,
+            &m_d3d11DeviceContext,
+            nullptr
+        ));
+        CHECK_HRCMD(m_d3d11Device.As(&m_d3d11On12Device));
+        CHECK(m_d3d11Device != nullptr);
+        ID3D10Multithread* pMultithread = nullptr;
+        if (SUCCEEDED(m_d3d11Device->QueryInterface(__uuidof(ID3D10Multithread), (void**)&pMultithread))
+            && pMultithread != nullptr) {
+            pMultithread->SetMultithreadProtected(TRUE);
+            pMultithread->Release();
+        }
+    }
+
+    virtual void ClearVideoTextures() override
+    {
+        m_renderTex = std::size_t(-1);
+        m_currentVideoTex = 0;
+        //std::lock_guard<std::mutex> lk(m_renderMutex);
+        m_texRendereComplete.WaitForGpu();
+        m_videoTextures = { NV12Texture {}, NV12Texture {} };
+        m_is3PlaneFormat = false;
+    }
+
+    virtual void CreateVideoTexturesD3D11VA(const std::size_t width, const std::size_t height, const XrPixelFormat pixfmt) override
+    {
+        if (m_d3d11Device == nullptr)
+            return;
+
+        CHECK_MSG((pixfmt != XrPixelFormat::G8_B8_R8_3PLANE_420 &&
+                    pixfmt != XrPixelFormat::G10X6_B10X6_R10X6_3PLANE_420), "3-Planes formats are not supported!");
+        
+        CreateVideoTextures
+        (
+            width, height, pixfmt,
+            false, D3D12_HEAP_FLAG_SHARED,
+            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
+        );
+
+        constexpr const D3D11_RESOURCE_FLAGS d3d11Flags {
+            .BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET,
+            .MiscFlags = 0,
+            .CPUAccessFlags = 0,            
+            .StructureByteStride = 0,
+        };
+        const WindowsSecurityAttributes secAttr{};
+        for (auto& vidTex : m_videoTextures)
+        {
+            CHECK_HRCMD(m_device->CreateSharedHandle(vidTex.texture.Get(), &secAttr, GENERIC_ALL, 0, &vidTex.wrappedD3D11SharedHandle));
+
+            CHECK_HRCMD(m_d3d11On12Device->CreateWrappedResource
+            (
+                vidTex.texture.Get(),
+                &d3d11Flags,
+                D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                IID_PPV_ARGS(&vidTex.wrappedD3D11Texture)
+            ));
+            CHECK(vidTex.wrappedD3D11Texture != nullptr);
+        }
+    }
+
+    virtual void UpdateVideoTextureD3D11VA(const YUVBuffer& yuvBuffer)
+    {
+        CHECK(m_device != nullptr);
+        CHECK(m_videoTexCmdAllocator != nullptr);
+        CHECK(yuvBuffer.frameIndex != std::uint64_t(-1));
+
+        WaitForAvailableBuffer();
+
+        using TextureRes = ComPtr<ID3D12Resource>;
+        //TextureRes lumaUploadBuffer{}, chromaUploadBuffer{};
+        const std::size_t freeIndex = m_currentVideoTex.load();
+        {
+            /*const*/ auto& videoTex = m_videoTextures[freeIndex];
+            videoTex.frameIndex = yuvBuffer.frameIndex;
+            CHECK(videoTex.wrappedD3D11Texture != nullptr);
+
+            ComPtr<ID3D11Texture2D> new_texture = reinterpret_cast<ID3D11Texture2D*>(yuvBuffer.luma.data);
+            const auto texture_index = (UINT)reinterpret_cast<std::intptr_t>(yuvBuffer.chroma.data);
+            CHECK(new_texture != nullptr);
+
+            D3D11_TEXTURE2D_DESC desc{};//, desc2{};
+            videoTex.wrappedD3D11Texture->GetDesc(&desc);
+
+            m_d3d11On12Device->AcquireWrappedResources((ID3D11Resource**)videoTex.wrappedD3D11Texture.GetAddressOf(), 1);
+            
+            const D3D11_BOX sourceRegion{
+                .left = 0,
+                .top = 0,
+                .front = 0,
+                .right = desc.Width,
+                .bottom = desc.Height,                
+                .back = 1
+            };
+            m_d3d11DeviceContext->CopySubresourceRegion(videoTex.wrappedD3D11Texture.Get(), 0, 0, 0, 0, new_texture.Get(), texture_index, &sourceRegion);
+            
+            // Release our wrapped render target resource. Releasing 
+            // transitions the back buffer resource to the state specified
+            // as the OutState when the wrapped resource was created.
+            m_d3d11On12Device->ReleaseWrappedResources((ID3D11Resource**)videoTex.wrappedD3D11Texture.GetAddressOf(), 1);
+
+            // Flush to submit the 11 command list to the shared command queue.
+            m_d3d11DeviceContext->Flush();
+        }
+
+        m_currentVideoTex.store((freeIndex + 1) % VideoTexCount);
+        //CHECK_HRCMD(m_texCopy.Signal(m_videoTexCmdCpyQueue));        
+        m_renderTex.store(freeIndex);
+    }
+
+    bool WaitForAvailableBuffer()
+    {
+        m_texRendereComplete.WaitForGpu();
+        //Log::Write(Log::Level::Info, Fmt("render idx: %d, copy idx: %d", m_renderTex.load(), m_currentVideoTex.load()));
+        //CHECK_HRCMD(m_texRendereComplete.Wait(m_videoTexCmdCpyQueue));
+        return true;
+    }
+
+    virtual void UpdateVideoTexture(const YUVBuffer& yuvBuffer) override
+    {
+        CHECK(m_device != nullptr);
+        CHECK(m_videoTexCmdAllocator != nullptr);
+        CHECK(yuvBuffer.frameIndex != std::uint64_t(-1));
+        
+        WaitForAvailableBuffer();
+
+        ComPtr<ID3D12GraphicsCommandList> cmdList;
+        CHECK_HRCMD(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT/*COPY*/, m_videoTexCmdAllocator.Get(), nullptr,
+            __uuidof(ID3D12GraphicsCommandList),
+            reinterpret_cast<void**>(cmdList.ReleaseAndGetAddressOf())));
+
+        using TextureRes = ComPtr<ID3D12Resource>;
+        //TextureRes lumaUploadBuffer{}, chromaUploadBuffer{};
+        const std::size_t freeIndex = m_currentVideoTex.load();
+        {
+            auto& videoTex = m_videoTextures[freeIndex];
+            videoTex.frameIndex = yuvBuffer.frameIndex;
+
+            const bool is3PlaneFmt = yuvBuffer.chroma2.data != nullptr;
+            if (!is3PlaneFmt)
+            {
+                CHECK(!m_is3PlaneFormat.load());
+                CHECK(videoTex.texture != nullptr);
+                CHECK(videoTex.uploadTexture != nullptr);
+                
+                const std::array<const D3D12_SUBRESOURCE_DATA,2> textureData
+                {
+                    D3D12_SUBRESOURCE_DATA {
+                        .pData = yuvBuffer.luma.data,
+                        .RowPitch = static_cast<LONG_PTR>(yuvBuffer.luma.pitch),
+                        .SlicePitch = static_cast<LONG_PTR>(yuvBuffer.luma.pitch * yuvBuffer.luma.height)
+                    },
+                    D3D12_SUBRESOURCE_DATA {
+                        .pData = yuvBuffer.chroma.data,
+                        .RowPitch = static_cast<LONG_PTR>(yuvBuffer.chroma.pitch),
+                        .SlicePitch = static_cast<LONG_PTR>(yuvBuffer.chroma.pitch * yuvBuffer.chroma.height),
+                    }
+                };
+                CD3DX12_RESOURCE_BARRIER resourceBarrier =
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.texture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+                cmdList->ResourceBarrier(1, &resourceBarrier);
+
+                UpdateSubresources
+                (
+                    cmdList.Get(), videoTex.texture.Get(), videoTex.uploadTexture.Get(),
+                    0, 0, (UINT)textureData.size(), textureData.data()
+                );
+
+                resourceBarrier =
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+                cmdList->ResourceBarrier(1, &resourceBarrier);
+            }
+            else
+            {
+                CHECK(m_is3PlaneFormat.load());
+                CHECK(videoTex.lumaTexture != nullptr);
+                CHECK(videoTex.chromaTexture != nullptr);
+                CHECK(videoTex.chromaVTexture != nullptr);
+
+                const auto uploadData = [&cmdList](const TextureRes& tex, const TextureRes& uploadBuff, const Buffer& buf)
+                {
+                    const auto texDesc = tex->GetDesc();
+                    CHECK(buf.height <= texDesc.Height);
+                    const D3D12_SUBRESOURCE_DATA textureData {
+                        .pData = buf.data,
+                        .RowPitch = static_cast<LONG_PTR>(buf.pitch),
+                        .SlicePitch = static_cast<LONG_PTR>(buf.pitch * buf.height)
+                    };
+                    UpdateSubresources<1>(cmdList.Get(), tex.Get(), uploadBuff.Get(), 0, 0, 1, &textureData);
+                };
+
+                std::array<CD3DX12_RESOURCE_BARRIER, 3> resourceBarriers = {
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.lumaTexture.Get(),    D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.chromaTexture.Get(),  D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.chromaVTexture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST),
+                };
+                cmdList->ResourceBarrier((UINT)resourceBarriers.size(), resourceBarriers.data());
+
+                uploadData(videoTex.lumaTexture,    videoTex.lumaStagingBuffer,    yuvBuffer.luma);
+                uploadData(videoTex.chromaTexture,  videoTex.chromaUStagingBuffer, yuvBuffer.chroma);
+                uploadData(videoTex.chromaVTexture, videoTex.chromaVStagingBuffer, yuvBuffer.chroma2);;
+
+                resourceBarriers = {
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.lumaTexture.Get(),    D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON),
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.chromaTexture.Get(),  D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON),
+                    CD3DX12_RESOURCE_BARRIER::Transition(videoTex.chromaVTexture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON),
+                };
+                cmdList->ResourceBarrier((UINT)resourceBarriers.size(), resourceBarriers.data());
+            }
+        }
+        // END CMDS //////////////////////////////////////////////////////////////////////
+        CHECK_HRCMD(cmdList->Close());
+        ID3D12CommandList* cmdLists[] = { cmdList.Get() };
+        m_videoTexCmdCpyQueue->ExecuteCommandLists((UINT)ArraySize(cmdLists), cmdLists);
+        
+        m_currentVideoTex.store((freeIndex + 1) % VideoTexCount);
+        CHECK_HRCMD(m_texCopy.Signal(m_videoTexCmdCpyQueue));
+        m_renderTex.store(freeIndex);
+    }
+
+    std::size_t currentTextureIdx = std::size_t(-1);
+
+    virtual void BeginVideoView() override
+    {
+#if 0
+#ifdef XR_ENABLE_CUDA_INTEROP
+        const cudaExternalSemaphoreWaitParams externalSemaphoreWaitParams {
+            .params{.fence{.value = m_texCopy.fenceValue.load()}},
+            .flags = 0
+        };
+        if (cudaWaitExternalSemaphoresAsync(&m_m_texCopyExtSemaphore, &externalSemaphoreWaitParams, 1, videoBufferStream) != cudaSuccess)
+        {
+            Log::Write(Log::Level::Error, "cudaWaitExternalSemaphoresAsync failed.");
+            CHECK(false);
+        }
+#endif
+#else
+        CHECK_HRCMD(m_texCopy.Wait(m_cmdQueue));
+#endif
+        currentTextureIdx = m_renderTex.load();
+    }
+
+    virtual void EndVideoView() override
+    {
+#if 0
+#ifdef XR_ENABLE_CUDA_INTEROP
+        const auto nextVal = m_texRendereComplete.fenceValue.load() + 1;
+        const cudaExternalSemaphoreSignalParams externalSemaphoreSignalParams{
+            .params{.fence{.value = nextVal}},
+            .flags = 0
+        };
+        if (cudaSignalExternalSemaphoresAsync
+            (&m_m_texRenderExtSemaphore, &externalSemaphoreSignalParams, 1, videoBufferStream) != cudaSuccess)
+        {
+            Log::Write(Log::Level::Error, "m_texRendereComplete cudaSignalExternalSemaphoresAsync failed.");
+            CHECK(false);
+        }
+        m_texRendereComplete.fenceValue.store(nextVal);
+#endif
+#else
+        CHECK_HRCMD(m_texRendereComplete.Signal(m_cmdQueue));
+#endif
+    }
+
+    virtual std::uint64_t GetVideoFrameIndex() const override {
+        return currentTextureIdx == std::uint64_t(-1) ?
+            currentTextureIdx :
+            m_videoTextures[currentTextureIdx].frameIndex;
+    }
+
+    virtual void RenderVideoView(const std::uint32_t viewID, const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
+        const std::int64_t swapchainFormat) override
+    {
+        using CpuDescHandle = D3D12_CPU_DESCRIPTOR_HANDLE;
+        using CommandListPtr = ComPtr<ID3D12GraphicsCommandList>;
+        RenderViewImpl(layerView, swapchainImage, swapchainFormat, [&]
+        (
+            const CommandListPtr& cmdList,
+            const CpuDescHandle& renderTargetView,
+            const CpuDescHandle& depthStencilView,
+            SwapchainImageContext& swapchainContext
+        )
+        {
+            if (currentTextureIdx == std::size_t(-1))
+                return;
+            const auto& videoTex = m_videoTextures[currentTextureIdx];
+            
+            ID3D12DescriptorHeap* const ppHeaps[] = { m_srvHeap.Get() };
+            cmdList->SetDescriptorHeaps((UINT)ArraySize(ppHeaps), ppHeaps);
+            cmdList->SetGraphicsRootDescriptorTable(2, videoTex.lumaGpuHandle); // Second texture will be (texture1+1)
+            cmdList->SetGraphicsRootDescriptorTable(3, videoTex.chromaGpuHandle);
+            if (m_is3PlaneFormat)
+                cmdList->SetGraphicsRootDescriptorTable(4, videoTex.chromaVGpuHandle);
+
+            // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
+            // TODO: Do not clear to a color when using a pass-through view configuration.
+            cmdList->ClearRenderTargetView(renderTargetView, DirectX::Colors::Black, 0, nullptr);
+            cmdList->ClearDepthStencilView(depthStencilView, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+            const D3D12_CPU_DESCRIPTOR_HANDLE renderTargets[] = { renderTargetView };
+            cmdList->OMSetRenderTargets((UINT)ArraySize(renderTargets), renderTargets, true, &depthStencilView);
+
+            // Set shaders and constant buffers.
+            ID3D12Resource* const viewProjectionCBuffer = swapchainContext.GetViewProjectionCBuffer();
+            ViewProjectionConstantBuffer viewProjection{
+                .ViewID = viewID
+            };
+            XMStoreFloat4x4(&viewProjection.ViewProjection, XMMatrixIdentity()); //XMMatrixTranspose(spaceToView * LoadXrMatrix(projectionMatrix)));
+            {
+                void* data;
+                const D3D12_RANGE readRange{ 0, 0 };
+                CHECK_HRCMD(viewProjectionCBuffer->Map(0, &readRange, &data));
+                memcpy(data, &viewProjection, sizeof(viewProjection));
+                viewProjectionCBuffer->Unmap(0, nullptr);
+            }
+
+            cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
+
+            using namespace Geometry;
+            const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {
+                {m_quadVertexBuffer->GetGPUVirtualAddress(), QuadVerticesSize, sizeof(QuadVertex)} };
+            cmdList->IASetVertexBuffers(0, (UINT)ArraySize(vertexBufferView), vertexBufferView);
+
+            const D3D12_INDEX_BUFFER_VIEW indexBufferView{ m_quadIndexBuffer->GetGPUVirtualAddress(), QuadIndicesSize,
+                                                            DXGI_FORMAT_R16_UINT };
+            cmdList->IASetIndexBuffer(&indexBufferView);
+
+            cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+            constexpr const std::uint32_t modelBufferSize = AlignTo<D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT>(sizeof(ModelConstantBuffer));
+            swapchainContext.RequestModelCBuffer(modelBufferSize);
+            ID3D12Resource* const modelCBuffer = swapchainContext.GetModelCBuffer();
+
+            // Compute and update the model transform.
+            ModelConstantBuffer model;
+            XMStoreFloat4x4(&model.Model, XMMatrixIdentity());
+            {
+                uint8_t* data;
+                const D3D12_RANGE readRange{ 0, 0 };
+                CHECK_HRCMD(modelCBuffer->Map(0, &readRange, reinterpret_cast<void**>(&data)));
+                std::memcpy(data, &model, sizeof(model));
+                const D3D12_RANGE writeRange{ 0, modelBufferSize };
+                modelCBuffer->Unmap(0, &writeRange);
+            }
+            cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress());
+
+            // Draw Video Quad
+            cmdList->DrawIndexedInstanced((UINT)QuadIndices.size(), 1, 0, 0, 0);
+        }, RenderPipelineType::Video);
+    }
+
+    using ID3D12CommandQueuePtr = ComPtr<ID3D12CommandQueue>;
+
+#include "cuda/d3d12cuda_interop.inl"
+
    private:
     const ComPtr<ID3DBlob> m_vertexShaderBytes;
     const ComPtr<ID3DBlob> m_pixelShaderBytes;
     ComPtr<ID3D12Device> m_device;
+    LUID             m_dx12deviceluid{};
     ComPtr<ID3D12CommandQueue> m_cmdQueue;
     ComPtr<ID3D12Fence> m_fence;
     uint64_t m_fenceValue = 0;
@@ -593,9 +1442,64 @@ struct D3D12GraphicsPlugin : public IGraphicsPlugin {
     std::map<DXGI_FORMAT, ComPtr<ID3D12PipelineState>> m_pipelineStates;
     ComPtr<ID3D12Resource> m_cubeVertexBuffer;
     ComPtr<ID3D12Resource> m_cubeIndexBuffer;
+    ////////////////////////////////////////////////////////////////////////
+
+    D3D12FenceEvent                 m_texRendereComplete {};
+    D3D12FenceEvent                 m_texCopy {};
+    constexpr static const std::size_t VideoTexCount = 2;
+    struct NV12Texture {
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE lumaHandle{};
+        CD3DX12_CPU_DESCRIPTOR_HANDLE chromaHandle{};
+        CD3DX12_CPU_DESCRIPTOR_HANDLE chromaVHandle{};
+
+        CD3DX12_GPU_DESCRIPTOR_HANDLE lumaGpuHandle{};
+        CD3DX12_GPU_DESCRIPTOR_HANDLE chromaGpuHandle{};
+        CD3DX12_GPU_DESCRIPTOR_HANDLE chromaVGpuHandle{};
+
+        // NV12
+        ComPtr<ID3D12Resource>  texture{};
+        ComPtr<ID3D12Resource>  uploadTexture{};
+        ComPtr<ID3D11Texture2D> wrappedD3D11Texture{};
+        HANDLE                  wrappedD3D11SharedHandle = INVALID_HANDLE_VALUE;
+        HANDLE                  d3d11TextureSharedHandle = INVALID_HANDLE_VALUE;
+
+        // P010LE / CUDA / 3-Plane Fmts
+        ComPtr<ID3D12Resource> lumaTexture{};
+        ComPtr<ID3D12Resource> chromaTexture{};
+        ComPtr<ID3D12Resource> chromaVTexture{};
+
+        ComPtr<ID3D12Resource> lumaStagingBuffer{};
+        ComPtr<ID3D12Resource> chromaUStagingBuffer {};
+        ComPtr<ID3D12Resource> chromaVStagingBuffer {};
+
+        std::uint64_t          frameIndex = std::uint64_t(-1);
+    };
+    std::array<NV12Texture, VideoTexCount> m_videoTextures{};
+    std::atomic<std::size_t>       m_currentVideoTex{ 0 }, m_renderTex{ -1 };
+    std::atomic<bool>              m_is3PlaneFormat{ false };
+    NV12Texture                    m_videoTexUploadBuffers{};
+    //std::mutex                     m_renderMutex{};
+
+    ComPtr<ID3D12Resource>         m_quadVertexBuffer{};
+    ComPtr<ID3D12Resource>         m_quadIndexBuffer{};
+    const ComPtr<ID3DBlob>         m_videoVShaderBytes;
+    const ComPtr<ID3DBlob>         m_videoPShaderBytes;
+    const ComPtr<ID3DBlob>         m_video3PlaneFmtPShaderBytes;
+    ComPtr<ID3D12CommandAllocator> m_videoTexCmdAllocator{};
+    ComPtr<ID3D12CommandQueue>     m_videoTexCmdCpyQueue{};
+
+    using ID3D12PipelineStatePtr = ComPtr<ID3D12PipelineState>;
+    using VidePipelineStateList = std::array<ID3D12PipelineStatePtr, 2>;
+    using PipelineStateMap = std::unordered_map<DXGI_FORMAT, VidePipelineStateList>;
+    PipelineStateMap m_VideoPipelineStates;
+
+    ComPtr<ID3D12DescriptorHeap> m_srvHeap{};
+    ////////////////////////////////////////////////////////////////////////
     ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
     ComPtr<ID3D12DescriptorHeap> m_dsvHeap;
 };
+
 }  // namespace
 
 std::shared_ptr<IGraphicsPlugin> CreateGraphicsPlugin_D3D12(const std::shared_ptr<Options>& options,

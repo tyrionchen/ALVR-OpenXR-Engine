@@ -9,6 +9,26 @@ struct Cube {
     XrVector3f Scale;
 };
 
+enum class XrPixelFormat : std::uint32_t {
+    Uknown = 0,
+    NV12,
+    P010LE,
+    G8_B8_R8_3PLANE_420,
+    G10X6_B10X6_R10X6_3PLANE_420
+};
+
+constexpr inline std::size_t PlaneCount(const XrPixelFormat f) {
+    switch (f) {
+    case XrPixelFormat::NV12:
+    case XrPixelFormat::P010LE:
+        return 2;
+    case XrPixelFormat::G8_B8_R8_3PLANE_420:
+    case XrPixelFormat::G10X6_B10X6_R10X6_3PLANE_420:
+        return 3;
+    default: return 0;
+    }
+}
+
 // Wraps a graphics API so the main openxr program can be graphics API-independent.
 struct IGraphicsPlugin {
     virtual ~IGraphicsPlugin() = default;
@@ -30,15 +50,63 @@ struct IGraphicsPlugin {
     virtual std::vector<XrSwapchainImageBaseHeader*> AllocateSwapchainImageStructs(
         uint32_t capacity, const XrSwapchainCreateInfo& swapchainCreateInfo) = 0;
 
+    virtual void ClearSwapchainImageStructs() {}
+
     // Render to a swapchain image for a projection view.
     virtual void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
                             int64_t swapchainFormat, const std::vector<Cube>& cubes) = 0;
+    
+    virtual void BeginVideoView() {}
+    virtual void EndVideoView() {}
+
+    virtual void RenderVideoView
+    (
+        const std::uint32_t /*ViewID*/,
+        const XrCompositionLayerProjectionView& /*layerView*/,
+        const XrSwapchainImageBaseHeader* /*swapchainImage*/,
+        const std::int64_t /*swapchainFormat*/
+    ) {}
 
     // Get recommended number of sub-data element samples in view (recommendedSwapchainSampleCount)
     // if supported by the graphics plugin. A supported value otherwise.
     virtual uint32_t GetSupportedSwapchainSampleCount(const XrViewConfigurationView& view) {
         return view.recommendedSwapchainSampleCount;
     }
+
+    virtual void CreateVideoTextures(const std::size_t /*width*/, const std::size_t /*height*/, const XrPixelFormat /*pixfmt*/) {}
+    virtual void CreateVideoTexturesD3D11VA(const std::size_t /*width*/, const std::size_t /*height*/, const XrPixelFormat /*pixfmt*/) { return; }
+    virtual void CreateVideoTexturesCUDA(const std::size_t /*width*/, const std::size_t /*height*/, const XrPixelFormat /*pixfmt*/) { return; }
+    virtual void CreateVideoTexturesMediaCodec(const std::size_t /*width*/, const std::size_t /*height*/, const XrPixelFormat /*pixfmt*/) { return; }
+    virtual void CreateVideoTexturesVAAPI(const std::size_t /*width*/, const std::size_t /*height*/, const XrPixelFormat /*pixfmt*/) { return; }
+
+    virtual const void* GetD3D11AVDevice() const { return nullptr;  }
+    virtual void* GetD3D11AVDevice() { return nullptr; }
+
+    virtual const void* GetD3D11VADeviceContext() const { return nullptr; }
+    virtual void* GetD3D11VADeviceContext() { return nullptr; }
+
+    struct Buffer {
+        void* data = nullptr;
+        std::size_t pitch = 0;
+        std::size_t height = 0;
+    };
+    struct YUVBuffer {
+        Buffer luma{};
+        Buffer chroma{};
+        Buffer chroma2{};
+        std::uint64_t frameIndex = std::uint64_t(-1);
+    };
+    virtual void UpdateVideoTexture(const YUVBuffer& /*yuvBuffer*/) {}
+    virtual void UpdateVideoTextureCUDA(const YUVBuffer& /*yuvBuffer*/) {}
+    virtual void UpdateVideoTextureD3D11VA(const YUVBuffer& /*yuvBuffer*/) {}
+    virtual void UpdateVideoTextureMediaCodec(const YUVBuffer& /*yuvBuffer*/) {}
+    virtual void UpdateVideoTextureVAAPI(const YUVBuffer& /*yuvBuffer*/) {}
+
+    virtual void ClearVideoTextures(){};
+
+    virtual std::uint64_t GetVideoFrameIndex() const { return std::uint64_t(-1); }
+
+    virtual void SetEnableLinearizeRGB(const bool /*enable*/) {}
 };
 
 // Create a graphics plugin for the graphics API specified in the options.

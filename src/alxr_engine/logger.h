@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace Log {
 enum class Level { Verbose, Info, Warning, Error };
 

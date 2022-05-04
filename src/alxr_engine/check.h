@@ -17,7 +17,7 @@
     if (sourceLocation != nullptr) {
         failureMessage += Fmt("\n    Source: %s", sourceLocation);
     }
-
+    std::cout << failureMessage << '\n';
     throw std::logic_error(failureMessage);
 }
 

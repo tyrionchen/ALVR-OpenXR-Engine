@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <array>
+
 namespace Geometry {
 
 struct Vertex {
@@ -48,5 +50,27 @@ constexpr unsigned short c_cubeIndices[] = {
     24, 25, 26, 27, 28, 29,  // -Z
     30, 31, 32, 33, 34, 35,  // +Z
 };
+
+struct alignas(16) QuadVertex {
+    XrVector3f position;
+    XrVector2f uv;
+};
+constexpr const std::array<QuadVertex, 4> QuadVertices =
+{
+    QuadVertex { {-1, -1, 0 }, {0,   1} },
+    QuadVertex { { 1,  1, 0 }, {0.5, 0} },
+    QuadVertex { { 1, -1, 0 }, {0.5, 1} },
+    QuadVertex { {-1,  1, 0 }, {0,   0} }
+};
+constexpr const std::uint32_t QuadVerticesSize =
+static_cast<std::uint32_t>(ArraySizeOf(QuadVertices));
+
+constexpr const std::array<std::uint16_t, 6> QuadIndices =
+{
+    //0, 2, 1, 0, 1, 3,
+    0,1,2,0,3,1
+};
+constexpr const std::uint32_t QuadIndicesSize =
+static_cast<std::uint32_t>(ArraySizeOf(QuadIndices));
 
 }  // namespace Geometry

@@ -28,6 +28,8 @@ Copyright:  Copyright (c) Facebook Technologies, LLC and its affiliates. All rig
 #include "Render/SimpleBeamRenderer.h"
 #include "Render/GeometryRenderer.h"
 
+#define USE_SIMPLE_CONTROLLER_PROFILE
+
 // Hands
 #ifndef XR_FB_hand_tracking_mesh
 #include <openxr/fb_hand_tracking_mesh.h>
@@ -44,7 +46,6 @@ class XrHandsApp : public OVRFW::XrApp {
     XrHandsApp() : OVRFW::XrApp() {
         BackgroundColor = OVR::Vector4f(0.60f, 0.95f, 0.4f, 1.0f);
     }
-    virtual ~XrHandsApp() = default;
 
     // Returns a list of OpenXr extensions needed for this app
     virtual std::vector<const char*> GetExtensions() override {
@@ -335,6 +336,22 @@ class XrHandsApp : public OVRFW::XrApp {
     // Update state
     virtual void Update(const OVRFW::ovrApplFrameIn& in) override {
         ui_.HitTestDevices().clear();
+
+        if ((in.AllButtons & OVRFW::ovrApplFrameIn::kButtonY) != 0) {
+            ALOG("Y button is pressed!");
+        }
+        if ((in.AllButtons & OVRFW::ovrApplFrameIn::kButtonMenu) != 0) {
+            ALOG("Menu button is pressed!");
+        }
+        if ((in.AllButtons & OVRFW::ovrApplFrameIn::kButtonA) != 0) {
+            ALOG("A button is pressed!");
+        }
+        if ((in.AllButtons & OVRFW::ovrApplFrameIn::kButtonB) != 0) {
+            ALOG("B button is pressed!");
+        }
+        if ((in.AllButtons & OVRFW::ovrApplFrameIn::kButtonX) != 0) {
+            ALOG("X button is pressed!");
+        }
 
         /// Hands
         {

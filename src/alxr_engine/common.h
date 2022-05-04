@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <locale>
@@ -66,7 +67,7 @@ struct ScopeGuard {
 
 // Usage: auto guard = MakeScopeGuard([&] { foobar; });
 template <typename T>
-ScopeGuard<T> MakeScopeGuard(T&& guard) {
+inline ScopeGuard<T> MakeScopeGuard(T&& guard) {
     return ScopeGuard<T>(std::forward<T>(guard));
 }
 
@@ -92,8 +93,13 @@ inline std::string Fmt(const char* fmt, ...) {
 
 // The equivalent of C++17 std::size. A helper to get the dimension for an array.
 template <typename T, size_t Size>
-constexpr size_t ArraySize(const T (&/*unused*/)[Size]) noexcept {
+constexpr inline size_t ArraySize(const T (&/*unused*/)[Size]) noexcept {
     return Size;
+}
+
+template <typename T, size_t Size>
+constexpr inline size_t ArraySizeOf(const std::array<T,Size>&) noexcept {
+    return sizeof(T) * Size;
 }
 
 #include "logger.h"

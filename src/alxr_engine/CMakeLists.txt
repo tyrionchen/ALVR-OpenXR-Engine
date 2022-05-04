@@ -16,6 +16,14 @@
 #
 # Author:
 #
+include(FetchContent)
+
+FetchContent_Declare(
+  readerwriterqueue
+  GIT_REPOSITORY    https://github.com/cameron314/readerwriterqueue
+  GIT_TAG           master
+)
+FetchContent_MakeAvailable(readerwriterqueue)
 
 file(GLOB LOCAL_HEADERS "*.h")
 file(GLOB LOCAL_SOURCE "*.cpp")
@@ -24,13 +32,27 @@ file(GLOB VULKAN_SHADERS "vulkan_shaders/*.glsl")
 # For including compiled shaders
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
+set(CUDA_LIB_LIST)
+set(ENABLE_CUDA_INTEROP FALSE)
+if(NOT ANDROID)
+    option(BUILD_CUDA_INTEROP "Enables explicit CUDA buffer interop" ON)
+    if (BUILD_CUDA_INTEROP)
+        find_package(CUDAToolkit)
+        if (CUDAToolkit_FOUND)
+            set(CUDA_LIB_LIST CUDA::cudart CUDA::cuda_driver)
+            set(ENABLE_CUDA_INTEROP TRUE)
+            message(STATUS "Enabling CUDA Buffer Interop")
+        endif()
+    endif()
+endif()
+
 if(ANDROID)
     add_library(alxr_engine MODULE
         ${LOCAL_SOURCE}
         ${LOCAL_HEADERS}
         ${VULKAN_SHADERS})
         #$<TARGET_OBJECTS:android_native_app_glue>)
-    target_link_libraries(alxr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY})
+    target_link_libraries(alxr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY} mediandk)
 else()
     set(CMAKE_INSTALL_RPATH $ORIGIN)
     add_library(alxr_engine SHARED
@@ -39,6 +61,7 @@ else()
         ${VULKAN_SHADERS})
 endif()
 set_target_properties(alxr_engine PROPERTIES FOLDER ${SAMPLES_FOLDER})
+target_compile_definitions(alxr_engine PRIVATE ALXR_CLIENT)
 
 source_group("Headers" FILES ${LOCAL_HEADERS})
 source_group("Shaders" FILES ${VULKAN_SHADERS})
@@ -52,9 +75,98 @@ add_dependencies(alxr_engine
 
 set(ALVR_ROOT_DIR ${PROJECT_SOURCE_DIR}/../../../../.. CACHE PATH "Root directory of ALVR source")
 set(ALVR_COMMON_DIR ${ALVR_ROOT_DIR}/alvr/client/android/ALVR-common)
+set(ALVR_OLD_CLIENT_DIR ${ALVR_ROOT_DIR}/alvr/client/android/app/src/main/cpp)
+
 file(GLOB_RECURSE ALVR_COMMON_HEADERS ${ALVR_COMMON_DIR}/*.h)
 file(GLOB_RECURSE ALVR_COMMON_SOURCE ${ALVR_COMMON_DIR}/*.c ${ALVR_COMMON_DIR}/*.cpp)
-add_library(alvr_common ${ALVR_COMMON_SOURCE} ${ALVR_COMMON_SOURCE})
+add_library(alvr_common
+    ${ALVR_COMMON_HEADERS}
+    ${ALVR_OLD_CLIENT_DIR}/fec.h
+    ${ALVR_OLD_CLIENT_DIR}/latency_collector.h
+    ${ALVR_COMMON_SOURCE}
+    ${ALVR_OLD_CLIENT_DIR}/fec.cpp
+    ${ALVR_OLD_CLIENT_DIR}/latency_collector.cpp)
+target_compile_definitions(alvr_common PRIVATE ALXR_CLIENT)
+target_include_directories(alvr_common PRIVATE
+    ${ALVR_COMMON_DIR}
+)
+
+set(FFMPEG_DIR ${PROJECT_SOURCE_DIR}/src/external/ffmpeg)
+set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/bin)
+if (IS_TARGET_MSVC_ARM)
+    set(FFMPEG_DIR ${PROJECT_SOURCE_DIR}/src/external/ffmpeg_arm_uwp/${XR_TARGET_CPU_ARCH})
+    set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/bin)
+endif()
+
+if(ANDROID)
+    #set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/android/lib/arm64-v8a)
+    #set(FFMPEG_LIB_DIR ${FFMPEG_DIR}/android/lib/arm64-v8a)
+    #
+    #function(add_ffmpeg_shared_lib libName soName)
+    #    add_library(${libName} MODULE IMPORTED)
+    #    set_target_properties(${libName} PROPERTIES
+    #        IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/${soName}
+	#        INTERFACE_INCLUDE_DIRECTORIES ${FFMPEG_DIR}/android/include/arm64-v8a)
+    #endfunction()
+    #
+    ##add_ffmpeg_shared_lib("libc++_shared" "libc++_shared.so")
+    #add_ffmpeg_shared_lib("libavutil"  "libavutil.so")
+    #add_ffmpeg_shared_lib("libswresample"  "libswresample.so")
+    #add_ffmpeg_shared_lib("libavdevice" "libavdevice.so")
+    #add_ffmpeg_shared_lib("libavcodec" "libavcodec.so")
+    #add_ffmpeg_shared_lib("libavformat" "libavformat.so")
+    #add_ffmpeg_shared_lib("libavfilter" "libavfilter.so")
+    #add_ffmpeg_shared_lib("libswscale" "libswscale.so")
+    ## avutil, avresample, avcodec, avformat 
+    #set(FFMPEG_LIBS libavutil libswresample libavdevice libavcodec libavformat libavfilter libswscale)
+    set(FFMPEG_LIBS)
+    set(ONE_API_TTB_LIBS)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(PKG_CONFIG_USE_CMAKE_PREFIX_PATH ON)
+    find_package(PkgConfig REQUIRED)
+    set(PKG_CONFIG_USE_CMAKE_PREFIX_PATH ON)
+
+    pkg_check_modules(LIBAV REQUIRED IMPORTED_TARGET
+        libavutil#>=56.70.100
+        #libswresample
+        #libavdevice
+        libavcodec#>=58.134.100
+        #libavformat#>=58.76.100
+        libavfilter#>=7.110.100
+        libswscale#>=5.9.100
+    )
+
+    set(FFMPEG_LIBS PkgConfig::LIBAV)
+    
+    #pkg_check_modules(TBB REQUIRED IMPORTED_TARGET
+    #    tbb
+    #)
+    #set(ONE_API_TTB_LIBS PkgConfig::TBB)
+    set(ONE_API_TTB_LIBS)
+
+else()
+    set(FFMPEG_LIB_DIR ${FFMPEG_DIR}/lib)
+
+    function(add_ffmpeg_shared_lib libName importLib dllName)
+        add_library(${libName} SHARED IMPORTED)
+        set_target_properties(${libName} PROPERTIES
+            IMPORTED_LOCATION ${FFMPEG_BIN_DIR}/${dllName}
+            IMPORTED_IMPLIB ${FFMPEG_LIB_DIR}/${importLib}
+	        INTERFACE_INCLUDE_DIRECTORIES ${FFMPEG_DIR}/include)
+    endfunction()  
+
+    add_ffmpeg_shared_lib("libavutil" "avutil.lib" "avutil-57.dll")
+    add_ffmpeg_shared_lib("libavdevice" "avdevice.lib" "avdevice-59.dll")
+    add_ffmpeg_shared_lib("libswresample" "swresample.lib" "swresample-4.dll")
+    add_ffmpeg_shared_lib("libavcodec" "avcodec.lib" "avcodec-59.dll")
+    add_ffmpeg_shared_lib("libavformat" "avformat.lib" "avformat-59.dll")
+    add_ffmpeg_shared_lib("libavfilter" "avfilter.lib" "avfilter-8.dll")
+    add_ffmpeg_shared_lib("libswscale" "swscale.lib" "swscale-6.dll")
+
+    # avutil, avresample, avcodec, avformat 
+    set(FFMPEG_LIBS libavutil libswresample libavdevice libavcodec libavformat libavfilter libswscale)
+    set(ONE_API_TTB_LIBS)
+endif()
 
 target_include_directories(alxr_engine
     PRIVATE
@@ -68,12 +180,18 @@ target_include_directories(alxr_engine
     # for helper headers
     ${PROJECT_SOURCE_DIR}/external/include
 
+    ${ALVR_COMMON_DIR}
     ${ALVR_COMMON_DIR}/../
     ${ALVR_COMMON_DIR}/../app/src/main/cpp
+    ${ALVR_OLD_CLIENT_DIR}
 )
 
 if(GLSLANG_VALIDATOR AND NOT GLSLC_COMMAND)
     target_compile_definitions(alxr_engine PRIVATE USE_GLSLANGVALIDATOR)
+endif()
+
+if(ENABLE_CUDA_INTEROP)
+    target_compile_definitions(alxr_engine PRIVATE XR_ENABLE_CUDA_INTEROP)
 endif()
 
 if(Vulkan_FOUND)
@@ -83,14 +201,15 @@ if(Vulkan_FOUND)
     )
 endif()
 
-target_link_libraries(alxr_engine openxr_loader alvr_common)
+target_link_libraries(alxr_engine openxr_loader alvr_common readerwriterqueue ${CUDA_LIB_LIST} ${FFMPEG_LIBS} ${ONE_API_TTB_LIBS})
+
 if(TARGET openxr-gfxwrapper)
     target_link_libraries(alxr_engine openxr-gfxwrapper)
 endif()
 if(WIN32)
     if(MSVC)
         target_compile_definitions(alxr_engine PRIVATE _CRT_SECURE_NO_WARNINGS)
-        target_compile_options(alxr_engine PRIVATE /Zc:wchar_t /Zc:forScope /W4 /WX /Zi)
+        target_compile_options(alxr_engine PRIVATE /Zc:wchar_t /Zc:forScope /W3 /WX /Zi)
         target_compile_options(alxr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/Zi>")
         target_link_options(alxr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/DEBUG>")
         target_link_options(alxr_engine PRIVATE "$<$<NOT:$<CONFIG:Debug>>:/OPT:REF>")
@@ -99,7 +218,7 @@ if(WIN32)
     target_link_libraries(alxr_engine ole32)
     if(MSVC)
         # Right now can't build this on MinGW because of directxcolors, etc.
-        target_link_libraries(alxr_engine d3d11 d3d12 d3dcompiler dxgi)
+        target_link_libraries(alxr_engine dxguid d3d11 d3d12 d3dcompiler dxgi)
     else()
         target_compile_definitions(alxr_engine PRIVATE MISSING_DIRECTX_COLORS)
     endif()
@@ -112,6 +231,34 @@ endif()
 if(NOT ANDROID)
     #set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/examples)
     #include(GNUInstallDirs)
+    #install(DIRECTORY ${FFMPEG_BIN_DIR} TYPE BIN)
+
+    if(WIN32)    
+        #set(CMAKE_INSTALL_DEBUG_LIBRARIES TRUE)
+        #set(CMAKE_INSTALL_UCRT_LIBRARIES TRUE)
+        include(InstallRequiredSystemLibraries)
+        #add_custom_target(copy_debug_libs
+        #    COMMAND ${CMAKE_COMMAND} -E copy
+        #    ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
+        #    || (COMMAND ${CMAKE_COMMAND} -E echo "Unable to copy the debug libraries, continuing..."))
+        foreach(libav_var ${FFMPEG_LIBS})
+            install(IMPORTED_RUNTIME_ARTIFACTS ${libav_var}
+                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+                #LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                #ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+        endforeach()
+    endif()
+    
+    # if (INSTALL_BUNDLED_FFMPEG AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    #     foreach(LIBAV_SO ${LIBAV_LINK_LIBRARIES})
+    #         file(REAL_PATH ${LIBAV_SO} REAL_LIBAV_SO)
+    #         install(FILES ${REAL_LIBAV_SO} DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    #     endforeach()
+    # endif()
+    
+    #install(IMPORTED_RUNTIME_ARTIFACTS JsonCpp
+    #           RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
     install(TARGETS alxr_engine
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -119,12 +266,5 @@ if(NOT ANDROID)
     if(WIN32)
         install(FILES $<TARGET_PDB_FILE:alxr_engine> DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
-    #    install(TARGETS alxr_engine
-    #    RUNTIME DESTINATION ${ALVR_BIN_DIR}
-    #    ARCHIVE DESTINATION ${ALVR_BIN_DIR})
-    #install(FILES $<TARGET_PDB_FILE:alxr_engine> DESTINATION ${ALVR_BIN_DIR})
-    #if(NOT WIN32)
-    #    install(FILES alxr_engine.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1/ COMPONENT ManPages)
-    #endif()
 endif()
 
