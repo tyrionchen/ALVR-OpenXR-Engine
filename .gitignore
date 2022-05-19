@@ -102,3 +102,8 @@ out/install/x64-Release/bin/api_layers/XrApiLayer_api_dump.dll
 out/install/x64-Debug/bin/alxr_engine.dll
 out/install/x64-Debug/bin/alxr_engine.pdb
 out/install/x64-Debug/lib/alxr_engine.lib
+*.dll
+out/install/x64-Debug/include/readerwriterqueue/atomicops.h
+out/install/x64-Debug/include/readerwriterqueue/LICENSE.md
+out/install/x64-Debug/include/readerwriterqueue/readerwritercircularbuffer.h
+out/install/x64-Debug/include/readerwriterqueue/readerwriterqueue.h
