@@ -226,6 +226,8 @@ inline XrReferenceSpaceCreateInfo GetXrReferenceSpaceCreateInfo(const std::strin
     } else if (EqualsIgnoreCase(referenceSpaceTypeStr, "StageRightRotated")) {
         referenceSpaceCreateInfo.poseInReferenceSpace = Math::Pose::RotateCCWAboutYAxis(-3.14f / 3.f, {2.f, 0.5f, -2.f});
         referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+    } else if (EqualsIgnoreCase(referenceSpaceTypeStr, "UboundedMSFT")) {
+        referenceSpaceCreateInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_UNBOUNDED_MSFT;
     } else {
         throw std::invalid_argument(Fmt("Unknown reference space type '%s'", referenceSpaceTypeStr.data()));
     }
@@ -410,6 +412,13 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     using ExtensionMap = std::unordered_map<std::string_view, bool>;
     ExtensionMap m_availableSupportedExtMap = {
+#ifdef XR_USE_PLATFORM_UWP
+#pragma message ("UWP Extensions Enabled.")
+        // Require XR_EXT_win32_appcontainer_compatible extension when building in UWP context.
+        { XR_EXT_WIN32_APPCONTAINER_COMPATIBLE_EXTENSION_NAME, false },
+#endif
+        { XR_MSFT_UNBOUNDED_REFERENCE_SPACE_EXTENSION_NAME, false },
+        { XR_MSFT_HAND_INTERACTION_EXTENSION_NAME, false },
         { "XR_KHR_convert_timespec_time", false },
         { "XR_KHR_win32_convert_performance_counter_time", false },
         { "XR_EXT_hand_tracking", false },
@@ -532,12 +541,15 @@ struct OpenXrProgram final : IOpenXrProgram {
             .type = XR_TYPE_INSTANCE_CREATE_INFO,
             .next = m_platformPlugin->GetInstanceCreateExtension(),
             .applicationInfo {
+                .applicationVersion = 1,
+                .engineVersion = 1,
                 .apiVersion = XR_CURRENT_API_VERSION
             },
             .enabledExtensionCount = (uint32_t)extensions.size(),
             .enabledExtensionNames = extensions.data()
         };
         strcpy(createInfo.applicationInfo.applicationName, "alxr-client");
+        strcpy(createInfo.applicationInfo.engineName, "alxr-engine");
         CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
     }
 
@@ -592,35 +604,38 @@ struct OpenXrProgram final : IOpenXrProgram {
             else {
                 Log::Write(Log::Level::Error, Fmt("Empty view configuration type"));
             }
-
             LogEnvironmentBlendMode(viewConfigType);
         }
+    }
+
+    using XrEnvironmentBlendModeList = std::vector<XrEnvironmentBlendMode>;
+    XrEnvironmentBlendModeList GetEnvironmentBlendModes(const XrViewConfigurationType type) const
+    {
+        uint32_t count;
+        CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, 0, &count, nullptr));
+        if (count == 0)
+            return {};
+        std::vector<XrEnvironmentBlendMode> blendModes(count);
+        CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, count, &count, blendModes.data()));
+        return blendModes;
     }
 
     void LogEnvironmentBlendMode(XrViewConfigurationType type) {
         CHECK(m_instance != XR_NULL_HANDLE);
         CHECK(m_systemId != 0);
 
-        uint32_t count;
-        CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, 0, &count, nullptr));
-        CHECK(count > 0);
-
-        Log::Write(Log::Level::Info, Fmt("Available Environment Blend Mode count : (%d)", count));
-
-        std::vector<XrEnvironmentBlendMode> blendModes(count);
-        CHECK_XRCMD(xrEnumerateEnvironmentBlendModes(m_instance, m_systemId, type, count, &count, blendModes.data()));
-
-        bool blendModeFound = false;
+        const auto blendModes = GetEnvironmentBlendModes(type);
+        Log::Write(Log::Level::Info, Fmt("Available Environment Blend Mode count : (%zu)", blendModes.size()));
+        
         for (XrEnvironmentBlendMode mode : blendModes) {
             const bool blendModeMatch = (mode == m_environmentBlendMode);
             Log::Write(Log::Level::Info,
                 Fmt("Environment Blend Mode (%s) : %s", to_string(mode), blendModeMatch ? "(Selected)" : ""));
-            blendModeFound |= blendModeMatch;
         }
-        CHECK(blendModeFound);
     }
 
     void InitializeSystem(const ALXRPaths& alxrPaths) override {
+
         CHECK(m_instance != XR_NULL_HANDLE);
         CHECK(m_systemId == XR_NULL_SYSTEM_ID);
 
@@ -641,6 +656,17 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK(m_systemId != XR_NULL_SYSTEM_ID);
 
         LogViewConfigurations();
+
+        const auto blendModes = GetEnvironmentBlendModes(m_viewConfigType);
+        if (std::find(blendModes.begin(), blendModes.end(), m_environmentBlendMode) == blendModes.end() && !blendModes.empty()) {
+            Log::Write(Log::Level::Info, Fmt
+            (
+                "Requested environment blend mode (%s) is not available, using first available mode (%s)",
+                to_string(m_environmentBlendMode),
+                to_string(blendModes[0])
+            ));
+            m_environmentBlendMode = blendModes[0];
+        }
 
         // The graphics API can initialize the graphics device now that the systemId and instance
         // handle are available.
@@ -667,7 +693,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 case XR_REFERENCE_SPACE_TYPE_VIEW: return "View";
                 case XR_REFERENCE_SPACE_TYPE_LOCAL: return "Local";
                 case XR_REFERENCE_SPACE_TYPE_STAGE: return "Stage";
-                //case XR_REFERENCE_SPACE_TYPE_UNBOUNDED_MSFT:
+                case XR_REFERENCE_SPACE_TYPE_UNBOUNDED_MSFT: return "UboundedMSFT";
                 //case XR_REFERENCE_SPACE_TYPE_COMBINED_EYE_VARJO:
                 };
                 assert(false); // "Uknown HMD reference space type"
@@ -676,9 +702,10 @@ struct OpenXrProgram final : IOpenXrProgram {
             const auto availSpaces = GetAvailableReferenceSpaces();
             assert(availSpaces.size() > 0);
             // iterate through order of preference/priority, STAGE is the most preferred if available.
-            for (const auto spaceType : { XR_REFERENCE_SPACE_TYPE_STAGE,
-                                          XR_REFERENCE_SPACE_TYPE_LOCAL,
-                                          XR_REFERENCE_SPACE_TYPE_VIEW })
+            for (const auto spaceType : {   XR_REFERENCE_SPACE_TYPE_STAGE,
+                                            XR_REFERENCE_SPACE_TYPE_UNBOUNDED_MSFT,
+                                            XR_REFERENCE_SPACE_TYPE_LOCAL,
+                                            XR_REFERENCE_SPACE_TYPE_VIEW })
             {
                 if (std::find(availSpaces.begin(), availSpaces.end(), spaceType) != availSpaces.end())
                     return refSpaceName(spaceType);
@@ -1008,6 +1035,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/trackpad/force", &trackpadForcePath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/trackpad/force", &trackpadForcePath[Side::RIGHT]));
 
+//#define XR_DISABLE_SUGGESTED_BINDINGS
+#ifndef XR_DISABLE_SUGGESTED_BINDINGS
         // Suggest bindings for KHR Simple.
         {
             XrPath khrSimpleInteractionProfilePath;
@@ -1212,6 +1241,29 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
 
+        // Suggest bindings for Hololens/WMR hand interaction.
+        if (IsExtEnabled(XR_MSFT_HAND_INTERACTION_EXTENSION_NAME))
+        {
+            XrPath microsoftHandInteractionProfilePath;
+            CHECK_XRCMD(
+                xrStringToPath(m_instance, "/interaction_profiles/microsoft/hand_interaction", &microsoftHandInteractionProfilePath));
+            const std::vector<XrActionSuggestedBinding> bindings{{
+                {m_input.poseAction, posePath[Side::LEFT]},
+                {m_input.poseAction, posePath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, squeezeValuePath[Side::RIGHT]}
+            }};
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = microsoftHandInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()
+            };
+            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+        }
+
         // Suggest bindings for the Microsoft Mixed Reality Motion Controller.
         {
             XrPath microsoftMixedRealityInteractionProfilePath;
@@ -1335,6 +1387,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
+#endif
 #endif
 
         XrActionSpaceCreateInfo actionSpaceInfo {
@@ -1623,6 +1676,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 .systemId = m_systemId
             };
             CHECK_XRCMD(xrCreateSession(m_instance, &createInfo, &m_session));
+            CHECK(m_session != XR_NULL_HANDLE);
         }
 
         LogReferenceSpaces();
@@ -1776,6 +1830,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                     .height = static_cast<std::int32_t>(swapchainCreateInfo.height)
                 };
                 CHECK_XRCMD(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle));
+                CHECK(swapchain.handle != nullptr);
 
                 m_swapchains.push_back(swapchain);
 
@@ -2320,6 +2375,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
             }
         }
+
         if (timeRender)
             LatencyCollector::Instance().rendered2(videoFrameDisplayTime);
 
@@ -2341,11 +2397,13 @@ struct OpenXrProgram final : IOpenXrProgram {
             // TODO: Figure out why steamvr doesn't like using custom predicated display times!!!
             .displayTime = UseNetworkPredicatedDisplayTime() ?
                 predictedDisplayTime : frameState.predictedDisplayTime,
+            //.displayTime = frameState.predictedDisplayTime,
             .environmentBlendMode = m_environmentBlendMode,
             .layerCount = layerCount,
             .layers = layers.data()
         };
         CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
+
         LatencyManager::Instance().SubmitAndSync(videoFrameDisplayTime);
         if (isVideoStream)
             m_graphicsPlugin->EndVideoView();
@@ -2439,6 +2497,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 #endif
         const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
         if (!isVideoStream) {
+#if 0
             // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
             // true when the application has focus.
             cubes.reserve(2);
@@ -2466,6 +2525,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                     }
                 }
             }
+#endif
         }
 
         //if (isVideoStream)
@@ -2522,7 +2582,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         //    m_graphicsPlugin->EndVideoView();
 
         layer.space = m_appSpace;
-        layer.layerFlags = XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT;
+        layer.layerFlags = XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
         // passthrough api flags:
         //layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
         //                   XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
@@ -2625,7 +2685,12 @@ struct OpenXrProgram final : IOpenXrProgram {
         // If OpenXR runtime does not support XR_FB_display_refresh_rate extension
         // and currently core spec has no method of query the supported refresh rates
         // the only way to determine this is with a dumy loop
+        m_displayRefreshRates = 
+#ifdef ALXR_ENABLE_ESTIMATE_DISPLAY_REFRESH_RATE
         m_displayRefreshRates = { EstimateDisplayRefreshRate() };
+#else
+        m_displayRefreshRates = { 60.0f, 72.0f, 80.0f, 90.0f, 120.0f, 144.0f };
+#endif
         assert(m_displayRefreshRates.size() > 0);
     }
 
@@ -3042,7 +3107,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     XrSpace m_viewSpace{ XR_NULL_HANDLE };
     XrFormFactor m_formFactor{XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
     XrViewConfigurationType m_viewConfigType{XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-    XrEnvironmentBlendMode m_environmentBlendMode{XR_ENVIRONMENT_BLEND_MODE_OPAQUE};
+    XrEnvironmentBlendMode m_environmentBlendMode{ XR_ENVIRONMENT_BLEND_MODE_OPAQUE };
     XrSystemId m_systemId{XR_NULL_SYSTEM_ID};
 
     std::vector<XrViewConfigurationView> m_configViews;

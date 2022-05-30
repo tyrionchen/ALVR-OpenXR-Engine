@@ -62,6 +62,9 @@ else()
 endif()
 set_target_properties(alxr_engine PROPERTIES FOLDER ${SAMPLES_FOLDER})
 target_compile_definitions(alxr_engine PRIVATE ALXR_CLIENT)
+if (XR_IS_UWP)
+    target_compile_definitions(alxr_engine PRIVATE XR_USE_PLATFORM_UWP)
+endif()
 
 source_group("Headers" FILES ${LOCAL_HEADERS})
 source_group("Shaders" FILES ${VULKAN_SHADERS})
@@ -86,39 +89,14 @@ add_library(alvr_common
     ${ALVR_COMMON_SOURCE}
     ${ALVR_OLD_CLIENT_DIR}/fec.cpp
     ${ALVR_OLD_CLIENT_DIR}/latency_collector.cpp)
-target_compile_definitions(alvr_common PRIVATE ALXR_CLIENT)
 target_include_directories(alvr_common PRIVATE
     ${ALVR_COMMON_DIR}
 )
+target_compile_definitions(alvr_common PRIVATE ALXR_CLIENT PRIVATE _CRT_SECURE_NO_WARNINGS PRIVATE _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS)
+target_compile_options(alvr_common PRIVATE /Zc:wchar_t /Zc:forScope /W3 /Zi)
 
-set(FFMPEG_DIR ${PROJECT_SOURCE_DIR}/src/external/ffmpeg)
-set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/bin)
-if (IS_TARGET_MSVC_ARM)
-    set(FFMPEG_DIR ${PROJECT_SOURCE_DIR}/src/external/ffmpeg_arm_uwp/${XR_TARGET_CPU_ARCH})
-    set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/bin)
-endif()
-
+set(FFMPEG_LIBS)
 if(ANDROID)
-    #set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/android/lib/arm64-v8a)
-    #set(FFMPEG_LIB_DIR ${FFMPEG_DIR}/android/lib/arm64-v8a)
-    #
-    #function(add_ffmpeg_shared_lib libName soName)
-    #    add_library(${libName} MODULE IMPORTED)
-    #    set_target_properties(${libName} PROPERTIES
-    #        IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/${soName}
-	#        INTERFACE_INCLUDE_DIRECTORIES ${FFMPEG_DIR}/android/include/arm64-v8a)
-    #endfunction()
-    #
-    ##add_ffmpeg_shared_lib("libc++_shared" "libc++_shared.so")
-    #add_ffmpeg_shared_lib("libavutil"  "libavutil.so")
-    #add_ffmpeg_shared_lib("libswresample"  "libswresample.so")
-    #add_ffmpeg_shared_lib("libavdevice" "libavdevice.so")
-    #add_ffmpeg_shared_lib("libavcodec" "libavcodec.so")
-    #add_ffmpeg_shared_lib("libavformat" "libavformat.so")
-    #add_ffmpeg_shared_lib("libavfilter" "libavfilter.so")
-    #add_ffmpeg_shared_lib("libswscale" "libswscale.so")
-    ## avutil, avresample, avcodec, avformat 
-    #set(FFMPEG_LIBS libavutil libswresample libavdevice libavcodec libavformat libavfilter libswscale)
     set(FFMPEG_LIBS)
     set(ONE_API_TTB_LIBS)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -143,8 +121,15 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     #)
     #set(ONE_API_TTB_LIBS PkgConfig::TBB)
     set(ONE_API_TTB_LIBS)
+elseif (WIN32)
 
-else()
+    set(FFMPEG_PLATFORM_DIR "win32")
+    if (XR_IS_UWP)
+        set(FFMPEG_PLATFORM_DIR "uwp")
+    endif()
+
+    set(FFMPEG_DIR ${PROJECT_SOURCE_DIR}/src/external/ffmpeg/${FFMPEG_PLATFORM_DIR}/${XR_TARGET_CPU_ARCH})    
+    set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/bin)
     set(FFMPEG_LIB_DIR ${FFMPEG_DIR}/lib)
 
     function(add_ffmpeg_shared_lib libName importLib dllName)
@@ -162,7 +147,7 @@ else()
     add_ffmpeg_shared_lib("libavformat" "avformat.lib" "avformat-59.dll")
     add_ffmpeg_shared_lib("libavfilter" "avfilter.lib" "avfilter-8.dll")
     add_ffmpeg_shared_lib("libswscale" "swscale.lib" "swscale-6.dll")
-
+    
     # avutil, avresample, avcodec, avformat 
     set(FFMPEG_LIBS libavutil libswresample libavdevice libavcodec libavformat libavfilter libswscale)
     set(ONE_API_TTB_LIBS)
@@ -201,6 +186,9 @@ if(Vulkan_FOUND)
     )
 endif()
 
+if (XR_IS_UWP)
+    target_link_libraries(alxr_engine OneCore.lib WindowsApp.lib)
+endif()
 target_link_libraries(alxr_engine openxr_loader alvr_common readerwriterqueue ${CUDA_LIB_LIST} ${FFMPEG_LIBS} ${ONE_API_TTB_LIBS})
 
 if(TARGET openxr-gfxwrapper)
@@ -232,8 +220,7 @@ if(NOT ANDROID)
     #set(ALVR_BIN_DIR ${ALVR_ROOT_DIR}/target/debug/examples)
     #include(GNUInstallDirs)
     #install(DIRECTORY ${FFMPEG_BIN_DIR} TYPE BIN)
-
-    if(WIN32)
+    if(MSVC)
         string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE_LOWERED)
         if (${BUILD_TYPE_LOWERED} MATCHES ".*debug.*")
             message("Installing debug CRT depends")
@@ -241,7 +228,7 @@ if(NOT ANDROID)
             set(CMAKE_INSTALL_UCRT_LIBRARIES TRUE)
             #set(CMAKE_INSTALL_DEBUG_LIBRARIES_ONLY TRUE)
         endif()
-        #set(CMAKE_INSTALL_UCRT_LIBRARIES TRUE)
+
         include(InstallRequiredSystemLibraries)
         #add_custom_target(copy_debug_libs
         #    COMMAND ${CMAKE_COMMAND} -E copy
