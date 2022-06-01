@@ -31,6 +31,7 @@ specification/scripts/.cache
 
 # VS 2019 CMake artifacts
 out/build/
+out/install/
 
 # VS misc
 *.sln
@@ -65,63 +66,3 @@ local.properties
 # Output artifact
 *.aar
 *.pom
-
-out/install/x64-Debug/share/doc/openxr/LICENSE
-out/install/x64-Debug/lib/openxr_loaderd.lib
-out/install/x64-Debug/include/openxr/openxr_reflection.h
-out/install/x64-Debug/include/openxr/openxr_platform_defines.h
-out/install/x64-Debug/include/openxr/openxr_platform.h
-out/install/x64-Debug/include/openxr/openxr.h
-out/install/x64-Debug/cmake/OpenXRTargets.cmake
-out/install/x64-Debug/cmake/OpenXRTargets-debug.cmake
-out/install/x64-Debug/cmake/OpenXRConfigVersion.cmake
-out/install/x64-Debug/cmake/OpenXRConfig.cmake
-out/install/x64-Debug/bin/xr_engine.pdb
-out/install/x64-Debug/bin/xr_engine.lib
-out/install/x64-Debug/bin/xr_engine.dll
-out/install/x64-Debug/bin/api_layers/XrApiLayer_core_validation.json
-out/install/x64-Debug/bin/api_layers/XrApiLayer_core_validation.dll
-out/install/x64-Debug/bin/api_layers/XrApiLayer_api_dump.json
-out/install/x64-Debug/bin/api_layers/XrApiLayer_api_dump.dll
-out/install/x64-Release/share/doc/openxr/LICENSE
-out/install/x64-Release/lib/openxr_loader.lib
-out/install/x64-Release/include/openxr/openxr_reflection.h
-out/install/x64-Release/include/openxr/openxr_platform_defines.h
-out/install/x64-Release/include/openxr/openxr_platform.h
-out/install/x64-Release/include/openxr/openxr.h
-out/install/x64-Release/cmake/OpenXRTargets.cmake
-out/install/x64-Release/cmake/OpenXRTargets-relwithdebinfo.cmake
-out/install/x64-Release/cmake/OpenXRConfigVersion.cmake
-out/install/x64-Release/cmake/OpenXRConfig.cmake
-out/install/x64-Release/bin/xr_engine.pdb
-out/install/x64-Release/bin/xr_engine.lib
-out/install/x64-Release/bin/api_layers/XrApiLayer_core_validation.json
-out/install/x64-Release/bin/api_layers/XrApiLayer_core_validation.dll
-out/install/x64-Release/bin/api_layers/XrApiLayer_api_dump.json
-out/install/x64-Release/bin/api_layers/XrApiLayer_api_dump.dll
-out/install/x64-Debug/bin/alxr_engine.dll
-out/install/x64-Debug/bin/alxr_engine.pdb
-out/install/x64-Debug/lib/alxr_engine.lib
-*.dll
-out/install/x64-Debug/include/readerwriterqueue/atomicops.h
-out/install/x64-Debug/include/readerwriterqueue/LICENSE.md
-out/install/x64-Debug/include/readerwriterqueue/readerwritercircularbuffer.h
-out/install/x64-Debug/include/readerwriterqueue/readerwriterqueue.h
-out/install/arm64-Clang-Debug/bin/alxr_engine.pdb
-out/install/arm64-Clang-Debug/bin/api_layers/XrApiLayer_api_dump.json
-out/install/arm64-Clang-Debug/bin/api_layers/XrApiLayer_core_validation.json
-out/install/arm64-Clang-Debug/cmake/OpenXRConfig.cmake
-out/install/arm64-Clang-Debug/cmake/OpenXRConfigVersion.cmake
-out/install/arm64-Clang-Debug/cmake/OpenXRTargets-debug.cmake
-out/install/arm64-Clang-Debug/cmake/OpenXRTargets.cmake
-out/install/arm64-Clang-Debug/include/openxr/openxr.h
-out/install/arm64-Clang-Debug/include/openxr/openxr_platform.h
-out/install/arm64-Clang-Debug/include/openxr/openxr_platform_defines.h
-out/install/arm64-Clang-Debug/include/openxr/openxr_reflection.h
-out/install/arm64-Clang-Debug/include/readerwriterqueue/atomicops.h
-out/install/arm64-Clang-Debug/include/readerwriterqueue/LICENSE.md
-out/install/arm64-Clang-Debug/include/readerwriterqueue/readerwritercircularbuffer.h
-out/install/arm64-Clang-Debug/include/readerwriterqueue/readerwriterqueue.h
-out/install/arm64-Clang-Debug/lib/alxr_engine.lib
-out/install/arm64-Clang-Debug/lib/openxr_loaderd.lib
-out/install/arm64-Clang-Debug/share/doc/openxr/LICENSE
