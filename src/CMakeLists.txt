@@ -248,59 +248,66 @@ endif()
 
 # Find glslc shader compiler.
 # On Android, the NDK includes the binary, so no external dependency.
-if(ANDROID)
-    file(GLOB glslc_folders ${ANDROID_NDK}/shader-tools/*)
-    find_program(
-        GLSL_COMPILER glslc
-        PATHS ${glslc_folders}
-        NO_DEFAULT_PATH
-    )
+if (OPENGL_INCOMPATIBLE AND VULKAN_INCOMPATIBLE)
+    function(compile_glsl run_target_name)
+        set(glsl_output_files "")
+        add_custom_target(${run_target_name} ALL DEPENDS ${glsl_output_files})
+        set_target_properties(${run_target_name} PROPERTIES FOLDER ${HELPER_FOLDER})
+    endfunction()
 else()
-    file(GLOB glslc_folders $ENV{VULKAN_SDK}/*)
-    find_program(GLSL_COMPILER glslc PATHS ${glslc_folders})
+    if(ANDROID)
+        file(GLOB glslc_folders ${ANDROID_NDK}/shader-tools/*)
+        find_program(
+            GLSL_COMPILER glslc
+            PATHS ${glslc_folders}
+            NO_DEFAULT_PATH
+        )
+    else()
+        file(GLOB glslc_folders $ENV{VULKAN_SDK}/*)
+        find_program(GLSL_COMPILER glslc PATHS ${glslc_folders})
+    endif()
+    find_program(GLSLANG_VALIDATOR glslangValidator)
+    if(GLSL_COMPILER)
+        message(STATUS "Found glslc: ${GLSL_COMPILER}")
+    elseif(GLSLANG_VALIDATOR)
+        message(STATUS "Found glslangValidator: ${GLSLANG_VALIDATOR}")
+    else()
+        message(STATUS "Could NOT find glslc, using precompiled .spv files")
+    endif()
+    
+    function(compile_glsl run_target_name)
+        set(glsl_output_files "")
+        foreach(in_file IN LISTS ARGN)        
+            get_filename_component(glsl_file ${in_file} NAME_WE)
+            string(REGEX REPLACE "([A-Za-z0-9]*)[_]" "" glsl_stage ${glsl_file})
+            set(out_file ${CMAKE_CURRENT_BINARY_DIR}/${glsl_file}.spv)
+            if(GLSL_COMPILER)
+                # Run glslc if we can find it
+                add_custom_command(
+                    OUTPUT ${out_file}
+                    COMMAND ${GLSL_COMPILER} -mfmt=c -fshader-stage=${glsl_stage} ${in_file} -o ${out_file}
+                    DEPENDS ${in_file}
+                )
+            elseif(GLSLANG_VALIDATOR)
+                # Run glslangValidator if we can find it
+                add_custom_command(
+                    OUTPUT ${out_file}
+                    COMMAND ${GLSLANG_VALIDATOR} -V -S ${glsl_stage} ${in_file} -x -o ${out_file}
+                    DEPENDS ${in_file}
+                    VERBATIM
+                )
+            else()
+                # Use the precompiled .spv files
+                get_filename_component(glsl_src_dir ${in_file} DIRECTORY)
+                set(precompiled_file ${glsl_src_dir}/${glsl_file}.spv)
+                configure_file(${precompiled_file} ${out_file} COPYONLY)
+            endif()
+            list(APPEND glsl_output_files ${out_file})
+        endforeach()
+        add_custom_target(${run_target_name} ALL DEPENDS ${glsl_output_files})
+        set_target_properties(${run_target_name} PROPERTIES FOLDER ${HELPER_FOLDER})
+    endfunction()
 endif()
-find_program(GLSLANG_VALIDATOR glslangValidator)
-if(GLSL_COMPILER)
-    message(STATUS "Found glslc: ${GLSL_COMPILER}")
-elseif(GLSLANG_VALIDATOR)
-    message(STATUS "Found glslangValidator: ${GLSLANG_VALIDATOR}")
-else()
-    message(STATUS "Could NOT find glslc, using precompiled .spv files")
-endif()
-
-function(compile_glsl run_target_name)
-    set(glsl_output_files "")
-    foreach(in_file IN LISTS ARGN)        
-        get_filename_component(glsl_file ${in_file} NAME_WE)
-        string(REGEX REPLACE "([A-Za-z0-9]*)[_]" "" glsl_stage ${glsl_file})
-        set(out_file ${CMAKE_CURRENT_BINARY_DIR}/${glsl_file}.spv)
-        if(GLSL_COMPILER)
-            # Run glslc if we can find it
-            add_custom_command(
-                OUTPUT ${out_file}
-                COMMAND ${GLSL_COMPILER} -mfmt=c -fshader-stage=${glsl_stage} ${in_file} -o ${out_file}
-                DEPENDS ${in_file}
-            )
-        elseif(GLSLANG_VALIDATOR)
-            # Run glslangValidator if we can find it
-            add_custom_command(
-                OUTPUT ${out_file}
-                COMMAND ${GLSLANG_VALIDATOR} -V -S ${glsl_stage} ${in_file} -x -o ${out_file}
-                DEPENDS ${in_file}
-                VERBATIM
-            )
-        else()
-            # Use the precompiled .spv files
-            get_filename_component(glsl_src_dir ${in_file} DIRECTORY)
-            set(precompiled_file ${glsl_src_dir}/${glsl_file}.spv)
-            configure_file(${precompiled_file} ${out_file} COPYONLY)
-        endif()
-        list(APPEND glsl_output_files ${out_file})
-    endforeach()
-    add_custom_target(${run_target_name} ALL DEPENDS ${glsl_output_files})
-    set_target_properties(${run_target_name} PROPERTIES FOLDER ${HELPER_FOLDER})
-
-endfunction()
 
 if(WIN32)
     add_definitions(-DXR_USE_GRAPHICS_API_D3D11)
