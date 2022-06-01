@@ -128,7 +128,8 @@ elseif (WIN32)
         set(FFMPEG_PLATFORM_DIR "uwp")
     endif()
 
-    set(FFMPEG_DIR ${PROJECT_SOURCE_DIR}/src/external/ffmpeg/${FFMPEG_PLATFORM_DIR}/${XR_TARGET_CPU_ARCH})    
+    string(TOLOWER ${XR_TARGET_CPU_ARCH} XR_TARGET_CPU_ARCH_LOWERED)
+    set(FFMPEG_DIR ${PROJECT_SOURCE_DIR}/src/external/ffmpeg/${FFMPEG_PLATFORM_DIR}/${XR_TARGET_CPU_ARCH_LOWERED})    
     set(FFMPEG_BIN_DIR ${FFMPEG_DIR}/bin)
     set(FFMPEG_LIB_DIR ${FFMPEG_DIR}/lib)
 
