@@ -2497,7 +2497,6 @@ struct OpenXrProgram final : IOpenXrProgram {
 #endif
         const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
         if (!isVideoStream) {
-#if 0
             // Render a 10cm cube scaled by grabAction for each hand. Note renderHand will only be
             // true when the application has focus.
             cubes.reserve(2);
@@ -2525,7 +2524,6 @@ struct OpenXrProgram final : IOpenXrProgram {
                     }
                 }
             }
-#endif
         }
 
         //if (isVideoStream)
