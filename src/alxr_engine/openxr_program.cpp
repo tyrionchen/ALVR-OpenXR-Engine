@@ -1830,7 +1830,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                     .height = static_cast<std::int32_t>(swapchainCreateInfo.height)
                 };
                 CHECK_XRCMD(xrCreateSwapchain(m_session, &swapchainCreateInfo, &swapchain.handle));
-                CHECK(swapchain.handle != nullptr);
+                CHECK(swapchain.handle != 0);
 
                 m_swapchains.push_back(swapchain);
 
