@@ -92,8 +92,11 @@ add_library(alvr_common
 target_include_directories(alvr_common PRIVATE
     ${ALVR_COMMON_DIR}
 )
-target_compile_definitions(alvr_common PRIVATE ALXR_CLIENT PRIVATE _CRT_SECURE_NO_WARNINGS PRIVATE _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS)
-target_compile_options(alvr_common PRIVATE /Zc:wchar_t /Zc:forScope /W3 /Zi)
+target_compile_definitions(alvr_common PRIVATE ALXR_CLIENT)
+if (MSVC)
+    target_compile_definitions(alvr_common PRIVATE _CRT_SECURE_NO_WARNINGS PRIVATE _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS)
+    target_compile_options(alvr_common PRIVATE /Zc:wchar_t /Zc:forScope /W3 /Zi)
+endif()
 
 set(FFMPEG_LIBS)
 if(ANDROID)
