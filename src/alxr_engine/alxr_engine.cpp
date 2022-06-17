@@ -84,11 +84,9 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         
         gRustCtx = std::make_shared<ALXRRustCtx>(*rCtx);
         const auto &ctx = *gRustCtx;
-#ifndef XR_USE_PLATFORM_ANDROID
         if (ctx.verbose)
-#endif
             Log::SetLevel(Log::Level::Verbose);
-
+        
         LatencyManager::Instance().Init(LatencyManager::CallbackCtx {
             .sendFn = ctx.inputSend,
             .timeSyncSendFn = ctx.timeSyncSend,

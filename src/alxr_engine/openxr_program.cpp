@@ -431,7 +431,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         { XR_PICO_FRAME_END_INFO_EXT_EXTENSION_NAME, false },
         { XR_PICO_ANDROID_CONTROLLER_FUNCTION_EXT_ENABLE_EXTENSION_NAME, false },
         { XR_PICO_CONFIGS_EXT_EXTENSION_NAME, false },
-        { XR_PICO_RESET_SENSOR_EXTENSION_NAME, false },
+        { XR_PICO_RESET_SENSOR_EXTENSION_NAME, false }
 #endif
     };
     ExtensionMap m_supportedGraphicsContexts = {
@@ -512,7 +512,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             GetXrVersionString(instanceProperties.runtimeVersion).c_str()));
 
         m_runtimeType = FromString(instanceProperties.runtimeName);
-#ifdef XR_USE_PLATFORM_ANDROID
+#ifdef XR_USE_OXR_PICO
+        m_graphicsPlugin->SetEnableLinearizeRGB(false);
+#elif defined(XR_USE_PLATFORM_ANDROID)
         m_graphicsPlugin->SetEnableLinearizeRGB(m_runtimeType != OxrRuntimeType::Monado);
 #endif
     }
@@ -535,6 +537,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             if (extAvaileble) {
                 extensions.push_back(extName.data());
             }
+        }
+
+        Log::Write(Log::Level::Info, "Selected extensions to enable:");
+        for (const auto& extName : extensions) {
+            Log::Write(Log::Level::Info, Fmt("\t%s", extName));
         }
 
         XrInstanceCreateInfo createInfo {
@@ -844,9 +851,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             { ALVR_INPUT_Y_TOUCH, { "y_touch", "Y Touch" }},
             { ALVR_INPUT_JOYSTICK_CLICK, { "joystick_click", "Joystick Click" }},
             { ALVR_INPUT_JOYSTICK_TOUCH, { "joystick_touch", "Joystick Touch" }},
-            //{ ALVR_INPUT_BACK_CLICK, { "back_click", "Back Click" }},
-            //{ ALVR_INPUT_GUIDE_CLICK, { "guide_click", "Guide Click" }},
-            //{ ALVR_INPUT_START_CLICK, { "start_click", "Start Click" }},
+            
+            { ALVR_INPUT_BACK_CLICK, { "back_click", "Back Click" }},
+            // { ALVR_INPUT_GUIDE_CLICK, { "guide_click", "Guide Click" }},
+            // { ALVR_INPUT_START_CLICK, { "start_click", "Start Click" }},
+
             { ALVR_INPUT_TRIGGER_CLICK, { "trigger_click", "Trigger Click" }},
             { ALVR_INPUT_TRIGGER_TOUCH, { "trigger_touch", "Trigger Touch" }},
             { ALVR_INPUT_TRACKPAD_CLICK, { "trackpad_click", "Trackpad Click" }},
@@ -1041,6 +1050,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
 //#define XR_DISABLE_SUGGESTED_BINDINGS
 #ifndef XR_DISABLE_SUGGESTED_BINDINGS
+#ifndef XR_USE_OXR_PICO
         // Suggest bindings for KHR Simple.
         {
             XrPath khrSimpleInteractionProfilePath;
@@ -1329,66 +1339,54 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
-
-#ifdef XR_USE_OXR_PICO
+#else
         // Suggest bindings for the Pico Neo 3 Controller.
         {
             XrPath picoMixedRealityInteractionProfilePath;
             CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/pico/neo3_controller",
                 &picoMixedRealityInteractionProfilePath));
             const std::vector<XrActionSuggestedBinding> bindings{ {
-                    //ALVR servers currently does not use APP_MENU_CLICK event.
-                    //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
-                    //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::RIGHT]},
-                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
-
-                    {m_input.boolActionMap[ALVR_INPUT_BACK_CLICK].xrAction, backClickPath[Side::LEFT]},
-                    //{m_input.boolActionMap[ALVR_INPUT_BACK_CLICK].xrAction, backClickPath[Side::RIGHT]},
-
-                    // TODO: Find out and imp batteryPath/Action.
-                    //{m_input.batteryAction, batteryPath[Side::LEFT]},
-                    //{m_input.batteryAction, batteryPath[Side::RIGHT]},
-
-                    {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
-                    {m_input.boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeClickPath[Side::LEFT]},
-                    {m_input.boolToScalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeClickPath[Side::RIGHT]},
-                    {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
-                    {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
+                    {m_input.vector2fActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickPosPath[Side::LEFT]},
+                    {m_input.vector2fActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickPosPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
 
                     {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
                     {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
                     {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::LEFT]},
                     {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::RIGHT]},
 
-                    {m_input.vector2fActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickPosPath[Side::LEFT]},
-                    {m_input.vector2fActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickPosPath[Side::RIGHT]},
-                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
-                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
-
-                    {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::RIGHT]},
-
-                    {m_input.boolActionMap[ALVR_INPUT_X_CLICK].xrAction, xClickPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_X_TOUCH].xrAction, xTouchPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_Y_CLICK].xrAction, yClickPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_Y_TOUCH].xrAction, yTouchPath[Side::LEFT]},
-
-                    {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::RIGHT]},
-                    {m_input.boolActionMap[ALVR_INPUT_A_TOUCH].xrAction, aTouchPath[Side::RIGHT]},
-                    {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::RIGHT]},
-                    {m_input.boolActionMap[ALVR_INPUT_B_TOUCH].xrAction, bTouchPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
+                    {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                    {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
 
                     {m_input.poseAction, gripPosePath[Side::LEFT]},
                     {m_input.poseAction, gripPosePath[Side::RIGHT]},
-                    //{m_input.aimAction, aimPath[Side::LEFT]},
-                    //{m_input.aimAction, aimPath[Side::RIGHT]}
 
-                    //{m_input.quitAction, menuClickPath[Side::LEFT]},
-                    {m_input.quitAction, backClickPath[Side::RIGHT]}} };
+                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_BACK_CLICK].xrAction, backClickPath[Side::LEFT]},
+                    {m_input.quitAction, backClickPath[Side::RIGHT]},
+                    // TODO: Find out and imp batteryPath/Action.
+                    //{m_input.batteryAction, batteryPath[Side::LEFT]},
+                    //{m_input.batteryAction, batteryPath[Side::RIGHT]},
+                    
+                    {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::RIGHT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_X_TOUCH].xrAction, xTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_Y_TOUCH].xrAction, yTouchPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_A_TOUCH].xrAction, aTouchPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_B_TOUCH].xrAction, bTouchPath[Side::RIGHT]},
+
+                    {m_input.boolActionMap[ALVR_INPUT_X_CLICK].xrAction, xClickPath[Side::LEFT]},                    
+                    {m_input.boolActionMap[ALVR_INPUT_Y_CLICK].xrAction, yClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::RIGHT]},                    
+                    {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::RIGHT]} }};
             const XrInteractionProfileSuggestedBinding suggestedBindings{
                 .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
                 .next = nullptr,
@@ -1429,6 +1427,9 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     bool InitializeExtensions()
     {
+        CHECK(m_instance != XR_NULL_HANDLE);
+        CHECK(m_session != XR_NULL_HANDLE);
+
 #ifdef XR_USE_PLATFORM_WIN32
         if (IsExtEnabled("XR_KHR_win32_convert_performance_counter_time"))
         {
@@ -1491,21 +1492,46 @@ struct OpenXrProgram final : IOpenXrProgram {
 #endif
 
 #ifdef XR_USE_OXR_PICO
-        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrGetConfigPICO",
-            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnGetConfigPICO)));
-        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetConfigPICO",
-            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetConfigPICO)));
-        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrResetSensorPICO",
-            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnResetSensorPICO)));
-        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetEngineVersionPico",
-            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetEngineVersionPico)));
-        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrStartCVControllerThreadPico",
-            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnStartCVControllerThreadPico)));
-        CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrStopCVControllerThreadPico",
-            reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnStopCVControllerThreadPico)));
+        const auto GetPicoInstanceProcAddr = [this](const char* const name, auto& fn)
+        {
+            const XrResult result = xrGetInstanceProcAddr(m_instance, name, reinterpret_cast<PFN_xrVoidFunction*>(&fn));
+            if (result != XR_SUCCESS) {
+                Log::Write(Log::Level::Warning, Fmt("Unable to load xr-extension function: %s, error-code: %d", name, result));
+            }
+        };
 
-        //set eye level
-        m_pfnSetConfigPICO(m_session, TRACKING_ORIGIN, "0");
+        if (IsExtEnabled(XR_PICO_ANDROID_CONTROLLER_FUNCTION_EXT_ENABLE_EXTENSION_NAME))
+        {
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_PICO_ANDROID_CONTROLLER_FUNCTION_EXT_ENABLE_EXTENSION_NAME));
+            GetPicoInstanceProcAddr("xrGetControllerConnectionStatePico", m_pfnGetControllerConnectionStatePico);
+            GetPicoInstanceProcAddr("xrSetEngineVersionPico", m_pfnSetEngineVersionPico);
+            GetPicoInstanceProcAddr("xrStartCVControllerThreadPico", m_pfnStartCVControllerThreadPico);
+            GetPicoInstanceProcAddr("xrStopCVControllerThreadPico", m_pfnStopCVControllerThreadPico);
+            GetPicoInstanceProcAddr("xrVibrateControllerPico", m_pfnXrVibrateControllerPico);
+        }
+
+        if (IsExtEnabled(XR_PICO_CONFIGS_EXT_EXTENSION_NAME))
+        {
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_PICO_CONFIGS_EXT_EXTENSION_NAME));
+            GetPicoInstanceProcAddr("xrGetConfigPICO", m_pfnGetConfigPICO);
+            GetPicoInstanceProcAddr("xrSetConfigPICO", m_pfnSetConfigPICO);
+        }
+
+        if (IsExtEnabled(XR_PICO_RESET_SENSOR_EXTENSION_NAME))
+        {
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_PICO_RESET_SENSOR_EXTENSION_NAME));
+            GetPicoInstanceProcAddr("xrResetSensorPICO", m_pfnResetSensorPICO);
+        }
+        
+        if (m_pfnSetConfigPICO) {
+            // const auto picoPlatformStr = std::to_string(Platform::NATIVE);
+            // m_pfnSetConfigPICO(m_session, ConfigsSetEXT::PLATFORM, const_cast<char*>(picoPlatformStr.c_str()));
+            // m_pfnSetConfigPICO(m_session, ConfigsSetEXT::ENABLE_SIX_DOF, "1");
+
+            const auto trackingOriginStr = std::to_string(TrackingOrigin::STAGELEVEL);
+            Log::Write(Log::Level::Info, Fmt("Setting Pico Tracking Origin: %s", trackingOriginStr.c_str()));
+            m_pfnSetConfigPICO(m_session, ConfigsSetEXT::TRACKING_ORIGIN, const_cast<char*>(trackingOriginStr.c_str()));
+        }
 #endif
 
         SetDeviceColorSpace();
@@ -1689,7 +1715,8 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrCreateSession(m_instance, &createInfo, &m_session));
             CHECK(m_session != XR_NULL_HANDLE);
         }
-
+        
+        InitializeExtensions();
         LogReferenceSpaces();
         InitializeActions();
         CreateVisualizedSpaces();
@@ -1707,8 +1734,6 @@ struct OpenXrProgram final : IOpenXrProgram {
             referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo("View");
             CHECK_XRCMD(xrCreateReferenceSpace(m_session, &referenceSpaceCreateInfo, &m_viewSpace));
         }
-
-        InitializeExtensions();
     }
 
     void ClearSwapchains()
@@ -2792,25 +2817,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         return GetSpaceLocation(targetSpace, m_lastPredicatedDisplayTime, initLoc);
     }
 
-    void GetControllerInfo(TrackingInfo& info, const double /*displayTime*/) const
-    {
-        for (const auto hand : { Side::LEFT, Side::RIGHT }) {
-            auto& newContInfo = info.controller[hand];
-            newContInfo = m_input.controllerInfo[hand];
-
-            //newContInfo.flags |= (TrackingInfo::Controller::FLAG_CONTROLLER_ENABLE |
-            //                      TrackingInfo::Controller::FLAG_CONTROLLER_OCULUS_QUEST);
-            //if (hand == Side::LEFT)
-            //    newContInfo.flags |= TrackingInfo::Controller::FLAG_CONTROLLER_LEFTHAND;
-
-            const auto spaceLoc = GetSpaceLocation(m_input.handSpace[hand]);
-            newContInfo.position = ToTrackingVector3(spaceLoc.pose.position);
-            newContInfo.orientation = ToTrackingQuat(spaceLoc.pose.orientation);
-            newContInfo.linearVelocity = ToTrackingVector3(spaceLoc.linearVelocity);
-            newContInfo.angularVelocity = ToTrackingVector3(spaceLoc.angularVelocity);
-        }
-    }
-
     inline std::array<XrView,2> GetPredicatedViews
     (
         const XrFrameState& frameState, const RenderMode renderMode, const std::uint64_t videoTimeStampNs,
@@ -3081,20 +3087,36 @@ struct OpenXrProgram final : IOpenXrProgram {
     virtual inline void Resume() override
     {
 #ifdef XR_USE_OXR_PICO
-        if (m_instance == XR_NULL_HANDLE)
+        if (m_instance == XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Warning, "OpenXrProgram::Resume invoked but an openxr instance not yet set.");
             return;
-        m_pfnSetEngineVersionPico(m_instance, "2.8.0.1");
-        m_pfnStartCVControllerThreadPico(m_instance, PXR_HMD_6DOF, PXR_CONTROLLER_6DOF);
+        }
+        if (m_pfnSetEngineVersionPico) {
+            Log::Write(Log::Level::Info, "Setting pico engine version to 2.8.0.1");
+            m_pfnSetEngineVersionPico(m_instance, "2.8.0.1");
+        }
+        if (m_pfnStartCVControllerThreadPico) {
+            Log::Write(Log::Level::Info, "Starting pico cv controller thread");
+            m_pfnStartCVControllerThreadPico(m_instance, PXR_HMD_6DOF, PXR_CONTROLLER_6DOF);
+        }
 #endif
     }
 
     virtual inline void Pause() override
     {
 #ifdef XR_USE_OXR_PICO
-        if (m_instance == XR_NULL_HANDLE)
+        if (m_instance == XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Warning, "OpenXrProgram::Paused invoked but an openxr instance not yet set.");
             return;
-        m_pfnSetEngineVersionPico(m_instance, "2.7.0.0");
-        m_pfnStopCVControllerThreadPico(m_instance, PXR_HMD_6DOF, PXR_CONTROLLER_6DOF);
+        }
+        if (m_pfnSetEngineVersionPico) {
+            Log::Write(Log::Level::Info, "Setting pico engine version to 2.7.0.0");
+            m_pfnSetEngineVersionPico(m_instance, "2.7.0.0");
+        }
+        if (m_pfnStopCVControllerThreadPico) {
+            Log::Write(Log::Level::Info, "Stopping pico cv controller thread");
+            m_pfnStopCVControllerThreadPico(m_instance, PXR_HMD_6DOF, PXR_CONTROLLER_6DOF);
+        }
 #endif
     }
 
@@ -3183,9 +3205,11 @@ struct OpenXrProgram final : IOpenXrProgram {
     PFN_xrResetSensorPICO       m_pfnResetSensorPICO = nullptr;
     PFN_xrGetConfigPICO         m_pfnGetConfigPICO = nullptr;
     PFN_xrSetConfigPICO         m_pfnSetConfigPICO = nullptr;
+    PFN_xrGetControllerConnectionStatePico m_pfnGetControllerConnectionStatePico = nullptr;
     PFN_xrSetEngineVersionPico  m_pfnSetEngineVersionPico = nullptr;
     PFN_xrStartCVControllerThreadPico m_pfnStartCVControllerThreadPico = nullptr;
     PFN_xrStopCVControllerThreadPico  m_pfnStopCVControllerThreadPico = nullptr;
+    PFN_xrVibrateControllerPico m_pfnXrVibrateControllerPico = nullptr;
 #endif
 
     std::atomic<XrTime>      m_lastPredicatedDisplayTime{ 0 };

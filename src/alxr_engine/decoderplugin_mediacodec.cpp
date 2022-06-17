@@ -498,7 +498,7 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
                     if (packet.is_idr(ctx.config.codecType)) {
                         if (const auto rustCtx = ctx.rustCtx) {
                             rustCtx->setWaitingNextIDR(false);
-                            Log::Write(Log::Level::Verbose, "Finished waiting for next IDR.");
+                            //Log::Write(Log::Level::Verbose, "Finished waiting for next IDR.");
                         }
                     }
                     const bool is_config_packet = packet.is_config(ctx.config.codecType);

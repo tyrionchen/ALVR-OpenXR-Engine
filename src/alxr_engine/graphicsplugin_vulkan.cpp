@@ -2550,7 +2550,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
             .pNext = nullptr,
             .pApplicationName = "alxr-client",
             .applicationVersion = 1,
-            .pEngineName = "alxr_engine",
+            .pEngineName = "alxr-engine",
             .engineVersion = 1,
         };
 #ifdef XR_USE_PLATFORM_ANDROID
