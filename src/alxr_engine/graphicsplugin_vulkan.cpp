@@ -2930,6 +2930,8 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         const auto swapchainContext = m_swapchainImageContextMap[swapchainImage];
         const uint32_t imageIndex = swapchainContext->ImageIndex(swapchainImage);
 
+        // XXX Should double-buffer the command buffers, for now just flush
+        m_cmdBuffer.Wait();
         m_cmdBuffer.Reset();
         m_cmdBuffer.Begin();
 
@@ -2963,9 +2965,6 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 #else
         m_cmdBuffer.Exec<1, 1>(m_vkQueue, { &m_texRendereComplete }, { &m_texCopy }, { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT });
 #endif
-
-        // XXX Should double-buffer the command buffers, for now just flush
-        m_cmdBuffer.Wait();
 
 #if defined(USE_MIRROR_WINDOW)
         // Cycle the window's swapchain on the last view rendered
