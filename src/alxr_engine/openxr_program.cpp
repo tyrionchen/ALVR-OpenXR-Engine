@@ -1059,8 +1059,8 @@ struct OpenXrProgram final : IOpenXrProgram {
             const std::vector<XrActionSuggestedBinding> bindings{ {// Fall back to a click input for the grab action.
                 {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, selectClickPath[Side::LEFT]},
                 {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, selectClickPath[Side::RIGHT]},
-                {m_input.poseAction, gripPosePath[Side::LEFT]},
-                {m_input.poseAction, gripPosePath[Side::RIGHT]},
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
                 //ALVR servers currently does not use APP_MENU_CLICK event.
                 //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::LEFT]},
                 //{m_input.boolActionMap[ALVR_INPUT_APPLICATION_MENU_CLICK].xrAction, menuClickPath[Side::RIGHT]},
@@ -1174,8 +1174,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
                 {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
 
-                {m_input.poseAction, gripPosePath[Side::LEFT]},
-                {m_input.poseAction, gripPosePath[Side::RIGHT]},
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
 
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]},
@@ -1239,8 +1239,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
                 {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
 
-                {m_input.poseAction, gripPosePath[Side::LEFT]},
-                {m_input.poseAction, gripPosePath[Side::RIGHT]},
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
                 {m_input.quitAction, thumbstickClickPath[Side::LEFT]},
                 {m_input.quitAction, thumbstickClickPath[Side::RIGHT]},
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
@@ -1322,8 +1322,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::LEFT]},
                 {m_input.boolActionMap[ALVR_INPUT_TRACKPAD_TOUCH].xrAction, trackpadTouchPath[Side::RIGHT]},
 
-                {m_input.poseAction, gripPosePath[Side::LEFT]},
-                {m_input.poseAction, gripPosePath[Side::RIGHT]},
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
                 
                 {m_input.quitAction, menuClickPath[Side::LEFT]},
                 {m_input.quitAction, menuClickPath[Side::RIGHT]},
