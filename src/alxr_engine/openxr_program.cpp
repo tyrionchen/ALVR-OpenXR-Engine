@@ -1127,8 +1127,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 {m_input.scalarToBoolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerValuePath[Side::LEFT]},
                 {m_input.scalarToBoolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerValuePath[Side::RIGHT]},
 
-                {m_input.poseAction, gripPosePath[Side::LEFT]},
-                {m_input.poseAction, gripPosePath[Side::RIGHT]},
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
 
                 {m_input.vibrateAction, hapticPath[Side::LEFT]},
                 {m_input.vibrateAction, hapticPath[Side::RIGHT]},
@@ -1357,20 +1357,20 @@ struct OpenXrProgram final : IOpenXrProgram {
                     {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
                     {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::LEFT]},
                     {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::RIGHT]},
 
                     {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
                     {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
                     {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
                     {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
 
-                    {m_input.poseAction, gripPosePath[Side::LEFT]},
-                    {m_input.poseAction, gripPosePath[Side::RIGHT]},
+                    {m_input.poseAction, aimPosePath[Side::LEFT]},
+                    {m_input.poseAction, aimPosePath[Side::RIGHT]},
 
-                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::LEFT]},
-                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, backClickPath[Side::LEFT]},
+                    {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, backClickPath[Side::RIGHT]},
 
-                    {m_input.boolActionMap[ALVR_INPUT_BACK_CLICK].xrAction, backClickPath[Side::LEFT]},
-                    {m_input.quitAction, backClickPath[Side::RIGHT]},
                     // TODO: Find out and imp batteryPath/Action.
                     //{m_input.batteryAction, batteryPath[Side::LEFT]},
                     //{m_input.batteryAction, batteryPath[Side::RIGHT]},
@@ -2930,7 +2930,19 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         for (const auto hand : { Side::LEFT, Side::RIGHT }) {
             auto& newContInfo = info.controller[hand];
+#ifdef XR_USE_OXR_PICO
+            // 
+            // As of writing, there are bugs in Pico's OXR runtime with either/both:
+            //      * xrLocateSpace for controller action spaces not working with any other times beyond XrFrameState::predicateDisplayTime (and zero, in a non-conforming way).
+            //      * xrConvertTimeToTimespecTimeKHR appears to return values in microseconds instead of nanoseconds and values seem to be completely of from what
+            //        XrFrameState::predicateDisplayTime values are.   
+            //
+            //  This workaround will induce some small amount of "lag" as the times don't account for network latency and the HMD poses being in future times.
+            //
+            const auto spaceLoc = GetSpaceLocation(m_input.handSpace[hand], m_lastPredicatedDisplayTime);
+#else
             const auto spaceLoc = GetSpaceLocation(m_input.handSpace[hand], predicatedDisplayTimeXR);
+#endif
             newContInfo.position        = ToTrackingVector3(spaceLoc.pose.position);
             newContInfo.orientation     = ToTrackingQuat(spaceLoc.pose.orientation);
             newContInfo.linearVelocity  = ToTrackingVector3(spaceLoc.linearVelocity);

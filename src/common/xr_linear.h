@@ -238,6 +238,42 @@ inline static void XrQuaternionf_Multiply(XrQuaternionf* result, const XrQuatern
     result->w = (b->w * a->w) - (b->x * a->x) - (b->y * a->y) - (b->z * a->z);
 }
 
+inline static void XrQuaternionf_Normalize(XrQuaternionf* v) {
+    const float lengthRcp = XrRcpSqrt(v->x * v->x + v->y * v->y + v->z * v->z + v->w * v->w);
+    v->x *= lengthRcp;
+    v->y *= lengthRcp;
+    v->z *= lengthRcp;
+    v->w *= lengthRcp;
+}
+
+inline static void XrQuaternionf_Exp(XrQuaternionf* result, const XrVector3f* vec)
+{
+    constexpr const auto sinc = [](const float theta)
+    {
+        if (theta < 1.e-6f) {
+            // taylor series expansion.
+            return 1.0f - theta * theta / 6.0f;
+        }
+        // direct computation.
+        return std::sin(theta) / theta;
+    };
+    const auto theta = XrVector3f_Length(vec);
+    const auto vecscale = sinc(theta);
+    XrVector3f scaled;
+    XrVector3f_Scale(&scaled, vec, vecscale);
+    *result = { scaled.x, scaled.y, scaled.z, std::cos(theta) };
+}
+
+inline static void XrQuaternionf_ApplyVelocity(XrQuaternionf* result, const XrQuaternionf* quat, const XrVector3f* angularVel, const float dt)
+{
+    XrVector3f scaled_vel;
+    XrVector3f_Scale(&scaled_vel, angularVel, dt * 0.5f);
+    XrQuaternionf incRot;
+    XrQuaternionf_Exp(&incRot, &scaled_vel);
+    XrQuaternionf_Normalize(&incRot);
+    XrQuaternionf_Multiply(result, quat, &incRot);
+}
+
 // Use left-multiplication to accumulate transformations.
 inline static void XrMatrix4x4f_Multiply(XrMatrix4x4f* result, const XrMatrix4x4f* a, const XrMatrix4x4f* b) {
     result->m[0] = a->m[0] * b->m[0] + a->m[4] * b->m[1] + a->m[8] * b->m[2] + a->m[12] * b->m[3];
