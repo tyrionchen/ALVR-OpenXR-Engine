@@ -514,8 +514,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_runtimeType = FromString(instanceProperties.runtimeName);
 #ifdef XR_USE_OXR_PICO
         m_graphicsPlugin->SetEnableLinearizeRGB(false);
-#elif defined(XR_USE_PLATFORM_ANDROID)
-        m_graphicsPlugin->SetEnableLinearizeRGB(m_runtimeType != OxrRuntimeType::Monado);
+#else
+        m_graphicsPlugin->SetEnableLinearizeRGB(!m_options->DisableLinearizeSrgb);
 #endif
     }
 

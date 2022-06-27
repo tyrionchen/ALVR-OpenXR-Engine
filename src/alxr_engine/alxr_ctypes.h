@@ -76,6 +76,7 @@ struct ALXRRustCtx
     ALXRDecoderType decoderType;
 
     bool verbose;
+    bool disableLinearizeSrgb;
 #ifdef XR_USE_PLATFORM_ANDROID
     void* applicationVM;
     void* applicationActivity;
