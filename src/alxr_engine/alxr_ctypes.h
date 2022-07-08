@@ -106,6 +106,7 @@ struct ALXRRenderConfig
 struct ALXRDecoderConfig
 {
     ALXRCodecType codecType;
+    bool          enableFEC;
     bool          realtimePriority;
     unsigned int  cpuThreadCount; // only used for software decoding.
 };

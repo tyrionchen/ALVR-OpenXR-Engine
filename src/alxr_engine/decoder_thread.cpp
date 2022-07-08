@@ -6,19 +6,23 @@
 bool XrDecoderThread::QueuePacket(const VideoFrame& header, const std::size_t packetSize)
 {
 	const auto decoderPlugin = m_decoderPlugin;
-	const auto fecQueue = m_fecQueue;
-	if (decoderPlugin == nullptr || fecQueue == nullptr)
+	if (decoderPlugin == nullptr)
 		return false;
 	LatencyManager::Instance().OnPreVideoPacketRecieved(header);
 
-	bool fecFailure = false;
-	fecQueue->addVideoPacket(&header, static_cast<int>(packetSize), fecFailure);
-	const bool isComplete = fecQueue->reconstruct();
-	if (isComplete) {
-		const size_t frameBufferSize = fecQueue->getFrameByteSize();
-		const auto frameBufferPtr = reinterpret_cast<const std::uint8_t*>(fecQueue->getFrameBuffer());
+	bool fecFailure = false, isComplete = true;
+	if (const auto fecQueue = m_fecQueue) {
+		fecQueue->addVideoPacket(&header, static_cast<int>(packetSize), fecFailure);
+		if (isComplete = fecQueue->reconstruct()) {
+			const size_t frameBufferSize = fecQueue->getFrameByteSize();
+			const auto frameBufferPtr = reinterpret_cast<const std::uint8_t*>(fecQueue->getFrameBuffer());
+			decoderPlugin->QueuePacket({ frameBufferPtr, frameBufferSize }, header.trackingFrameIndex);
+			fecQueue->clearFecFailure();
+		}
+	} else { // then FEC is disabled
+		const size_t frameBufferSize = packetSize - sizeof(VideoFrame);
+		const auto frameBufferPtr = reinterpret_cast<const std::uint8_t*>(&header) + sizeof(VideoFrame);
 		decoderPlugin->QueuePacket({ frameBufferPtr, frameBufferSize }, header.trackingFrameIndex);
-		fecQueue->clearFecFailure();
 	}
 
 	LatencyManager::Instance().OnPostVideoPacketRecieved(header, { isComplete, fecFailure });
@@ -48,7 +52,8 @@ void XrDecoderThread::Start(const XrDecoderThread::StartCtx& ctx)
 		return;
 
 	Log::Write(Log::Level::Info, "Starting decoder thread.");
-	m_fecQueue = std::make_shared<FECQueue>();
+	m_fecQueue = ctx.decoderConfig.enableFEC ?
+		std::make_shared<FECQueue>() : nullptr;
 	m_decoderPlugin = CreateDecoderPlugin();
 	LatencyManager::Instance().ResetAll();
 #ifdef XR_USE_PLATFORM_WIN32
