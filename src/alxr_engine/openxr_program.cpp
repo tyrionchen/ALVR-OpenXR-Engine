@@ -2295,6 +2295,17 @@ struct OpenXrProgram final : IOpenXrProgram {
             if (!m_input.controllerInfo[hand].isHand)
             {
                 //Log::Write(Log::Level::Info, Fmt("Haptics: amp:%f duration:%f freq:%f", hapticFeedback.amplitude, hapticFeedback.duration, hapticFeedback.frequency));
+#ifdef XR_USE_OXR_PICO
+                if (m_pfnXrVibrateControllerPico) {
+                    m_pfnXrVibrateControllerPico
+                    (
+                        m_instance,
+                        hapticFeedback.amplitude,
+                        static_cast<int>(hapticFeedback.duration * 1000.0f),
+                        hand
+                    );
+                }
+#else
                 const XrHapticVibration vibration {
                     .type = XR_TYPE_HAPTIC_VIBRATION,
                     .next = nullptr,
@@ -2309,6 +2320,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                     .subactionPath = m_input.handSubactionPath[hand]
                 };
                 /*CHECK_XRCMD*/(xrApplyHapticFeedback(m_session, &hapticActionInfo, reinterpret_cast<const XrHapticBaseHeader*>(&vibration)));
+#endif
             }
             ++popCount;
         }
