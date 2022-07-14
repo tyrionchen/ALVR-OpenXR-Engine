@@ -419,6 +419,9 @@ struct OpenXrProgram final : IOpenXrProgram {
 #endif
         { XR_MSFT_UNBOUNDED_REFERENCE_SPACE_EXTENSION_NAME, false },
         { XR_MSFT_HAND_INTERACTION_EXTENSION_NAME, false },
+        { XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME, false },
+        { XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME, false },
+        { XR_HTC_HAND_INTERACTION_EXTENSION_NAME, false },
         { "XR_KHR_convert_timespec_time", false },
         { "XR_KHR_win32_convert_performance_counter_time", false },
         { "XR_EXT_hand_tracking", false },
@@ -958,7 +961,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
 
         std::array<XrPath, Side::COUNT> selectClickPath, selectValuePath;
-        std::array<XrPath, Side::COUNT> squeezeClickPath, squeezeValuePath, squeezeForcePath;
+        std::array<XrPath, Side::COUNT> squeezeClickPath, squeezeTouchPath, squeezeValuePath, squeezeForcePath;
         std::array<XrPath, Side::COUNT> gripPosePath, aimPosePath;
         std::array<XrPath, Side::COUNT> hapticPath;
         std::array<XrPath, Side::COUNT> menuClickPath, systemClickPath, backClickPath;
@@ -981,6 +984,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/force", &squeezeForcePath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &squeezeClickPath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &squeezeClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/touch", &squeezeTouchPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/touch", &squeezeTouchPath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &gripPosePath[Side::LEFT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &gripPosePath[Side::RIGHT]));
         CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/aim/pose", &aimPosePath[Side::LEFT]));
@@ -1339,6 +1344,139 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
         }
+
+        if (IsExtEnabled(XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME))
+        {
+            XrPath cosmosInteractionProfilePath;
+            CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/htc/vive_cosmos_controller", &cosmosInteractionProfilePath));
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                // left controller
+                {m_input.boolActionMap[ALVR_INPUT_X_CLICK].xrAction, xClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_Y_CLICK].xrAction, yClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::LEFT]},
+
+                // right controller  
+                {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::RIGHT]},
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+
+                // both controllers
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
+
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
+
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
+
+                {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                {m_input.quitAction, menuClickPath[Side::LEFT]}} };
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = cosmosInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()
+            };
+            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+        }
+
+        if (IsExtEnabled(XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
+        {
+            XrPath focus3InteractionProfilePath;
+            CHECK_XRCMD(xrStringToPath(m_instance, "/interaction_profiles/htc/vive_focus3_controller", &focus3InteractionProfilePath));
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                // left controller
+                {m_input.boolActionMap[ALVR_INPUT_X_CLICK].xrAction, xClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_Y_CLICK].xrAction, yClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, menuClickPath[Side::LEFT]},
+                    
+                // right controller  
+                {m_input.boolActionMap[ALVR_INPUT_A_CLICK].xrAction, aClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_B_CLICK].xrAction, bClickPath[Side::RIGHT]},
+                //{m_input.boolActionMap[ALVR_INPUT_SYSTEM_CLICK].xrAction, systemClickPath[Side::RIGHT]},
+
+                // both controllers
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_CLICK].xrAction, squeezeClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_TOUCH].xrAction, squeezeTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_GRIP_TOUCH].xrAction, squeezeTouchPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::RIGHT]},
+
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_CLICK].xrAction, triggerClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_TRIGGER_TOUCH].xrAction, triggerTouchPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, triggerValuePath[Side::RIGHT]},
+
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_X].xrAction, thumbstickXPath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_JOYSTICK_Y].xrAction, thumbstickYPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_CLICK].xrAction, thumbstickClickPath[Side::RIGHT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_JOYSTICK_TOUCH].xrAction, thumbstickTouchPath[Side::RIGHT]},
+
+                {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::LEFT]},
+                {m_input.boolActionMap[ALVR_INPUT_THUMB_REST_TOUCH].xrAction, thumbrestTouchPath[Side::RIGHT]},
+
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
+
+                {m_input.vibrateAction, hapticPath[Side::LEFT]},
+                {m_input.vibrateAction, hapticPath[Side::RIGHT]},
+                {m_input.quitAction, menuClickPath[Side::LEFT]}} };
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = focus3InteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()
+            };
+            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+        }
+
+        if (IsExtEnabled(XR_HTC_HAND_INTERACTION_EXTENSION_NAME))
+        {
+            XrPath htcHandInteractionProfilePath;
+            CHECK_XRCMD(
+                xrStringToPath(m_instance, "/interaction_profiles/htc/hand_interaction", &htcHandInteractionProfilePath));
+            const std::vector<XrActionSuggestedBinding> bindings{ {
+                {m_input.poseAction, aimPosePath[Side::LEFT]},
+                {m_input.poseAction, aimPosePath[Side::RIGHT]},
+                // left hand
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, selectValuePath[Side::LEFT]},
+                {m_input.scalarActionMap[ALVR_INPUT_GRIP_VALUE].xrAction, squeezeValuePath[Side::LEFT]},
+                // right hand
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, selectValuePath[Side::RIGHT]},
+                {m_input.scalarActionMap[ALVR_INPUT_TRIGGER_VALUE].xrAction, squeezeValuePath[Side::RIGHT]}
+            } };
+            const XrInteractionProfileSuggestedBinding suggestedBindings{
+                .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+                .next = nullptr,
+                .interactionProfile = htcHandInteractionProfilePath,
+                .countSuggestedBindings = (uint32_t)bindings.size(),
+                .suggestedBindings = bindings.data()
+            };
+            CHECK_XRCMD(xrSuggestInteractionProfileBindings(m_instance, &suggestedBindings));
+        }
+
 #else
         // Suggest bindings for the Pico Neo 3 Controller.
         {
