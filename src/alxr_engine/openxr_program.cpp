@@ -360,54 +360,112 @@ struct OpenXrProgram final : IOpenXrProgram {
     }
 
     virtual ~OpenXrProgram() override {
+        Log::Write(Log::Level::Verbose, "Destroying OpenXrProgram");
+        
+        if (IsSessionRunning()) {
+            CHECK_XRCMD(xrEndSession(m_session));
+            m_sessionRunning.store(false);
+        }
+
+        if (m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying PassthroughLayer");
+            assert(m_pfnDestroyPassthroughLayerFB);
+            m_pfnDestroyPassthroughLayerFB(m_ptLayerData.reconPassthroughLayer);
+            m_ptLayerData.reconPassthroughLayer = XR_NULL_HANDLE;
+        }
+
+        if (m_ptLayerData.passthrough != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying Passthrough");
+            assert(m_pfnDestroyPassthroughFB);
+            m_pfnDestroyPassthroughFB(m_ptLayerData.passthrough);
+            m_ptLayerData.passthrough = XR_NULL_HANDLE;
+        }
 
         if (m_pfnDestroyHandTrackerEXT != nullptr)
         {
+            Log::Write(Log::Level::Verbose, "Destroying HandTrackers");
             assert(m_pfnCreateHandTrackerEXT != nullptr);
             for (auto& handTracker : m_input.handerTrackers) {
                 if (handTracker.tracker != XR_NULL_HANDLE) {
                     m_pfnDestroyHandTrackerEXT(handTracker.tracker);
+                    handTracker.tracker = XR_NULL_HANDLE;
                 }
             }
         }
 
-        if (m_input.actionSet != XR_NULL_HANDLE) {
-            for (auto hand : { Side::LEFT, Side::RIGHT }) {
+        Log::Write(Log::Level::Verbose, "Destroying Hand Action Spaces");
+        for (auto hand : { Side::LEFT, Side::RIGHT }) {
+            if (m_input.handSpace[hand] != XR_NULL_HANDLE) {
                 xrDestroySpace(m_input.handSpace[hand]);
             }
+            m_input.handSpace[hand] = XR_NULL_HANDLE;
+        }
+
+        if (m_input.actionSet != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying ActionSet");
             xrDestroyActionSet(m_input.actionSet);
+            m_input.actionSet = XR_NULL_HANDLE;
         }
 
-        for (Swapchain swapchain : m_swapchains) {
-            xrDestroySwapchain(swapchain.handle);
-        }
+        m_input.boolToScalarActionMap.clear();
+        m_input.scalarToBoolActionMap.clear();
+        m_input.vector2fActionMap.clear();
+        m_input.scalarActionMap.clear();
+        m_input.boolActionMap.clear();
+        m_input.quitAction = XR_NULL_HANDLE;
+        m_input.vibrateAction = XR_NULL_HANDLE;
+        m_input.poseAction = XR_NULL_HANDLE;
+        m_input.grabAction = XR_NULL_HANDLE;
 
+        if (m_visualizedSpaces.size() > 0) {
+            Log::Write(Log::Level::Verbose, "Destroying Visualized XrSpaces");
+        }
         for (XrSpace visualizedSpace : m_visualizedSpaces) {
             xrDestroySpace(visualizedSpace);
         }
+        m_visualizedSpaces.clear();
 
         if (m_viewSpace != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying View XrSpaces");
             xrDestroySpace(m_viewSpace);
+            m_viewSpace = XR_NULL_HANDLE;
         }
 
         if (m_boundingStageSpace != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying BoundingStage XrSpaces");
             xrDestroySpace(m_boundingStageSpace);
+            m_boundingStageSpace = XR_NULL_HANDLE;
         }
 
         if (m_appSpace != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying App XrSpaces");
             xrDestroySpace(m_appSpace);
+            m_appSpace = XR_NULL_HANDLE;
         }
 
+        Log::Write(Log::Level::Verbose, "Destroying XrSwapChains");
+        ClearSwapchains();
+
         if (m_session != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying XrSession");
             xrDestroySession(m_session);
+            m_session = XR_NULL_HANDLE;
         }
 
         if (m_instance != XR_NULL_HANDLE) {
+            Log::Write(Log::Level::Verbose, "Destroying XrInstance");
             xrDestroyInstance(m_instance);
+            m_instance = XR_NULL_HANDLE;
         }
 
+        Log::Write(Log::Level::Verbose, "Destroying GraphicsPlugin");
         m_graphicsPlugin.reset();
+        Log::Write(Log::Level::Verbose, "Destroying PlatformPlugin");
         m_platformPlugin.reset();
+
+        m_systemId = XR_NULL_SYSTEM_ID;
+
+        Log::Write(Log::Level::Verbose, "OpenXrProgram Destroyed.");
     }
 
     using ExtensionMap = std::unordered_map<std::string_view, bool>;
@@ -555,6 +613,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                 .engineVersion = 1,
                 .apiVersion = XR_CURRENT_API_VERSION
             },
+            .enabledApiLayerCount = 0,
+            .enabledApiLayerNames = nullptr,
             .enabledExtensionCount = (uint32_t)extensions.size(),
             .enabledExtensionNames = extensions.data()
         };
@@ -1798,14 +1858,13 @@ struct OpenXrProgram final : IOpenXrProgram {
     }
 
     void SetMaskedPassthrough() {
-        if (&m_ptLayerData.reconPassthroughLayer == XR_NULL_HANDLE)
+        if (m_ptLayerData.reconPassthroughLayer == XR_NULL_HANDLE)
             return;
 
-        static std::once_flag once{};
-        std::call_once(once, [&]() {
+        std::call_once(m_startPassthroughOnce, [&]() {
             CHECK_XRCMD(m_pfnPassthroughStartFB(m_ptLayerData.passthrough));
             CHECK_XRCMD(m_pfnPassthroughLayerResumeFB(m_ptLayerData.reconPassthroughLayer));
-            Log::Write(Log::Level::Info, "Passthrough Layer is resumed.");
+            Log::Write(Log::Level::Info, "Passthrough (Layer) is started/resumed.");
         });
         constexpr const XrPassthroughStyleFB style {
             .type = XR_TYPE_PASSTHROUGH_STYLE_FB,
@@ -1840,6 +1899,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     void InitializeSession() override {
         CHECK(m_instance != XR_NULL_HANDLE);
+        CHECK(m_systemId != XR_NULL_SYSTEM_ID);
         CHECK(m_session == XR_NULL_HANDLE);
         {
             Log::Write(Log::Level::Verbose, Fmt("Creating session..."));
@@ -1877,7 +1937,9 @@ struct OpenXrProgram final : IOpenXrProgram {
     void ClearSwapchains()
     {
         m_swapchainImages.clear();
-        m_graphicsPlugin->ClearSwapchainImageStructs();
+        if (const auto graphicsPlugin = m_graphicsPlugin) {
+            graphicsPlugin->ClearSwapchainImageStructs();
+        }
         for (const auto& swapchain : m_swapchains)
             xrDestroySwapchain(swapchain.handle);
         m_swapchains.clear();
@@ -2538,6 +2600,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         std::uint32_t layerCount = 0;
         std::array<const XrCompositionLayerBaseHeader*, 1> layers{};
+        //std::array<const XrCompositionLayerBaseHeader*, 2> layers{};
         //XrCompositionLayerPassthroughFB passthroughLayer;
         //if (m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE) {
         //    passthroughLayer = {
@@ -3321,6 +3384,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     ALXRPaths  m_alxrPaths;
     InputState m_input;
 
+    std::once_flag m_startPassthroughOnce{};
     struct PassthroughLayerData
     {
         XrPassthroughFB passthrough = XR_NULL_HANDLE;

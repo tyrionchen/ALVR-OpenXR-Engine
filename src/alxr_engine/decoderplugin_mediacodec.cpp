@@ -164,10 +164,12 @@ struct XrImageListener
 
     ~XrImageListener()
     {
-        std::scoped_lock sl(listenerDestroyMutex);
-        if (imageReader)
-            AImageReader_setImageListener(imageReader.get(), nullptr);
-        imageListener.onImageAvailable = nullptr;
+        {
+            std::scoped_lock sl(listenerDestroyMutex);
+            if (imageReader)
+                AImageReader_setImageListener(imageReader.get(), nullptr);
+            imageListener.onImageAvailable = nullptr;
+        }
         Log::Write(Log::Level::Info, "XrImageListener destroyed");
     }
 

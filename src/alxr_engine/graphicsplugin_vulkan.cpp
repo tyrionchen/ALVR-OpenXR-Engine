@@ -429,7 +429,7 @@ struct CmdBuffer {
 
     ~CmdBuffer() {
         SetState(CmdBufferState::Undefined);
-        if (m_vkDevice != nullptr) {
+        if (m_vkDevice != VK_NULL_HANDLE) {
             if (buf != VK_NULL_HANDLE) {
                 vkFreeCommandBuffers(m_vkDevice, pool, 1, &buf);
             }
@@ -717,7 +717,7 @@ struct VertexBufferBase {
     VertexBufferBase() = default;
 
     ~VertexBufferBase() {
-        if (m_vkDevice != nullptr) {
+        if (m_vkDevice != VK_NULL_HANDLE) {
             if (idxBuf != VK_NULL_HANDLE) {
                 vkDestroyBuffer(m_vkDevice, idxBuf, nullptr);
             }
@@ -738,7 +738,7 @@ struct VertexBufferBase {
         bindDesc = {};
         attrDesc.clear();
         count = {0, 0};
-        m_vkDevice = nullptr;
+        m_vkDevice = VK_NULL_HANDLE;
     }
 
     VertexBufferBase(const VertexBufferBase&) = delete;
@@ -765,7 +765,7 @@ struct VertexBufferBase {
 
 // VertexBuffer template to wrap the indices and vertices
 template <typename T>
-struct VertexBuffer : public VertexBufferBase {
+struct VertexBuffer final : public VertexBufferBase {
     bool Create(uint32_t idxCount, uint32_t vtxCount) {
         VkBufferCreateInfo bufInfo{
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1708,8 +1708,7 @@ struct PipelineLayout {
     inline PipelineLayout() = default;
 
     inline void Clear() {
-        if (m_vkDevice != VK_NULL_HANDLE &&
-            m_vkinstance != VK_NULL_HANDLE)
+        if (m_vkDevice != VK_NULL_HANDLE)
         {
             if (layout != VK_NULL_HANDLE)
                 vkDestroyPipelineLayout(m_vkDevice, layout, nullptr);
@@ -1717,7 +1716,8 @@ struct PipelineLayout {
                 vkDestroyDescriptorSetLayout(m_vkDevice, descriptorSetLayout, nullptr);
             if (textureSampler != VK_NULL_HANDLE)
                 vkDestroySampler(m_vkDevice, textureSampler, nullptr);
-            if (ycbcrSamplerConversion != VK_NULL_HANDLE) {
+            if (m_vkinstance != VK_NULL_HANDLE &&
+                ycbcrSamplerConversion != VK_NULL_HANDLE) {
 #if 1
                 const auto fpDestroySamplerYcbcrConversion =
                     (PFN_vkDestroySamplerYcbcrConversion)vkGetInstanceProcAddr(m_vkinstance, "vkDestroySamplerYcbcrConversion");
@@ -1875,6 +1875,7 @@ struct Pipeline {
     std::vector<VkDynamicState> dynamicStateEnables;
 
     Pipeline() = default;
+    ~Pipeline() { Clear(); }
 
     //void Dynamic(VkDynamicState state) { dynamicStateEnables.emplace_back(state); }
 
@@ -2843,13 +2844,6 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         m_shaderProgram.LoadVertexShader(vertexSPIRV);
         m_shaderProgram.LoadFragmentShader(fragmentSPIRV);
 
-        // Semaphore to block on draw complete
-        constexpr const VkSemaphoreCreateInfo semInfo{
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .pNext = nullptr
-        };
-        CHECK_VKCMD(vkCreateSemaphore(m_vkDevice, &semInfo, nullptr, &m_vkDrawDone));
-
         if (!m_cmdBuffer.Init(m_vkDevice, m_queueFamilyIndex)) THROW("Failed to create command buffer");
 
         m_pipelineLayout.Create(m_vkDevice, m_vkInstance);
@@ -3807,12 +3801,21 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     
     virtual ~VulkanGraphicsPlugin() override {
         ClearImageDescriptorSetLayouts();
+        Log::Write(Log::Level::Verbose, "VulkanGraphicsPlugin destroyed.");
     }
 
 #include "cuda/vulkancuda_interop.inl"
 
    protected:
-    XrGraphicsBindingVulkan2KHR m_graphicsBinding{XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR};
+    XrGraphicsBindingVulkan2KHR m_graphicsBinding{
+        .type = XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR,
+        .next = nullptr,
+        .instance= VK_NULL_HANDLE,
+        .physicalDevice = VK_NULL_HANDLE,
+        .device = VK_NULL_HANDLE,
+        .queueFamilyIndex = 0,
+        .queueIndex = 0,
+    };
     std::list<SwapchainImageContext> m_swapchainImageContexts;
     std::map<const XrSwapchainImageBaseHeader*, SwapchainImageContext*> m_swapchainImageContextMap;
 
@@ -3821,8 +3824,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     VkDevice m_vkDevice{VK_NULL_HANDLE};
     uint32_t m_queueFamilyIndex = 0;
     VkQueue m_vkQueue{VK_NULL_HANDLE};
-    VkSemaphore m_vkDrawDone{VK_NULL_HANDLE};
-
+    
     MemoryAllocator m_memAllocator{};
     ShaderProgram m_shaderProgram{};
     CmdBuffer m_cmdBuffer{};

@@ -163,6 +163,12 @@ void alxr_stop_decoder_thread()
 
 void alxr_destroy() {
     Log::Write(Log::Level::Info, "openxrShutdown: Shuttingdown");
+    if (const auto programPtr = gProgram) {
+        if (const auto graphicsPtr = programPtr->GetGraphicsPlugin()) {
+            std::scoped_lock lk(gRenderMutex);
+            graphicsPtr->ClearVideoTextures();
+        }
+    }
     alxr_stop_decoder_thread();
     gProgram.reset();
     gRustCtx.reset();
