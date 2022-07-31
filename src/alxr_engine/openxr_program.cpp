@@ -583,13 +583,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             Log::Write(Log::Level::Info, Fmt("\t%s", extName));
         }
 
-        const XrInstanceCreateInfo createInfo {
+        XrInstanceCreateInfo createInfo {
             .type = XR_TYPE_INSTANCE_CREATE_INFO,
             .next = m_platformPlugin->GetInstanceCreateExtension(),
             .applicationInfo {
-                .applicationName = "alxr-client",
                 .applicationVersion = 1,
-                .engineName = "alxr-engine",
                 .engineVersion = 1,
                 .apiVersion = XR_CURRENT_API_VERSION
             },
@@ -598,6 +596,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             .enabledExtensionCount = (uint32_t)extensions.size(),
             .enabledExtensionNames = extensions.data()
         };
+        auto& appInfo = createInfo.applicationInfo;
+        std::strcpy(appInfo.applicationName, "alxr-client");
+        std::strcpy(appInfo.engineName, "alxr-engine");
         CHECK_XRCMD(xrCreateInstance(&createInfo, &m_instance));
     }
 
@@ -859,6 +860,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             m_instance,
             m_session,
             m_alxrPaths,
+#ifdef XR_USE_OXR_PICO
+            m_pfnXrVibrateControllerPico,
+#endif
             IsProfileSupported
         );
     }

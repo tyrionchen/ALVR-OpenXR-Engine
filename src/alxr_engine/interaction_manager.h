@@ -72,6 +72,9 @@ struct InteractionManager {
         XrInstance instance,
         XrSession session,
         const ALXRPaths& alxrPaths,
+#ifdef XR_USE_OXR_PICO
+        const PFN_xrVibrateControllerPico picoVibrateFn,
+#endif
         IsProfileSupportedFn&& isProfileSupported
     );
     InteractionManager(const InteractionManager&) = delete;
@@ -122,6 +125,9 @@ private:
     ALXRPaths  m_alxrPaths{ ALXR_NULL_PATHS };
     XrInstance m_instance { XR_NULL_HANDLE };
     XrSession  m_session  { XR_NULL_HANDLE };
+#ifdef XR_USE_OXR_PICO
+    PFN_xrVibrateControllerPico m_pfnXrVibrateControllerPico { nullptr };
+#endif
 
     using InteractionProfilePtr = std::atomic<const InteractionProfile*>;
     InteractionProfilePtr m_activeProfile{ nullptr };
@@ -214,15 +220,24 @@ inline InteractionManager::InteractionManager
     XrInstance instance,
     XrSession session,
     const ALXRPaths& alxrPaths,
+#ifdef XR_USE_OXR_PICO
+    const PFN_xrVibrateControllerPico picoVibrateFn,
+#endif
     IsProfileSupportedFn&& isProfileSupported
 )
 : m_alxrPaths{ alxrPaths },
   m_instance{ instance },
   m_session{ session }
+#ifdef XR_USE_OXR_PICO
+  , m_pfnXrVibrateControllerPico{picoVibrateFn}
+#endif
 {
     CHECK(m_alxrPaths != ALXR_NULL_PATHS);
     CHECK(m_instance != XR_NULL_HANDLE);
     CHECK(m_session != XR_NULL_HANDLE);
+#ifdef XR_USE_OXR_PICO
+    CHECK(m_pfnXrVibrateControllerPico != nullptr);
+#endif
     InitializeActions(std::forward<IsProfileSupportedFn>(isProfileSupported));
 }
 
@@ -415,49 +430,49 @@ inline void InteractionManager::InitializeActions(IsProfileSupportedFn&& isProfi
     };
     CHECK(std::none_of(m_handSubactionPath.begin(), m_handSubactionPath.end(), [](const XrPath p) { return p == XR_NULL_PATH; }));
 
-    const XrActionSetCreateInfo actionSetInfo {
+    XrActionSetCreateInfo actionSetInfo {
         .type = XR_TYPE_ACTION_SET_CREATE_INFO,
         .next = nullptr,
-        .actionSetName = "alxr",
-        .localizedActionSetName = "ALXR",
         .priority = 0
     };
+    std::strcpy(actionSetInfo.actionSetName, "alxr");
+    std::strcpy(actionSetInfo.localizedActionSetName, "ALXR");
     CHECK_XRCMD(xrCreateActionSet(m_instance, &actionSetInfo, &m_actionSet));
     CHECK(m_actionSet != XR_NULL_HANDLE);
     {
         XrActionCreateInfo actionInfo{
             .type = XR_TYPE_ACTION_CREATE_INFO,
             .next = nullptr,
-            .actionName = "hand_pose",
             .actionType = XR_ACTION_TYPE_POSE_INPUT,
             .countSubactionPaths = uint32_t(m_handSubactionPath.size()),
-            .subactionPaths = m_handSubactionPath.data(),
-            .localizedActionName = "Hand Pose",
+            .subactionPaths = m_handSubactionPath.data()
         };
+        std::strcpy(actionInfo.actionName, "hand_pose");
+        std::strcpy(actionInfo.localizedActionName, "Hand Pose");
         CHECK_XRCMD(xrCreateAction(m_actionSet, &actionInfo, &m_poseAction));
         CHECK(m_poseAction != XR_NULL_HANDLE);
 
         actionInfo = {
            .type = XR_TYPE_ACTION_CREATE_INFO,
            .next = nullptr,
-           .actionName = "vibrate_hand",
            .actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT,
            .countSubactionPaths = uint32_t(m_handSubactionPath.size()),
-           .subactionPaths = m_handSubactionPath.data(),
-           .localizedActionName = "Vibrate Hand",
+           .subactionPaths = m_handSubactionPath.data()
         };
+        std::strcpy(actionInfo.actionName, "vibrate_hand");
+        std::strcpy(actionInfo.localizedActionName, "Vibrate Hand");
         CHECK_XRCMD(xrCreateAction(m_actionSet, &actionInfo, &m_vibrateAction));
         CHECK(m_vibrateAction != XR_NULL_HANDLE);
 
         actionInfo = {
            .type = XR_TYPE_ACTION_CREATE_INFO,
            .next = nullptr,
-           .actionName = "quit_session",
            .actionType = XR_ACTION_TYPE_BOOLEAN_INPUT,
            .countSubactionPaths = 0,
-           .subactionPaths = nullptr,
-           .localizedActionName = "Quit Session",
+           .subactionPaths = nullptr
         };
+        std::strcpy(actionInfo.actionName, "quit_session");
+        std::strcpy(actionInfo.localizedActionName, "Quit Session");
         CHECK_XRCMD(xrCreateAction(m_actionSet, &actionInfo, &m_quitAction));
         CHECK(m_quitAction != XR_NULL_HANDLE);
     }
