@@ -20,6 +20,7 @@
 #include "alxr_engine.h"
 
 #include "timing.h"
+#include "interaction_manager.h"
 #include "latency_manager.h"
 #include "decoder_thread.h"
 
@@ -126,7 +127,7 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         // Initialize the OpenXR gProgram.
         gProgram = CreateOpenXrProgram(options, platformPlugin);
         gProgram->CreateInstance();
-        gProgram->InitializeSystem(ALXRPaths {
+        gProgram->InitializeSystem(ALXR::ALXRPaths {
             .head           = rCtx->pathStringToHash(ALXRStrings::HeadPath),
             .left_hand      = rCtx->pathStringToHash(ALXRStrings::LeftHandPath),
             .right_hand     = rCtx->pathStringToHash(ALXRStrings::RightHandPath),
@@ -350,7 +351,7 @@ void alxr_on_receive(const unsigned char* packet, unsigned int packetSize)
 void alxr_on_haptics_feedback(unsigned long long path, float duration_s, float frequency, float amplitude)
 {
     if (const auto programPtr = gProgram) {
-        programPtr->EnqueueHapticFeedback(HapticsFeedback {
+        programPtr->EnqueueHapticFeedback(ALXR::HapticsFeedback {
             .alxrPath   = path,
             .amplitude  = amplitude,
             .duration   = duration_s,

@@ -13,22 +13,10 @@ struct ALXRGuardianData;
 struct ALXREyeInfo;
 struct TrackingInfo;
 
-struct ALXRPaths {
-    constexpr static const std::uint64_t INVALID_PATH = std::uint64_t(-1);
-
-    std::uint64_t head;
-    std::uint64_t left_hand;
-    std::uint64_t right_hand;
-    std::uint64_t left_haptics;
-    std::uint64_t right_haptics;
-};
-
-struct HapticsFeedback {
-    std::uint64_t alxrPath;
-    float amplitude;
-    float duration;
-    float frequency;
-};
+namespace ALXR {;
+struct ALXRPaths;
+struct HapticsFeedback;
+}
 
 enum class OxrRuntimeType
 {
@@ -37,6 +25,7 @@ enum class OxrRuntimeType
     WMR,
     Oculus,
     Pico,
+    HTCWave,
     Unknown,
 ////////////////////////
     TypeCount
@@ -49,6 +38,7 @@ constexpr inline std::string_view ToString(const OxrRuntimeType t) {
     case OxrRuntimeType::WMR:     return "Windows Mixed Reality";
     case OxrRuntimeType::Oculus:  return "Oculus";
     case OxrRuntimeType::Pico:    return "Pico";
+    case OxrRuntimeType::HTCWave: return "VIVE WAVE";
     default: return "Unknown";
     }
 }
@@ -70,7 +60,7 @@ struct IOpenXrProgram {
 
     // Select a System for the view configuration specified in the Options and initialize the graphics device for the selected
     // system.
-    virtual void InitializeSystem(const ALXRPaths& alxrPaths) = 0;
+    virtual void InitializeSystem(const ALXR::ALXRPaths& alxrPaths) = 0;
 
     // Create a Session and other basic session-level initialization.
     virtual void InitializeSession() = 0;
@@ -106,7 +96,7 @@ struct IOpenXrProgram {
 
     virtual bool GetTrackingInfo(TrackingInfo& info) /*const*/ = 0;
 
-    virtual void EnqueueHapticFeedback(const HapticsFeedback&) = 0;
+    virtual void EnqueueHapticFeedback(const ALXR::HapticsFeedback&) = 0;
 
     virtual void SetStreamConfig(const ALXRStreamConfig& config) = 0;
     virtual bool GetStreamConfig(ALXRStreamConfig& config) const = 0;

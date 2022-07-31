@@ -195,15 +195,17 @@ struct XrImageListener
                 return { nullptr, [](AImage*) {} };
             return { tmp, AImage_delete };
         }();
-        if (img == nullptr)
+        if (img == nullptr) {
+            Log::Write(Log::Level::Error, "XrImageListener: Failed to acquire latest AImage");
             return;
+        }
 
         std::int64_t presentationTimeNs = 0;
         AImage_getTimestamp(img.get(), &presentationTimeNs);
         const auto ptsUs = static_cast<std::uint64_t>(presentationTimeNs * 0.001);
         const auto frameIndex = frameIndexMap.get_clear(ptsUs);
         if (frameIndex == FrameIndexMap::NullIndex) {
-            Log::Write(Log::Level::Warning, Fmt("Unknown frame index for pts: %lld us, frame ignored", ptsUs));
+            Log::Write(Log::Level::Warning, Fmt("XrImageListener: Unknown frame index for pts: %lld us, frame ignored", ptsUs));
             return;
         }
 
@@ -403,6 +405,7 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
 
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_OPERATING_RATE, std::numeric_limits<std::int16_t>::max());
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_PRIORITY, realtimePriority ? 0 : 1);//ctx.config.realtimePriority ? 0 : 1);
+
 #if defined(__ANDROID_API__) && (__ANDROID_API__ >= 30)
 #pragma message ("Setting android 11(+) LOW_LATENCY key enabled.")
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_LOW_LATENCY, 1);
@@ -531,9 +534,7 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
                     }
                     break;
                 }
-                else {
-                    Log::Write(Log::Level::Warning, Fmt("Waiting for decoder input buffer timed out after %f seconds, retrying...", QueueWaitTimeout * 1e-6f));
-                }
+                else Log::Write(Log::Level::Warning, Fmt("Waiting for decoder input buffer timed out after %f seconds, retrying...", QueueWaitTimeout * 1e-6f));
             }
         }
 
