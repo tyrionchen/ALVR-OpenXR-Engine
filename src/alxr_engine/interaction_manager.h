@@ -154,12 +154,7 @@ private:
         const char* const localizedName;
         XrAction xrAction{ XR_NULL_HANDLE };
     };
-    struct ALVRScalarToBoolAction final : ALVRAction
-    {
-        std::array<float, 2> lastValues{ 0,0 };
-    };
     using ALVRActionMap = std::unordered_map<ALVR_INPUT, ALVRAction>;
-    using ALVRScalarToBoolActionMap = std::unordered_map<ALVR_INPUT, ALVRScalarToBoolAction>;
 
     ALVRActionMap m_boolActionMap =
     {
@@ -197,7 +192,7 @@ private:
     {
         { ALVR_INPUT_JOYSTICK_X, { "joystick_pos", "Joystick Pos" }},
     };
-    ALVRScalarToBoolActionMap m_scalarToBoolActionMap =
+    ALVRActionMap m_scalarToBoolActionMap =
     {
         { ALVR_INPUT_GRIP_CLICK,    { "grip_value_to_click", "Grip Value To Click" }, },
         { ALVR_INPUT_TRIGGER_CLICK, { "trigger_value_to_click", "Trigger Value To Click" } }
@@ -586,19 +581,19 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
                     if (alvrAction.xrAction == XR_NULL_HANDLE)
                         continue;
                     getInfo.action = alvrAction.xrAction;
-                    fn(buttonMap.button, alvrAction);
+                    fn(buttonMap.button);
                 }
             };
 
             const auto& activeProfile = *activeProfilePtr;
-            forEachButton(m_boolActionMap, activeProfile.boolMap[hand], [&](const ALVR_INPUT button, const auto&)
+            forEachButton(m_boolActionMap, activeProfile.boolMap[hand], [&](const ALVR_INPUT button)
             {
                 XrActionStateBoolean boolValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr };
                 if (XR_FAILED(xrGetActionStateBoolean(m_session, &getInfo, &boolValue))) {
                     // TODO: Add verbose message.
                     return;
                 }
-                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE)) {
+                if (boolValue.isActive == XR_TRUE && boolValue.currentState == XR_TRUE) {
                     controllerInfo.buttons |= ALVR_BUTTON_FLAG(button);
                 }
             });
@@ -619,7 +614,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
                     return c.gripValue;
                 }
             };
-            forEachButton(m_scalarActionMap, activeProfile.scalarMap[hand], [&](const ALVR_INPUT button, const auto&)
+            forEachButton(m_scalarActionMap, activeProfile.scalarMap[hand], [&](const ALVR_INPUT button)
             {
                 XrActionStateFloat floatValue{ .type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr };
                 if (XR_FAILED(xrGetActionStateFloat(m_session, &getInfo, &floatValue)) ||
@@ -640,7 +635,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
                 default: return c.trackpadPosition;
                 }
             };
-            forEachButton(m_vector2fActionMap, activeProfile.vector2fMap[hand], [&](const ALVR_INPUT button, const auto&)
+            forEachButton(m_vector2fActionMap, activeProfile.vector2fMap[hand], [&](const ALVR_INPUT button)
             {
                 XrActionStateVector2f vec2Value{ .type = XR_TYPE_ACTION_STATE_VECTOR2F, .next = nullptr };
                 if (XR_FAILED(xrGetActionStateVector2f(m_session, &getInfo, &vec2Value)) ||
@@ -652,31 +647,29 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
                 controllerInfo.enabled = true;
             });
 
-            forEachButton(m_boolToScalarActionMap, activeProfile.boolToScalarMap[hand], [&](const ALVR_INPUT button, const auto&)
+            forEachButton(m_boolToScalarActionMap, activeProfile.boolToScalarMap[hand], [&](const ALVR_INPUT button)
             {
                 XrActionStateBoolean boolValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr };
                 if (XR_FAILED(xrGetActionStateBoolean(m_session, &getInfo, &boolValue)))
                     return;
-                if ((boolValue.isActive == XR_TRUE) /*&& (boolValue.changedSinceLastSync == XR_TRUE)*/ && (boolValue.currentState == XR_TRUE)) {
+                if (boolValue.isActive == XR_TRUE && boolValue.currentState == XR_TRUE) {
                     auto& val = GetFloatRef(controllerInfo, button);
                     val = 1.0f;
                     controllerInfo.enabled = true;
                 }
             });
 
-            forEachButton(m_scalarToBoolActionMap, activeProfile.scalarToBoolMap[hand], [&](const ALVR_INPUT button, auto& v)
+            forEachButton(m_scalarToBoolActionMap, activeProfile.scalarToBoolMap[hand], [&](const ALVR_INPUT button)
             {
                 XrActionStateFloat floatValue{ .type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr };
-                if (XR_FAILED(xrGetActionStateFloat(m_session, &getInfo, &floatValue))) {
+                if (XR_FAILED(xrGetActionStateFloat(m_session, &getInfo, &floatValue)))
                     return;
-                }
-                if (!floatValue.isActive || !floatValue.changedSinceLastSync) {
-                    return;
-                }
-                if (floatValue.currentState < v.lastValues[hand]) {
+                // This value was obtained from logging the output of VrApi,
+                // logging the trigger/grip-values when trigger/grip-click is (first) active.
+                constexpr static const float TriggerThreshold = 0.05f;
+                if (floatValue.isActive == XR_TRUE && floatValue.currentState > TriggerThreshold) {
                     controllerInfo.buttons |= ALVR_BUTTON_FLAG(button);
                 }
-                v.lastValues[hand] = floatValue.currentState;
             });
         }
 
