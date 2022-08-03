@@ -1346,7 +1346,6 @@ struct OpenXrProgram final : IOpenXrProgram {
                 const XrEventDataEventsLost* const eventsLost = reinterpret_cast<const XrEventDataEventsLost*>(baseHeader);
                 Log::Write(Log::Level::Warning, Fmt("%d events lost", eventsLost));
             }
-
             return baseHeader;
         }
         if (xr == XR_EVENT_UNAVAILABLE) {
@@ -1458,11 +1457,13 @@ struct OpenXrProgram final : IOpenXrProgram {
     bool IsSessionFocused() const override { return m_sessionState == XR_SESSION_STATE_FOCUSED; }
 
     template < typename ControllerInfoArray >
-    void PollHandTrackers(const XrTime time, ControllerInfoArray& controllerInfo) //std::array<TrackingInfo::Controller, Side::COUNT>& controllerInfo)
+    void PollHandTrackers(const XrTime time, ControllerInfoArray& controllerInfo)
     {
         if (m_pfnLocateHandJointsEXT == nullptr || time == 0)
             return;
 
+        const bool isHandOnControllerPose = IsRuntime(OxrRuntimeType::SteamVR) ||
+                                            IsRuntime(OxrRuntimeType::WMR);
         std::array<XrMatrix4x4f, XR_HAND_JOINT_COUNT_EXT> oculusOrientedJointPoses;
         for (const auto hand : { Side::LEFT,Side::RIGHT })
         {
@@ -1470,7 +1471,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             // TODO: v17/18 server does not allow for both controller & hand tracking data, this needs changing,
             //       we don't want to override a controller device pose with potentially an emulated pose for
             //       runtimes such as WMR & SteamVR.
-            if (controller.enabled)
+            if (isHandOnControllerPose && controller.enabled)
                 continue;
 
             auto& handerTracker = m_input.handerTrackers[hand];
