@@ -1,11 +1,11 @@
-prefix=../../../Build/Win10UWP/arm64
+prefix=../../../build/Win10UWP/arm64
 exec_prefix=${prefix}
-libdir=../../../Build/Win10UWP/arm64/lib
-includedir=../../../Build/Win10UWP/arm64/include
+libdir=../../../build/Win10UWP/arm64/lib
+includedir=../../../build/Win10UWP/arm64/include
 
 Name: libavutil
 Description: FFmpeg utility library
-Version: 57.17.100
+Version: 57.28.100
 Requires: 
 Requires.private: 
 Conflicts:
