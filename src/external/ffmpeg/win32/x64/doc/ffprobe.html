@@ -55,7 +55,7 @@
 <a name="Synopsis"></a>
 <h2 class="chapter">1 Synopsis<span class="pull-right"><a class="anchor hidden-xs" href="#Synopsis" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-Synopsis" aria-hidden="true">TOC</a></span></h2>
 
-<p>ffprobe [<var>options</var>] [<samp>input_url</samp>]
+<p>ffprobe [<var>options</var>] <samp>input_url</samp>
 </p>
 <a name="Description"></a>
 <h2 class="chapter">2 Description<span class="pull-right"><a class="anchor hidden-xs" href="#Description" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-Description" aria-hidden="true">TOC</a></span></h2>
@@ -70,6 +70,9 @@ contained in it.
 <p>If a url is specified in input, ffprobe will try to open and
 probe the url content. If the url cannot be opened or recognized as
 a multimedia file, a positive exit code is returned.
+</p>
+<p>If no output is specified as output with <samp>o</samp> ffprobe will write
+to stdout.
 </p>
 <p>ffprobe may be employed both as a standalone application or in
 combination with a textual filter, which may perform more
@@ -888,6 +891,11 @@ on the specific build.
 </dd>
 <dt><span><samp>-i <var>input_url</var></samp></span></dt>
 <dd><p>Read <var>input_url</var>.
+</p>
+</dd>
+<dt><span><samp>-o <var>output_url</var></samp></span></dt>
+<dd><p>Write output to <var>output_url</var>. If not specified, the output is sent
+to stdout.
 </p>
 </dd>
 </dl>

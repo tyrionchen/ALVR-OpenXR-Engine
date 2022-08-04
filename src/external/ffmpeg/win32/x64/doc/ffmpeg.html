@@ -1062,6 +1062,22 @@ see <a data-manual="ffmpeg-utils" href="ffmpeg-utils.html#time-duration-syntax">
 values are earlier in the file, 0 is at EOF.
 </p>
 </dd>
+<dt><span><samp>-isync <var>input_index</var> (<em>input</em>)</samp></span></dt>
+<dd><p>Assign an input as a sync source.
+</p>
+<p>This will take the difference between the start times of the target and reference inputs and
+offset the timestamps of the target file by that difference. The source timestamps of the two
+inputs should derive from the same clock source for expected results. If <code>copyts</code> is set
+then <code>start_at_zero</code> must also be set. If either of the inputs has no starting timestamp
+then no sync adjustment is made.
+</p>
+<p>Acceptable values are those that refer to a valid ffmpeg input index. If the sync reference is
+the target index itself or <var>-1</var>, then no adjustment is made to target timestamps. A sync
+reference may not itself be synced to any other input.
+</p>
+<p>Default value is <var>-1</var>.
+</p>
+</dd>
 <dt><span><samp>-itsoffset <var>offset</var> (<em>input</em>)</samp></span></dt>
 <dd><p>Set the input time offset.
 </p>
@@ -1174,21 +1190,21 @@ they do not conflict with the standard, as in:
 <pre class="example"><var>pal</var>:
 -f vcd -muxrate 1411200 -muxpreload 0.44 -packetsize 2324
 -s 352x288 -r 25
--codec:v mpeg1video -g 15 -b:v 1150k -maxrate:v 1150v -minrate:v 1150k -bufsize:v 327680
+-codec:v mpeg1video -g 15 -b:v 1150k -maxrate:v 1150k -minrate:v 1150k -bufsize:v 327680
 -ar 44100 -ac 2
 -codec:a mp2 -b:a 224k
 
 <var>ntsc</var>:
 -f vcd -muxrate 1411200 -muxpreload 0.44 -packetsize 2324
 -s 352x240 -r 30000/1001
--codec:v mpeg1video -g 18 -b:v 1150k -maxrate:v 1150v -minrate:v 1150k -bufsize:v 327680
+-codec:v mpeg1video -g 18 -b:v 1150k -maxrate:v 1150k -minrate:v 1150k -bufsize:v 327680
 -ar 44100 -ac 2
 -codec:a mp2 -b:a 224k
 
 <var>film</var>:
 -f vcd -muxrate 1411200 -muxpreload 0.44 -packetsize 2324
 -s 352x240 -r 24000/1001
--codec:v mpeg1video -g 18 -b:v 1150k -maxrate:v 1150v -minrate:v 1150k -bufsize:v 327680
+-codec:v mpeg1video -g 18 -b:v 1150k -maxrate:v 1150k -minrate:v 1150k -bufsize:v 327680
 -ar 44100 -ac 2
 -codec:a mp2 -b:a 224k
 </pre></div>
@@ -2293,12 +2309,14 @@ it may cause packet loss.
 <dt><span><samp>-re (<em>input</em>)</samp></span></dt>
 <dd><p>Read input at native frame rate. This is equivalent to setting <code>-readrate 1</code>.
 </p></dd>
-<dt><span><samp>-vsync <var>parameter</var></samp></span></dt>
-<dd><p>Video sync method.
+<dt><span><samp>-vsync <var>parameter</var> (<em>global</em>)</samp></span></dt>
+<dt><span><samp>-fps_mode[:<var>stream_specifier</var>] <var>parameter</var> (<em>output,per-stream</em>)</samp></span></dt>
+<dd><p>Set video sync method / framerate mode. vsync is applied to all output video streams
+but can be overridden for a stream by setting fps_mode. vsync is deprecated and will be
+removed in the future.
 </p>
-<p>For compatibility reasons some of the values can be specified as numbers (shown
-in parentheses in the following table). This is deprecated and will stop working
-in the future.
+<p>For compatibility reasons some of the values for vsync can be specified as numbers (shown
+in parentheses in the following table).
 </p>
 <dl compact="compact">
 <dt><span><samp>passthrough (0)</samp></span></dt>
@@ -2443,7 +2461,7 @@ or as a floating point number (e.g. 0.04166, 2.0833e-5)
 <dd><p>Enable bitexact mode for (de)muxer and (de/en)coder
 </p></dd>
 <dt><span><samp>-shortest (<em>output</em>)</samp></span></dt>
-<dd><p>Finish encoding when the shortest input stream ends.
+<dd><p>Finish encoding when the shortest output stream ends.
 </p></dd>
 <dt><span><samp>-dts_delta_threshold</samp></span></dt>
 <dd><p>Timestamp discontinuity delta threshold.
@@ -2597,7 +2615,7 @@ not start from timestamp 0, such as transport streams.
 file or device. With low latency / high rate live streams, packets may be
 discarded if they are not read in a timely manner; setting this value can
 force ffmpeg to use a separate input thread and read packets as soon as they
-arrive. By default ffmpeg only do this if multiple inputs are specified.
+arrive. By default ffmpeg only does this if multiple inputs are specified.
 </p>
 </dd>
 <dt><span><samp>-sdp_file <var>file</var> (<em>global</em>)</samp></span></dt>

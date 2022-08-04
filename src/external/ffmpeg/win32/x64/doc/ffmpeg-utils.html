@@ -1033,19 +1033,29 @@ following identifiers:
 <dt><span>&lsquo;<samp>downmix</samp>&rsquo;</span></dt>
 <dd><p>DL+DR
 </p></dd>
+<dt><span>&lsquo;<samp>22.2</samp>&rsquo;</span></dt>
+<dd><p>FL+FR+FC+LFE+BL+BR+FLC+FRC+BC+SL+SR+TC+TFL+TFC+TFR+TBL+TBC+TBR+LFE2+TSL+TSR+BFC+BFL+BFR
+</p></dd>
 </dl>
 
-<p>A custom channel layout can be specified as a sequence of terms, separated by
-&rsquo;+&rsquo; or &rsquo;|&rsquo;. Each term can be:
+<p>A custom channel layout can be specified as a sequence of terms, separated by &rsquo;+&rsquo;.
+Each term can be:
 </p><ul>
-<li> the name of a standard channel layout (e.g. &lsquo;<samp>mono</samp>&rsquo;,
-&lsquo;<samp>stereo</samp>&rsquo;, &lsquo;<samp>4.0</samp>&rsquo;, &lsquo;<samp>quad</samp>&rsquo;, &lsquo;<samp>5.0</samp>&rsquo;, etc.)
+<li> the name of a single channel (e.g. &lsquo;<samp>FL</samp>&rsquo;, &lsquo;<samp>FR</samp>&rsquo;, &lsquo;<samp>FC</samp>&rsquo;, &lsquo;<samp>LFE</samp>&rsquo;, etc.),
+each optionally containing a custom name after a &rsquo;@&rsquo;, (e.g. &lsquo;<samp>FL@Left</samp>&rsquo;,
+&lsquo;<samp>FR@Right</samp>&rsquo;, &lsquo;<samp>FC@Center</samp>&rsquo;, &lsquo;<samp>LFE@Low_Frequency</samp>&rsquo;, etc.)
+</li></ul>
 
-</li><li> the name of a single channel (e.g. &lsquo;<samp>FL</samp>&rsquo;, &lsquo;<samp>FR</samp>&rsquo;, &lsquo;<samp>FC</samp>&rsquo;, &lsquo;<samp>LFE</samp>&rsquo;, etc.)
+<p>A standard channel layout can be specified by the following:
+</p><ul>
+<li> the name of a single channel (e.g. &lsquo;<samp>FL</samp>&rsquo;, &lsquo;<samp>FR</samp>&rsquo;, &lsquo;<samp>FC</samp>&rsquo;, &lsquo;<samp>LFE</samp>&rsquo;, etc.)
+
+</li><li> the name of a standard channel layout (e.g. &lsquo;<samp>mono</samp>&rsquo;,
+&lsquo;<samp>stereo</samp>&rsquo;, &lsquo;<samp>4.0</samp>&rsquo;, &lsquo;<samp>quad</samp>&rsquo;, &lsquo;<samp>5.0</samp>&rsquo;, etc.)
 
 </li><li> a number of channels, in decimal, followed by &rsquo;c&rsquo;, yielding the default channel
 layout for that number of channels (see the function
-<code>av_get_default_channel_layout</code>). Note that not all channel counts have a
+<code>av_channel_layout_default</code>). Note that not all channel counts have a
 default layout.
 
 </li><li> a number of channels, in decimal, followed by &rsquo;C&rsquo;, yielding an unknown channel
@@ -1060,7 +1070,7 @@ specification strings support unknown channel layouts.
 channels was optional, but now it is required, while a channel layout mask can
 also be specified as a decimal number (if and only if not followed by &quot;c&quot; or &quot;C&quot;).
 </p>
-<p>See also the function <code>av_get_channel_layout</code> defined in
+<p>See also the function <code>av_channel_layout_from_string</code> defined in
 <samp>libavutil/channel_layout.h</samp>.
 </p>
 <a name="Expression-Evaluation"></a>

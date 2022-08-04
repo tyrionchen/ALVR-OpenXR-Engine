@@ -42,25 +42,26 @@
     <li><a id="toc-Kvazaar" href="#Kvazaar">1.11 Kvazaar</a></li>
     <li><a id="toc-LAME" href="#LAME">1.12 LAME</a></li>
     <li><a id="toc-libilbc" href="#libilbc">1.13 libilbc</a></li>
-    <li><a id="toc-libvpx" href="#libvpx">1.14 libvpx</a></li>
-    <li><a id="toc-ModPlug" href="#ModPlug">1.15 ModPlug</a></li>
-    <li><a id="toc-OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries" href="#OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries">1.16 OpenCORE, VisualOn, and Fraunhofer libraries</a>
+    <li><a id="toc-libjxl" href="#libjxl">1.14 libjxl</a></li>
+    <li><a id="toc-libvpx" href="#libvpx">1.15 libvpx</a></li>
+    <li><a id="toc-ModPlug" href="#ModPlug">1.16 ModPlug</a></li>
+    <li><a id="toc-OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries" href="#OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries">1.17 OpenCORE, VisualOn, and Fraunhofer libraries</a>
     <ul class="no-bullet">
-      <li><a id="toc-OpenCORE-AMR" href="#OpenCORE-AMR">1.16.1 OpenCORE AMR</a></li>
-      <li><a id="toc-VisualOn-AMR_002dWB-encoder-library" href="#VisualOn-AMR_002dWB-encoder-library">1.16.2 VisualOn AMR-WB encoder library</a></li>
-      <li><a id="toc-Fraunhofer-AAC-library" href="#Fraunhofer-AAC-library">1.16.3 Fraunhofer AAC library</a></li>
+      <li><a id="toc-OpenCORE-AMR" href="#OpenCORE-AMR">1.17.1 OpenCORE AMR</a></li>
+      <li><a id="toc-VisualOn-AMR_002dWB-encoder-library" href="#VisualOn-AMR_002dWB-encoder-library">1.17.2 VisualOn AMR-WB encoder library</a></li>
+      <li><a id="toc-Fraunhofer-AAC-library" href="#Fraunhofer-AAC-library">1.17.3 Fraunhofer AAC library</a></li>
     </ul></li>
-    <li><a id="toc-OpenH264" href="#OpenH264">1.17 OpenH264</a></li>
-    <li><a id="toc-OpenJPEG" href="#OpenJPEG">1.18 OpenJPEG</a></li>
-    <li><a id="toc-rav1e" href="#rav1e">1.19 rav1e</a></li>
-    <li><a id="toc-SVT_002dAV1" href="#SVT_002dAV1">1.20 SVT-AV1</a></li>
-    <li><a id="toc-TwoLAME" href="#TwoLAME">1.21 TwoLAME</a></li>
-    <li><a id="toc-VapourSynth" href="#VapourSynth">1.22 VapourSynth</a></li>
-    <li><a id="toc-x264" href="#x264">1.23 x264</a></li>
-    <li><a id="toc-x265" href="#x265">1.24 x265</a></li>
-    <li><a id="toc-xavs" href="#xavs">1.25 xavs</a></li>
-    <li><a id="toc-xavs2" href="#xavs2">1.26 xavs2</a></li>
-    <li><a id="toc-ZVBI" href="#ZVBI">1.27 ZVBI</a></li>
+    <li><a id="toc-OpenH264" href="#OpenH264">1.18 OpenH264</a></li>
+    <li><a id="toc-OpenJPEG" href="#OpenJPEG">1.19 OpenJPEG</a></li>
+    <li><a id="toc-rav1e" href="#rav1e">1.20 rav1e</a></li>
+    <li><a id="toc-SVT_002dAV1" href="#SVT_002dAV1">1.21 SVT-AV1</a></li>
+    <li><a id="toc-TwoLAME" href="#TwoLAME">1.22 TwoLAME</a></li>
+    <li><a id="toc-VapourSynth" href="#VapourSynth">1.23 VapourSynth</a></li>
+    <li><a id="toc-x264" href="#x264">1.24 x264</a></li>
+    <li><a id="toc-x265" href="#x265">1.25 x265</a></li>
+    <li><a id="toc-xavs" href="#xavs">1.26 xavs</a></li>
+    <li><a id="toc-xavs2" href="#xavs2">1.27 xavs2</a></li>
+    <li><a id="toc-ZVBI" href="#ZVBI">1.28 ZVBI</a></li>
   </ul></li>
   <li><a id="toc-Supported-File-Formats_002c-Codecs-or-Features" href="#Supported-File-Formats_002c-Codecs-or-Features">2 Supported File Formats, Codecs or Features</a>
   <ul class="no-bullet">
@@ -261,8 +262,16 @@ iLBC decoding and encoding.
 installing the library. Then pass <code>--enable-libilbc</code> to configure to
 enable it.
 </p>
+<a name="libjxl"></a>
+<h3 class="section">1.14 libjxl<span class="pull-right"><a class="anchor hidden-xs" href="#libjxl" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-libjxl" aria-hidden="true">TOC</a></span></h3>
+
+<p>JPEG XL is an image format intended to fully replace legacy JPEG for an extended
+period of life. See <a href="https://jpegxl.info/">https://jpegxl.info/</a> for more information, and see
+<a href="https://github.com/libjxl/libjxl">https://github.com/libjxl/libjxl</a> for the library source. You can pass
+<code>--enable-libjxl</code> to configure in order enable the libjxl wrapper.
+</p>
 <a name="libvpx"></a>
-<h3 class="section">1.14 libvpx<span class="pull-right"><a class="anchor hidden-xs" href="#libvpx" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-libvpx" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.15 libvpx<span class="pull-right"><a class="anchor hidden-xs" href="#libvpx" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-libvpx" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the libvpx library for VP8/VP9 decoding and encoding.
 </p>
@@ -271,14 +280,14 @@ installing the library. Then pass <code>--enable-libvpx</code> to configure to
 enable it.
 </p>
 <a name="ModPlug"></a>
-<h3 class="section">1.15 ModPlug<span class="pull-right"><a class="anchor hidden-xs" href="#ModPlug" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-ModPlug" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.16 ModPlug<span class="pull-right"><a class="anchor hidden-xs" href="#ModPlug" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-ModPlug" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of this library, originating in Modplug-XMMS, to read from MOD-like music files.
 See <a href="https://github.com/Konstanty/libmodplug">https://github.com/Konstanty/libmodplug</a>. Pass <code>--enable-libmodplug</code> to configure to
 enable it.
 </p>
 <a name="OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries"></a>
-<h3 class="section">1.16 OpenCORE, VisualOn, and Fraunhofer libraries<span class="pull-right"><a class="anchor hidden-xs" href="#OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.17 OpenCORE, VisualOn, and Fraunhofer libraries<span class="pull-right"><a class="anchor hidden-xs" href="#OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenCORE_002c-VisualOn_002c-and-Fraunhofer-libraries" aria-hidden="true">TOC</a></span></h3>
 
 <p>Spun off Google Android sources, OpenCore, VisualOn and Fraunhofer
 libraries provide encoders for a number of audio codecs.
@@ -297,7 +306,7 @@ configure in order to use it. To the best of our knowledge, it is
 compatible with the LGPL.
 </p></div>
 <a name="OpenCORE-AMR"></a>
-<h4 class="subsection">1.16.1 OpenCORE AMR<span class="pull-right"><a class="anchor hidden-xs" href="#OpenCORE-AMR" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenCORE-AMR" aria-hidden="true">TOC</a></span></h4>
+<h4 class="subsection">1.17.1 OpenCORE AMR<span class="pull-right"><a class="anchor hidden-xs" href="#OpenCORE-AMR" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenCORE-AMR" aria-hidden="true">TOC</a></span></h4>
 
 <p>FFmpeg can make use of the OpenCORE libraries for AMR-NB
 decoding/encoding and AMR-WB decoding.
@@ -308,7 +317,7 @@ Then pass <code>--enable-libopencore-amrnb</code> and/or
 <code>--enable-libopencore-amrwb</code> to configure to enable them.
 </p>
 <a name="VisualOn-AMR_002dWB-encoder-library"></a>
-<h4 class="subsection">1.16.2 VisualOn AMR-WB encoder library<span class="pull-right"><a class="anchor hidden-xs" href="#VisualOn-AMR_002dWB-encoder-library" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-VisualOn-AMR_002dWB-encoder-library" aria-hidden="true">TOC</a></span></h4>
+<h4 class="subsection">1.17.2 VisualOn AMR-WB encoder library<span class="pull-right"><a class="anchor hidden-xs" href="#VisualOn-AMR_002dWB-encoder-library" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-VisualOn-AMR_002dWB-encoder-library" aria-hidden="true">TOC</a></span></h4>
 
 <p>FFmpeg can make use of the VisualOn AMR-WBenc library for AMR-WB encoding.
 </p>
@@ -317,7 +326,7 @@ instructions for installing the library.
 Then pass <code>--enable-libvo-amrwbenc</code> to configure to enable it.
 </p>
 <a name="Fraunhofer-AAC-library"></a>
-<h4 class="subsection">1.16.3 Fraunhofer AAC library<span class="pull-right"><a class="anchor hidden-xs" href="#Fraunhofer-AAC-library" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-Fraunhofer-AAC-library" aria-hidden="true">TOC</a></span></h4>
+<h4 class="subsection">1.17.3 Fraunhofer AAC library<span class="pull-right"><a class="anchor hidden-xs" href="#Fraunhofer-AAC-library" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-Fraunhofer-AAC-library" aria-hidden="true">TOC</a></span></h4>
 
 <p>FFmpeg can make use of the Fraunhofer AAC library for AAC decoding &amp; encoding.
 </p>
@@ -326,7 +335,7 @@ instructions for installing the library.
 Then pass <code>--enable-libfdk-aac</code> to configure to enable it.
 </p>
 <a name="OpenH264"></a>
-<h3 class="section">1.17 OpenH264<span class="pull-right"><a class="anchor hidden-xs" href="#OpenH264" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenH264" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.18 OpenH264<span class="pull-right"><a class="anchor hidden-xs" href="#OpenH264" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenH264" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the OpenH264 library for H.264 decoding and encoding.
 </p>
@@ -342,7 +351,7 @@ testing and for taking advantage of Cisco&rsquo;s patent portfolio license
 (<a href="http://www.openh264.org/BINARY_LICENSE.txt">http://www.openh264.org/BINARY_LICENSE.txt</a>).
 </p>
 <a name="OpenJPEG"></a>
-<h3 class="section">1.18 OpenJPEG<span class="pull-right"><a class="anchor hidden-xs" href="#OpenJPEG" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenJPEG" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.19 OpenJPEG<span class="pull-right"><a class="anchor hidden-xs" href="#OpenJPEG" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-OpenJPEG" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can use the OpenJPEG libraries for decoding/encoding J2K videos.  Go to
 <a href="http://www.openjpeg.org/">http://www.openjpeg.org/</a> to get the libraries and follow the installation
@@ -350,7 +359,7 @@ instructions.  To enable using OpenJPEG in FFmpeg, pass <code>--enable-libopenjp
 <samp>./configure</samp>.
 </p>
 <a name="rav1e"></a>
-<h3 class="section">1.19 rav1e<span class="pull-right"><a class="anchor hidden-xs" href="#rav1e" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-rav1e" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.20 rav1e<span class="pull-right"><a class="anchor hidden-xs" href="#rav1e" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-rav1e" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of rav1e (Rust AV1 Encoder) via its C bindings to encode videos.
 Go to <a href="https://github.com/xiph/rav1e/">https://github.com/xiph/rav1e/</a> and follow the instructions to build
@@ -358,7 +367,7 @@ the C library. To enable using rav1e in FFmpeg, pass <code>--enable-librav1e</co
 to <samp>./configure</samp>.
 </p>
 <a name="SVT_002dAV1"></a>
-<h3 class="section">1.20 SVT-AV1<span class="pull-right"><a class="anchor hidden-xs" href="#SVT_002dAV1" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-SVT_002dAV1" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.21 SVT-AV1<span class="pull-right"><a class="anchor hidden-xs" href="#SVT_002dAV1" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-SVT_002dAV1" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the Scalable Video Technology for AV1 library for AV1 encoding.
 </p>
@@ -367,7 +376,7 @@ for installing the library. Then pass <code>--enable-libsvtav1</code> to configu
 enable it.
 </p>
 <a name="TwoLAME"></a>
-<h3 class="section">1.21 TwoLAME<span class="pull-right"><a class="anchor hidden-xs" href="#TwoLAME" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-TwoLAME" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.22 TwoLAME<span class="pull-right"><a class="anchor hidden-xs" href="#TwoLAME" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-TwoLAME" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the TwoLAME library for MP2 encoding.
 </p>
@@ -376,7 +385,7 @@ instructions for installing the library.
 Then pass <code>--enable-libtwolame</code> to configure to enable it.
 </p>
 <a name="VapourSynth"></a>
-<h3 class="section">1.22 VapourSynth<span class="pull-right"><a class="anchor hidden-xs" href="#VapourSynth" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-VapourSynth" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.23 VapourSynth<span class="pull-right"><a class="anchor hidden-xs" href="#VapourSynth" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-VapourSynth" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can read VapourSynth scripts as input. To enable support, pass
 <code>--enable-vapoursynth</code> to configure. Vapoursynth is detected via
@@ -388,7 +397,7 @@ be autodetected so the input format has to be forced. For ff* CLI tools,
 add <code>-f vapoursynth</code> before the input <code>-i yourscript.vpy</code>.
 </p>
 <a name="x264"></a>
-<h3 class="section">1.23 x264<span class="pull-right"><a class="anchor hidden-xs" href="#x264" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-x264" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.24 x264<span class="pull-right"><a class="anchor hidden-xs" href="#x264" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-x264" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the x264 library for H.264 encoding.
 </p>
@@ -402,7 +411,7 @@ configure to enable it.
 details), you must upgrade FFmpeg&rsquo;s license to GPL in order to use it.
 </p></div>
 <a name="x265"></a>
-<h3 class="section">1.24 x265<span class="pull-right"><a class="anchor hidden-xs" href="#x265" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-x265" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.25 x265<span class="pull-right"><a class="anchor hidden-xs" href="#x265" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-x265" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the x265 library for HEVC encoding.
 </p>
@@ -416,7 +425,7 @@ to enable it.
 details), you must upgrade FFmpeg&rsquo;s license to GPL in order to use it.
 </p></div>
 <a name="xavs"></a>
-<h3 class="section">1.25 xavs<span class="pull-right"><a class="anchor hidden-xs" href="#xavs" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-xavs" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.26 xavs<span class="pull-right"><a class="anchor hidden-xs" href="#xavs" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-xavs" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the xavs library for AVS encoding.
 </p>
@@ -425,7 +434,7 @@ installing the library. Then pass <code>--enable-libxavs</code> to configure to
 enable it.
 </p>
 <a name="xavs2"></a>
-<h3 class="section">1.26 xavs2<span class="pull-right"><a class="anchor hidden-xs" href="#xavs2" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-xavs2" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.27 xavs2<span class="pull-right"><a class="anchor hidden-xs" href="#xavs2" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-xavs2" aria-hidden="true">TOC</a></span></h3>
 
 <p>FFmpeg can make use of the xavs2 library for AVS2-P2/IEEE1857.4 video encoding.
 </p>
@@ -439,7 +448,7 @@ enable it.
 details), you must upgrade FFmpeg&rsquo;s license to GPL in order to use it.
 </p></div>
 <a name="ZVBI"></a>
-<h3 class="section">1.27 ZVBI<span class="pull-right"><a class="anchor hidden-xs" href="#ZVBI" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-ZVBI" aria-hidden="true">TOC</a></span></h3>
+<h3 class="section">1.28 ZVBI<span class="pull-right"><a class="anchor hidden-xs" href="#ZVBI" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-ZVBI" aria-hidden="true">TOC</a></span></h3>
 
 <p>ZVBI is a VBI decoding library which can be used by FFmpeg to decode DVB
 teletext pages and DVB teletext subtitles.
@@ -609,6 +618,7 @@ library:
 <tr><td width="40%">raw aptX</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw aptX HD</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw Chinese AVS video</td><td width="10%">X</td><td width="10%">X</td></tr>
+<tr><td width="40%">raw DFPWM</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw Dirac</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw DNxHD</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw DTS</td><td width="10%">X</td><td width="10%">X</td></tr>
@@ -757,15 +767,18 @@ following image formats are supported:
 <tr><td width="40%">PGM</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Portable GrayMap image</td></tr>
 <tr><td width="40%">PGMYUV</td><td width="10%">X</td><td width="10%">X</td><td width="40%">PGM with U and V components in YUV 4:2:0</td></tr>
 <tr><td width="40%">PGX</td><td width="10%"></td><td width="10%">X</td><td width="40%">PGX file decoder</td></tr>
+<tr><td width="40%">PHM</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Portable HalfFloatMap image</td></tr>
 <tr><td width="40%">PIC</td><td width="10%"></td><td width="10%">X</td><td width="40%">Pictor/PC Paint</td></tr>
 <tr><td width="40%">PNG</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Portable Network Graphics image</td></tr>
 <tr><td width="40%">PPM</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Portable PixelMap image</td></tr>
 <tr><td width="40%">PSD</td><td width="10%"></td><td width="10%">X</td><td width="40%">Photoshop</td></tr>
 <tr><td width="40%">PTX</td><td width="10%"></td><td width="10%">X</td><td width="40%">V.Flash PTX format</td></tr>
+<tr><td width="40%">QOI</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Quite OK Image format</td></tr>
 <tr><td width="40%">SGI</td><td width="10%">X</td><td width="10%">X</td><td width="40%">SGI RGB image format</td></tr>
 <tr><td width="40%">Sun Rasterfile</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Sun RAS image format</td></tr>
 <tr><td width="40%">TIFF</td><td width="10%">X</td><td width="10%">X</td><td width="40%">YUV, JPEG and some extension is not supported yet.</td></tr>
 <tr><td width="40%">Truevision Targa</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Targa (.TGA) image format</td></tr>
+<tr><td width="40%">VBN</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Vizrt Binary Image format</td></tr>
 <tr><td width="40%">WebP</td><td width="10%">E</td><td width="10%">X</td><td width="40%">WebP image format, encoding supported through external library libwebp</td></tr>
 <tr><td width="40%">XBM</td><td width="10%">X</td><td width="10%">X</td><td width="40%">X BitMap image format</td></tr>
 <tr><td width="40%">XFace</td><td width="10%">X</td><td width="10%">X</td><td width="40%">X-Face image format</td></tr>
@@ -1057,6 +1070,7 @@ following image formats are supported:
 <tr><td width="40%">codec2</td><td width="10%">E</td><td width="10%">E</td><td width="40%">en/decoding supported through external library libcodec2</td></tr>
 <tr><td width="40%">CRI HCA</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">Delphine Software International CIN audio</td><td width="10%"></td><td width="10%">X</td><td width="40%">Codec used in Delphine Software International games.</td></tr>
+<tr><td width="40%">DFPWM</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">Digital Speech Standard - Standard Play mode (DSS SP)</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">Discworld II BMV Audio</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">COOK</td><td width="10%"></td><td width="10%">X</td><td width="40%">All versions except 5.1 are supported.</td></tr>

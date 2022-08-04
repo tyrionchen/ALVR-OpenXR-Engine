@@ -111,6 +111,21 @@ it in your interactive session.
 <p>Do not put a &rsquo;~&rsquo; character in the samples path to indicate a home
 directory. Because of shell nuances, this will cause FATE to fail.
 </p></div>
+<p>To get the complete list of tests, run the command:
+</p><div class="example">
+<pre class="example">make fate-list
+</pre></div>
+
+<p>You can specify a subset of tests to run by specifying the
+corresponding elements from the list with the <code>fate-</code> prefix,
+e.g. as in:
+</p><div class="example">
+<pre class="example">make fate-ffprobe_compact fate-ffprobe_xml
+</pre></div>
+
+<p>This makes it easier to run a few tests in case of failure without
+running the complete test suite.
+</p>
 <p>To use a custom wrapper to run the test, pass <samp>--target-exec</samp> to
 <code>configure</code> or set the <var>TARGET_EXEC</var> Make variable.
 </p>
