@@ -163,6 +163,25 @@ constexpr const char VideoShaderHlsl[] = R"_(
         return sRGBToLinearRGB(float4(rgb,1.0f));
     }
 
+    float4 MainBlendPS(PSVertex input) : SV_TARGET {
+        float y = tex_y.Sample(y_sampler, input.uv);
+        float2 uv = tex_uv.Sample(y_sampler, input.uv);
+        float3 rgb = ConvertYUVtoRGB(float3(y, uv));
+        return sRGBToLinearRGB(float4(rgb,0.6f));
+    }
+
+    static const float3 MaskKeyColor = float3(0.01, 0.01, 0.01);
+
+    float4 MainMaskPS(PSVertex input) : SV_TARGET {
+        float y = tex_y.Sample(y_sampler, input.uv);
+        float2 uv = tex_uv.Sample(y_sampler, input.uv);
+        float3 rgb = ConvertYUVtoRGB(float3(y, uv));
+        
+        float alpha = all(rgb < MaskKeyColor) ? 0.3f : 1.0f;
+        
+        return sRGBToLinearRGB(float4(rgb,alpha));
+    }
+
     float4 Main3PlaneFmtPS(PSVertex input) : SV_TARGET {
         float y = tex_y.Sample(y_sampler, input.uv);
         float u = tex_uv.Sample(y_sampler, input.uv).r;
@@ -171,5 +190,23 @@ constexpr const char VideoShaderHlsl[] = R"_(
         return sRGBToLinearRGB(float4(rgb,1.0f));
     }
 
+    float4 MainBlend3PlaneFmtPS(PSVertex input) : SV_TARGET {
+        float y = tex_y.Sample(y_sampler, input.uv);
+        float u = tex_uv.Sample(y_sampler, input.uv).r;
+        float v = tex_v.Sample(y_sampler, input.uv);
+        float3 rgb = ConvertYUVtoRGB(float3(y,u,v));
+        return sRGBToLinearRGB(float4(rgb,1.0f));
+    }
+
+    float4 MainMask3PlaneFmtPS(PSVertex input) : SV_TARGET {
+        float y = tex_y.Sample(y_sampler, input.uv);
+        float u = tex_uv.Sample(y_sampler, input.uv).r;
+        float v = tex_v.Sample(y_sampler, input.uv);
+        float3 rgb = ConvertYUVtoRGB(float3(y,u,v));
+        
+        float alpha = all(rgb < MaskKeyColor) ? 0.3f : 1.0f;
+
+        return sRGBToLinearRGB(float4(rgb,alpha));
+    }
 )_";
 #endif

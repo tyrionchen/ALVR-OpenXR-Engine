@@ -116,6 +116,17 @@ inline bool SetMultithreadProtected(ComPtr<ID3D11Device> device)
 }
 
 struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
+    
+    enum VideoPShader : std::size_t {
+        Normal = 0,
+        PassthroughBlend,
+        PassthroughMask,
+        Normal3Plane,
+        PassthroughBlend3Plane,
+        PassthroughMask3Plane,
+        TypeCount
+    };
+
     D3D11GraphicsPlugin(const std::shared_ptr<Options>&, std::shared_ptr<IPlatformPlugin>){};
 
     std::vector<std::string> GetInstanceExtensions() const override { return {XR_KHR_D3D11_ENABLE_EXTENSION_NAME}; }
@@ -183,13 +194,18 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
         CHECK_HRCMD(m_device->CreateVertexShader(vertexShaderBytes->GetBufferPointer(), vertexShaderBytes->GetBufferSize(), nullptr,
             m_videoVertexShader.ReleaseAndGetAddressOf()));
 
-        const ComPtr<ID3DBlob> pixelShaderBytes = CompileShader(VideoShaderHlsl, "MainPS", "ps_5_0");
-        CHECK_HRCMD(m_device->CreatePixelShader(pixelShaderBytes->GetBufferPointer(), pixelShaderBytes->GetBufferSize(), nullptr,
-            m_videoPixelShader[0].ReleaseAndGetAddressOf()));
-
-        const ComPtr<ID3DBlob> pixelShaderBytes2 = CompileShader(VideoShaderHlsl, "Main3PlaneFmtPS", "ps_5_0");
-        CHECK_HRCMD(m_device->CreatePixelShader(pixelShaderBytes2->GetBufferPointer(), pixelShaderBytes2->GetBufferSize(), nullptr,
-            m_videoPixelShader[1].ReleaseAndGetAddressOf()));
+        std::size_t shaderIndex = 0;
+        for (const auto mainName : { "MainPS",
+                                     "MainBlendPS",
+                                     "MainMaskPS",
+                                     "Main3PlaneFmtPS",
+                                     "MainBlend3PlaneFmtPS",
+                                     "MainMask3PlaneFmtPS" })
+        {
+            const ComPtr<ID3DBlob> pixelShaderBytes = CompileShader(VideoShaderHlsl, mainName, "ps_5_0");
+            CHECK_HRCMD(m_device->CreatePixelShader(pixelShaderBytes->GetBufferPointer(), pixelShaderBytes->GetBufferSize(), nullptr,
+                m_videoPixelShader[shaderIndex++].ReleaseAndGetAddressOf()));
+        }
 
         constexpr const D3D11_INPUT_ELEMENT_DESC vertexDesc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -808,11 +824,15 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
             m_videoTextures[currentTextureIdx].frameIndex;
     }
 
+    constexpr static inline std::size_t VideoShaderIndex(const bool is3PlaneFmt, const PassthroughMode newMode) {
+        return static_cast<const std::size_t>(newMode) + (is3PlaneFmt ? VideoPShader::Normal3Plane : VideoPShader::Normal);
+    }
+
     virtual void RenderVideoView
     (
         const std::uint32_t viewID, const XrCompositionLayerProjectionView& layerView,
         const XrSwapchainImageBaseHeader* swapchainImage, const std::int64_t swapchainFormat,
-        const PassthroughMode /*newMode = PassthroughMode::None*/
+        const PassthroughMode newMode /*= PassthroughMode::None*/
     ) override
     {
         RenderViewImpl(layerView, swapchainImage, swapchainFormat, DirectX::Colors::Black, [&]()
@@ -831,11 +851,11 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
             XMStoreFloat4x4(&model.Model, XMMatrixIdentity());//XMMatrixTranspose(XMMatrixScaling(cube.Scale.x, cube.Scale.y, cube.Scale.z) * LoadXrPose(cube.Pose)));
             m_deviceContext->UpdateSubresource(m_modelCBuffer.Get(), 0, nullptr, &model, 0, 0);
 
-            const std::size_t is3PlaneFormat = videoTex.chromaVSRV != nullptr;
+            const bool is3PlaneFormat = videoTex.chromaVSRV != nullptr;
             ID3D11Buffer* const constantBuffers[] = { m_modelCBuffer.Get(), m_viewProjectionCBuffer.Get() };
             m_deviceContext->VSSetConstantBuffers(0, (UINT)ArraySize(constantBuffers), constantBuffers);
             m_deviceContext->VSSetShader(m_videoVertexShader.Get(), nullptr, 0);
-            m_deviceContext->PSSetShader(m_videoPixelShader[is3PlaneFormat].Get(), nullptr, 0);
+            m_deviceContext->PSSetShader(m_videoPixelShader[VideoShaderIndex(is3PlaneFormat, newMode)].Get(), nullptr, 0);
 
             const std::array<ID3D11ShaderResourceView*, 3> srvs {
                 videoTex.lumaSRV.Get(),
@@ -884,7 +904,7 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
     ComPtr<ID3D11SamplerState> m_lumaSampler;
     ComPtr<ID3D11SamplerState> m_chromaSampler;
     ComPtr<ID3D11VertexShader> m_videoVertexShader;
-    std::array<ComPtr<ID3D11PixelShader>,2> m_videoPixelShader;
+    std::array<ComPtr<ID3D11PixelShader>,VideoPShader::TypeCount> m_videoPixelShader;
     ComPtr<ID3D11InputLayout> m_quadInputLayout;
     ComPtr<ID3D11Buffer> m_quadVertexBuffer;
     ComPtr<ID3D11Buffer> m_quadIndexBuffer;

@@ -270,14 +270,33 @@ class SwapchainImageContext {
 };
 
 struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
-    D3D12GraphicsPlugin(const std::shared_ptr<Options>&, std::shared_ptr<IPlatformPlugin>)
-        : m_vertexShaderBytes(CompileShader(ShaderHlsl, "MainVS", "vs_5_1")),
-        m_pixelShaderBytes(CompileShader(ShaderHlsl, "MainPS", "ps_5_1")),
-        m_videoVShaderBytes(CompileShader(VideoShaderHlsl, "MainVS", "vs_5_1")),
-        m_videoPShaderBytes(CompileShader(VideoShaderHlsl, "MainPS", "ps_5_1")),
-        m_video3PlaneFmtPShaderBytes(CompileShader(VideoShaderHlsl, "Main3PlaneFmtPS", "ps_5_1"))  {}
 
-    ~D3D12GraphicsPlugin() override { CloseHandle(m_fenceEvent); }
+    enum VideoPShader : std::size_t {
+        Normal=0,
+        PassthroughBlend,
+        PassthroughMask,
+        Normal3Plane,
+        PassthroughBlend3Plane,
+        PassthroughMask3Plane,
+        TypeCount
+    };
+
+    D3D12GraphicsPlugin(const std::shared_ptr<Options>&, std::shared_ptr<IPlatformPlugin>)
+    : m_vertexShaderBytes(CompileShader(ShaderHlsl, "MainVS", "vs_5_1")),
+      m_pixelShaderBytes(CompileShader(ShaderHlsl, "MainPS", "ps_5_1")),
+      m_videoVShaderBytes(CompileShader(VideoShaderHlsl, "MainVS", "vs_5_1")),
+      m_videoPShaderBytes(CompileShader(VideoShaderHlsl, "MainPS", "ps_5_1")),
+      m_video3PlaneFmtPShaderBytes(CompileShader(VideoShaderHlsl, "Main3PlaneFmtPS", "ps_5_1")),
+      m_videoPShaderBlobList {
+          CompileShader(VideoShaderHlsl, "MainPS", "ps_5_1"),
+          CompileShader(VideoShaderHlsl, "MainBlendPS", "ps_5_1"),
+          CompileShader(VideoShaderHlsl, "MainMaskPS", "ps_5_1"),
+          CompileShader(VideoShaderHlsl, "Main3PlaneFmtPS", "ps_5_1"),
+          CompileShader(VideoShaderHlsl, "MainBlend3PlaneFmtPS", "ps_5_1"),
+          CompileShader(VideoShaderHlsl, "MainMask3PlaneFmtPS", "ps_5_1")
+      } {}
+
+    inline ~D3D12GraphicsPlugin() override { CloseHandle(m_fenceEvent); }
 
     std::vector<std::string> GetInstanceExtensions() const override { return { XR_KHR_D3D12_ENABLE_EXTENSION_NAME }; }
 
@@ -659,11 +678,15 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
         return pipelineStateRaw;
     }
 
-    ID3D12PipelineState* GetOrCreateVideoPipelineState(const DXGI_FORMAT swapchainFormat) {
-        const std::size_t pipelineIndex = m_is3PlaneFormat.load();
+    constexpr static inline std::size_t VideoPipelineIndex(const bool is3PlaneFmt, const PassthroughMode newMode) {
+        return static_cast<const std::size_t>(newMode) + (is3PlaneFmt ? VideoPShader::Normal3Plane : VideoPShader::Normal);
+    }
+
+    ID3D12PipelineState* GetOrCreateVideoPipelineState(const DXGI_FORMAT swapchainFormat, const PassthroughMode newMode) {
+        const bool is3PlaneFormat = m_is3PlaneFormat.load();
         const auto iter = m_VideoPipelineStates.find(swapchainFormat);
         if (iter != m_VideoPipelineStates.end()) {
-            return iter->second[pipelineIndex].Get();
+            return iter->second[VideoPipelineIndex(is3PlaneFormat, newMode)].Get();
         }
 
         constexpr const std::array<D3D12_INPUT_ELEMENT_DESC, 2> inputElementDescs {
@@ -691,21 +714,30 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             return pipelineState;
         };
         const auto newPipelineState = m_VideoPipelineStates.emplace(swapchainFormat, VidePipelineStateList{
-            makePipeline({ m_videoVShaderBytes, m_videoPShaderBytes }),
-            makePipeline({ m_videoVShaderBytes, m_video3PlaneFmtPShaderBytes })
+            makePipeline({ m_videoVShaderBytes, m_videoPShaderBlobList[VideoPShader::Normal] }),
+            makePipeline({ m_videoVShaderBytes, m_videoPShaderBlobList[VideoPShader::PassthroughBlend] }),
+            makePipeline({ m_videoVShaderBytes, m_videoPShaderBlobList[VideoPShader::PassthroughMask] }),
+            makePipeline({ m_videoVShaderBytes, m_videoPShaderBlobList[VideoPShader::Normal3Plane] }),
+            makePipeline({ m_videoVShaderBytes, m_videoPShaderBlobList[VideoPShader::PassthroughBlend3Plane] }),
+            makePipeline({ m_videoVShaderBytes, m_videoPShaderBlobList[VideoPShader::PassthroughMask3Plane] }),
         });
         CHECK(newPipelineState.second);
-        return newPipelineState.first->second[pipelineIndex].Get();
+        return newPipelineState.first->second[VideoPipelineIndex(is3PlaneFormat, newMode)].Get();
     }
 
     enum class RenderPipelineType {
         Default,
         Video
     };
-    inline ID3D12PipelineState* GetOrCreatePipelineState(const DXGI_FORMAT swapchainFormat, const RenderPipelineType pt = RenderPipelineType::Default) {
+    inline ID3D12PipelineState* GetOrCreatePipelineState
+    (
+        const DXGI_FORMAT swapchainFormat,
+        const RenderPipelineType pt = RenderPipelineType::Default,
+        const PassthroughMode newMode = PassthroughMode::None
+    ) {
         switch (pt) {
         case RenderPipelineType::Video:
-            return GetOrCreateVideoPipelineState(swapchainFormat);
+            return GetOrCreateVideoPipelineState(swapchainFormat, newMode);
         case RenderPipelineType::Default:
         default: return GetOrCreateDefaultPipelineState(swapchainFormat);
         }
@@ -715,7 +747,9 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     void RenderViewImpl
     (
         const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage, const int64_t swapchainFormat,
-        RenderFun&& renderFn, const RenderPipelineType pt = RenderPipelineType::Default
+        RenderFun&& renderFn,
+        const RenderPipelineType pt = RenderPipelineType::Default,
+        const PassthroughMode newMode = PassthroughMode::None
     )
     {
         CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
@@ -729,7 +763,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             __uuidof(ID3D12GraphicsCommandList),
             reinterpret_cast<void**>(cmdList.ReleaseAndGetAddressOf())));
 
-        ID3D12PipelineState* pipelineState = GetOrCreatePipelineState((DXGI_FORMAT)swapchainFormat, pt);
+        ID3D12PipelineState* pipelineState = GetOrCreatePipelineState((DXGI_FORMAT)swapchainFormat, pt, newMode);
         cmdList->SetPipelineState(pipelineState);
         cmdList->SetGraphicsRootSignature(m_rootSignature.Get());
 
@@ -1342,7 +1376,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     }
 
     virtual void RenderVideoView(const std::uint32_t viewID, const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-        const std::int64_t swapchainFormat, const PassthroughMode /*newMode = PassthroughMode::None*/) override
+        const std::int64_t swapchainFormat, const PassthroughMode newMode /*= PassthroughMode::None*/) override
     {
         using CpuDescHandle = D3D12_CPU_DESCRIPTOR_HANDLE;
         using CommandListPtr = ComPtr<ID3D12GraphicsCommandList>;
@@ -1419,7 +1453,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
 
             // Draw Video Quad
             cmdList->DrawIndexedInstanced((UINT)QuadIndices.size(), 1, 0, 0, 0);
-        }, RenderPipelineType::Video);
+        }, RenderPipelineType::Video, newMode);
     }
 
     using ID3D12CommandQueuePtr = ComPtr<ID3D12CommandQueue>;
@@ -1489,11 +1523,15 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     const ComPtr<ID3DBlob>         m_videoVShaderBytes;
     const ComPtr<ID3DBlob>         m_videoPShaderBytes;
     const ComPtr<ID3DBlob>         m_video3PlaneFmtPShaderBytes;
+
+    using VideoPShaderList = std::array<const ComPtr<ID3DBlob>, VideoPShader::TypeCount>;
+    const VideoPShaderList         m_videoPShaderBlobList;
+
     ComPtr<ID3D12CommandAllocator> m_videoTexCmdAllocator{};
     ComPtr<ID3D12CommandQueue>     m_videoTexCmdCpyQueue{};
 
     using ID3D12PipelineStatePtr = ComPtr<ID3D12PipelineState>;
-    using VidePipelineStateList = std::array<ID3D12PipelineStatePtr, 2>;
+    using VidePipelineStateList = std::array<ID3D12PipelineStatePtr, VideoPShader::TypeCount>;
     using PipelineStateMap = std::unordered_map<DXGI_FORMAT, VidePipelineStateList>;
     PipelineStateMap m_VideoPipelineStates;
 
