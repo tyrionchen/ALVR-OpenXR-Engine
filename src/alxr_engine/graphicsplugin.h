@@ -4,6 +4,10 @@
 
 #pragma once
 
+#ifdef None // xlib...
+#undef None
+#endif
+
 struct Cube {
     XrPosef Pose;
     XrVector3f Scale;
