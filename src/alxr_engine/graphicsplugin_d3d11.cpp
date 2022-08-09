@@ -811,7 +811,8 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
     virtual void RenderVideoView
     (
         const std::uint32_t viewID, const XrCompositionLayerProjectionView& layerView,
-        const XrSwapchainImageBaseHeader* swapchainImage, const std::int64_t swapchainFormat
+        const XrSwapchainImageBaseHeader* swapchainImage, const std::int64_t swapchainFormat,
+        const PassthroughMode /*newMode = PassthroughMode::None*/
     ) override
     {
         RenderViewImpl(layerView, swapchainImage, swapchainFormat, DirectX::Colors::Black, [&]()

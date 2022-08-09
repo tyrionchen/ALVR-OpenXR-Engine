@@ -1342,7 +1342,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     }
 
     virtual void RenderVideoView(const std::uint32_t viewID, const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-        const std::int64_t swapchainFormat) override
+        const std::int64_t swapchainFormat, const PassthroughMode /*newMode = PassthroughMode::None*/) override
     {
         using CpuDescHandle = D3D12_CPU_DESCRIPTOR_HANDLE;
         using CommandListPtr = ComPtr<ID3D12GraphicsCommandList>;
@@ -1437,7 +1437,10 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     HANDLE m_fenceEvent = INVALID_HANDLE_VALUE;
     std::list<SwapchainImageContext> m_swapchainImageContexts;
     std::map<const XrSwapchainImageBaseHeader*, SwapchainImageContext*> m_swapchainImageContextMap;
-    XrGraphicsBindingD3D12KHR m_graphicsBinding{XR_TYPE_GRAPHICS_BINDING_D3D12_KHR};
+    XrGraphicsBindingD3D12KHR m_graphicsBinding{
+        .type = XR_TYPE_GRAPHICS_BINDING_D3D12_KHR,
+        .next = nullptr
+    };
     ComPtr<ID3D12RootSignature> m_rootSignature;
     std::map<DXGI_FORMAT, ComPtr<ID3D12PipelineState>> m_pipelineStates;
     ComPtr<ID3D12Resource> m_cubeVertexBuffer;

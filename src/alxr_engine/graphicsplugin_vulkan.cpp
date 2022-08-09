@@ -640,7 +640,6 @@ struct ShaderProgram {
     }};
 
     ShaderProgram() = default;
-
     ~ShaderProgram() {
         if (m_vkDevice != nullptr) {
             for (auto& si : shaderInfo) {
@@ -659,21 +658,23 @@ struct ShaderProgram {
     ShaderProgram(ShaderProgram&&) = delete;
     ShaderProgram& operator=(ShaderProgram&&) = delete;
 
-    void LoadVertexShader(const std::vector<uint32_t>& code) { Load(0, code); }
 
-    void LoadFragmentShader(const std::vector<uint32_t>& code) { Load(1, code); }
+    constexpr static const char* const EntryPoint = "main";
+    using CodeBuffer = std::vector<std::uint32_t>;
 
+    void LoadVertexShader(const CodeBuffer& code,   const char* const mainName=EntryPoint) { Load(0, code, mainName); }
+    void LoadFragmentShader(const CodeBuffer& code, const char* const mainName=EntryPoint) { Load(1, code, mainName); }
+    
     void Init(VkDevice device) { m_vkDevice = device; }
 
    private:
     VkDevice m_vkDevice{VK_NULL_HANDLE};
 
-    void Load(uint32_t index, const std::vector<uint32_t>& code) {
+    void Load(uint32_t index, const CodeBuffer& code, const char* const mainName) {
 
         auto& si = shaderInfo[index];
-        si.pName = "main";
+        si.pName = mainName;
         std::string name;
-
         switch (index) {
             case 0:
                 si.stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -686,7 +687,7 @@ struct ShaderProgram {
             default:
                 THROW(Fmt("Unknown code index %d", index));
         }
-        
+
         const VkShaderModuleCreateInfo modInfo{
             .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
             .pNext = nullptr,
@@ -2512,6 +2513,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 
         const std::vector<const char*> deviceExtensions =
         {
+#if defined(USE_MIRROR_WINDOW)
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+#endif
             //VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             //VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
             //VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
@@ -2660,9 +2664,6 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
             .pNext = &features11,
             .features = features            
         };
-#if defined(USE_MIRROR_WINDOW)
-        deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-#endif
         const VkDeviceCreateInfo deviceInfo{
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
             .pNext = &features2,
@@ -2795,24 +2796,41 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 #ifdef XR_ENABLE_CUDA_INTEROP
         InitCuda();
 #endif
-        const std::vector<uint32_t> videoVShaderSPIRV = SPV_PREFIX
+        using CodeBuffer = ShaderProgram::CodeBuffer;
+        const CodeBuffer videoVShaderSPIRV = SPV_PREFIX
 #include "video_vert.spv"
-            SPV_SUFFIX;
-        const std::vector<uint32_t> videoFShaderSPIRV = SPV_PREFIX
+        SPV_SUFFIX;
+        {
+            const CodeBuffer videoFShaderSPIRV = SPV_PREFIX
 #include "video_frag.spv"
             SPV_SUFFIX;
-        const std::vector<uint32_t> videoLinearSRGBFShaderSPIRV = SPV_PREFIX
+            m_videoShader[0].Init(m_vkDevice);
+            m_videoShader[0].LoadVertexShader(videoVShaderSPIRV);
+            m_videoShader[0].LoadFragmentShader(videoFShaderSPIRV);
+        }
+        {
+            const CodeBuffer videoLinearSRGBFShaderSPIRV = SPV_PREFIX
 #include "videoLinearSRGB_frag.spv"
             SPV_SUFFIX;
+            const CodeBuffer passthroughBlendSPIRV = SPV_PREFIX
+#include "passthroughBlend_frag.spv"
+            SPV_SUFFIX;
+            const CodeBuffer passthroughMaskSPIRV = SPV_PREFIX
+#include "passthroughMask_frag.spv"
+            SPV_SUFFIX;
 
-        m_videoShader[0].Init(m_vkDevice);
-        m_videoShader[0].LoadVertexShader(videoVShaderSPIRV);
-        m_videoShader[0].LoadFragmentShader(videoLinearSRGBFShaderSPIRV);
-
-        m_videoShader[1].Init(m_vkDevice);
-        m_videoShader[1].LoadVertexShader(videoVShaderSPIRV);
-        m_videoShader[1].LoadFragmentShader(videoFShaderSPIRV);
-
+            std::size_t shaderIndex = 1;
+            for (const auto fragShaderPtr :
+                { &videoLinearSRGBFShaderSPIRV,
+                  &passthroughBlendSPIRV,
+                  &passthroughMaskSPIRV })
+            {
+                auto& vidShader = m_videoShader[shaderIndex++];
+                vidShader.Init(m_vkDevice);
+                vidShader.LoadVertexShader(videoVShaderSPIRV);
+                vidShader.LoadFragmentShader(*fragShaderPtr);
+            }
+        }
         if (!m_videoCpyCmdBuffer.Init(m_vkDevice, m_queueFamilyIndex)) THROW("Failed to create command buffer");
 
         m_quadBuffer.Init(m_vkDevice, &m_memAllocator,
@@ -3159,15 +3177,18 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         m_videoStreamLayout.CreateVideoStreamLayout(conversionInfo, m_vkDevice, m_vkInstance);
         CHECK(m_swapchainImageContexts.size() > 0);
         const auto& swapChainInfo = m_swapchainImageContexts.back();
-        m_videoStreamPipeL.Create
-        (
-            m_vkDevice,
-            swapChainInfo.size,
-            m_videoStreamLayout,
-            swapChainInfo.rp,
-            m_videoShader[m_videoShaderIndex],
-            m_quadBuffer
-        );
+        std::size_t pipelineIdx = 0;
+        for (const std::size_t shaderIdx : { m_videoShaderIndex, size_t(2), size_t(3) }) {
+            m_videoStreamPipelines[pipelineIdx++].Create
+            (
+                m_vkDevice,
+                swapChainInfo.size,
+                m_videoStreamLayout,
+                swapChainInfo.rp,
+                m_videoShader[shaderIdx],
+                m_quadBuffer
+            );
+        }
         CreateImageDescriptorSetLayouts();
     }
 
@@ -3195,7 +3216,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     }
 
     virtual void SetEnableLinearizeRGB(const bool enable) override {
-        m_videoShaderIndex = enable ? 0 : 1;
+        m_videoShaderIndex = enable ? 1 : 0;
     }
 
     virtual void ClearVideoTextures() override
@@ -3216,7 +3237,8 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         textureIdx = std::size_t(-1);
 #endif
         ClearImageDescriptorSetLayouts();
-        m_videoStreamPipeL.Clear();
+        for (auto& pipeline : m_videoStreamPipelines)
+            pipeline.Clear();
         m_videoStreamLayout.Clear();
     }
 
@@ -3765,7 +3787,8 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     virtual void RenderVideoView
     (
         const std::uint32_t viewID, const XrCompositionLayerProjectionView& layerView,
-        const XrSwapchainImageBaseHeader* swapchainImage, const std::int64_t swapchainFormat
+        const XrSwapchainImageBaseHeader* swapchainImage, const std::int64_t swapchainFormat,
+        const PassthroughMode mode /*= PassthroughMode::None*/
     ) override
     {
         RenderViewImpl(layerView, swapchainImage, swapchainFormat, [&, this](auto& renderPassBeginInfo, auto /*swapchainContext*/)
@@ -3780,7 +3803,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 #endif
             vkCmdBeginRenderPass(m_cmdBuffer.buf, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-            vkCmdBindPipeline(m_cmdBuffer.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_videoStreamPipeL.pipe);//swapchainContext->pipe.pipe);
+            vkCmdBindPipeline(m_cmdBuffer.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_videoStreamPipelines[static_cast<std::size_t>(mode)].pipe);
             vkCmdBindDescriptorSets(m_cmdBuffer.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, m_videoStreamLayout.layout, 0, 1, m_descriptorSets.data(), 0, nullptr);
 
             // Bind index and vertex buffers
@@ -3846,11 +3869,12 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     std::vector<VkDescriptorSet> m_descriptorSets{};
 
     CmdBuffer m_videoCpyCmdBuffer{};
-    std::array<ShaderProgram, 2> m_videoShader{};
+    std::array<ShaderProgram, 4> m_videoShader{};
     VertexBuffer<Geometry::QuadVertex> m_quadBuffer{};
     PipelineLayout m_videoStreamLayout{};
-    Pipeline       m_videoStreamPipeL{};
-    std::size_t    m_videoShaderIndex{ 0 };
+    using PipelineList = std::array<Pipeline, size_t(PassthroughMode::TypeCount)>;
+    PipelineList m_videoStreamPipelines{};
+    std::size_t  m_videoShaderIndex{ 1 };
 
     constexpr static const std::size_t VideoTexCount = 2;
 

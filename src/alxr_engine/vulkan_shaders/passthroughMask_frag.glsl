@@ -27,7 +27,10 @@ vec4 srgb_to_linear_rgb(vec4 lrgb)
     return vec4(r, g, b, lrgb.a);
 }
 
+const vec3 key_color = vec3(0.01, 0.01, 0.01);
 void main()
 {
-    FragColor = srgb_to_linear_rgb(texture(tex_sampler, UV));
+    vec4 color = srgb_to_linear_rgb(texture(tex_sampler, UV));
+    color.a = all(lessThan(color.rgb, key_color)) ? 0.3f : 1.0f;
+    FragColor = color;
 }

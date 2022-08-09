@@ -3,7 +3,9 @@
 #define ALXR_INTERACTION_PROFILES_H
 
 #include "pch.h"
+#include <cstdint>
 #include <array>
+#include <optional>
 #include "xrpaths.h"
 #include "ALVR-common/packet_types.h"
 
@@ -13,22 +15,24 @@ struct ButtonMap {
     const ALVR_INPUT button;
     const char* const path;
 
-    constexpr inline bool operator==(const ButtonMap& rhs) const{
-        return button == rhs.button;
-    }
-    constexpr inline bool operator!=(const ButtonMap& rhs) const {
-        return !(*this == rhs);
-    }
+    constexpr inline bool operator==(const ButtonMap& rhs) const { return button == rhs.button;}
+    constexpr inline bool operator!=(const ButtonMap& rhs) const { return !(*this == rhs); }
 };
 using InputMap = std::array<const ButtonMap, 12>;
 using LeftMap = InputMap;
 using RightMap = InputMap;
-using HandInputMap = std::array<const InputMap, 2>;
-using HandPathList = std::array<const char* const, 2>;
 
-constexpr inline const ButtonMap MapEnd{ ALVR_INPUT_COUNT,nullptr };
-constexpr inline const InputMap EmptyMap{ MapEnd };
+constexpr inline const std::size_t HandSize = 2;
+using HandInputMap = std::array<const InputMap, HandSize>;
+using HandPathList = std::array<const char* const, HandSize>;
+
+using ButtonFlags = std::uint64_t;
+using HandButtonMaskList = std::array<const ButtonFlags, HandSize>;
+
+constexpr inline const ButtonMap    MapEnd{ ALVR_INPUT_COUNT,nullptr };
+constexpr inline const InputMap     EmptyMap{ MapEnd };
 constexpr inline const HandInputMap EmptyHandMap{ EmptyMap, EmptyMap };
+constexpr inline const HandButtonMaskList EmptyHandMask{ 0, 0 };
 constexpr inline const HandPathList UserHandPaths{
     XRPaths::UserHandLeft,
     XRPaths::UserHandRight
@@ -37,6 +41,12 @@ constexpr inline const HandPathList UserHandHTCPaths {
     XRPaths::UserHandLeftHTC,
     XRPaths::UserHandRightHTC
 };
+
+struct PassthroughModeButtons {
+    const HandButtonMaskList blendMode = EmptyHandMask;
+    const HandButtonMaskList maskMode  = EmptyHandMask;
+};
+using OptionalPassthroughMode = std::optional<const PassthroughModeButtons>;
 
 struct InteractionProfile {
     const HandInputMap boolMap         = EmptyHandMap;
@@ -51,6 +61,9 @@ struct InteractionProfile {
     const char* const posePath   = XRPaths::AimPose;
     const HandPathList userHandPaths = UserHandPaths;
 
+    // set button flags must refer to entries in InteractionProfile::boolMap.
+    const OptionalPassthroughMode passthroughModes {};
+
     constexpr inline bool IsCore() const { return extensionName == nullptr; }
     constexpr inline bool IsExt() const  { return !IsCore(); }
 };
@@ -61,7 +74,6 @@ constexpr inline const std::size_t ProfileMapSize = 1;
 #else
 constexpr inline const std::size_t ProfileMapSize = 9;
 #endif
-
 constexpr inline const std::array<const InteractionProfile, ProfileMapSize> InteractionProfileMap{
 #ifdef XR_USE_OXR_PICO
     InteractionProfile {
@@ -192,7 +204,18 @@ constexpr inline const std::array<const InteractionProfile, ProfileMapSize> Inte
                 MapEnd
             }
         },
-        .path = "/interaction_profiles/oculus/touch_controller"
+        .path = "/interaction_profiles/oculus/touch_controller",
+        .quitPath = nullptr,
+        .passthroughModes { PassthroughModeButtons {
+            .blendMode {
+                ALVR_BUTTON_FLAG(ALVR_INPUT_SYSTEM_CLICK),
+                ALVR_BUTTON_FLAG(ALVR_INPUT_A_CLICK)
+            },
+            .maskMode {
+                ALVR_BUTTON_FLAG(ALVR_INPUT_SYSTEM_CLICK),
+                ALVR_BUTTON_FLAG(ALVR_INPUT_B_CLICK)
+            }
+        }}
     },
     InteractionProfile {
         .boolMap {

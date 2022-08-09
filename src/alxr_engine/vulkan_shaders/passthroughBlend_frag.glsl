@@ -19,15 +19,15 @@ float srgb_to_linear_rgb_scalar(float x)
 }
 
 // conversion based on: https://www.khronos.org/registry/DataFormat/specs/1.3/dataformat.1.3.html#TRANSFER_SRGB
-vec4 srgb_to_linear_rgb(vec4 lrgb)
+vec4 srgb_to_linear_rgb(vec3 lrgb)
 {
     const float r = srgb_to_linear_rgb_scalar(lrgb.r);
     const float g = srgb_to_linear_rgb_scalar(lrgb.g);
     const float b = srgb_to_linear_rgb_scalar(lrgb.b);
-    return vec4(r, g, b, lrgb.a);
+    return vec4(r, g, b, 0.6f);
 }
 
 void main()
 {
-    FragColor = srgb_to_linear_rgb(texture(tex_sampler, UV));
+    FragColor = srgb_to_linear_rgb(texture(tex_sampler, UV).rgb);
 }

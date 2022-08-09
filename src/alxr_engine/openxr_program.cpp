@@ -359,7 +359,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     virtual ~OpenXrProgram() override {
         Log::Write(Log::Level::Verbose, "Destroying OpenXrProgram");
-        
+                
         if (IsSessionRunning()) {
             CHECK_XRCMD(xrEndSession(m_session));
             m_sessionRunning.store(false);
@@ -461,7 +461,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         { "XR_EXT_hand_tracking", false },
         { "XR_FB_display_refresh_rate", false },
         { "XR_FB_color_space", false },
-        //{ XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
+        { XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
 #ifdef XR_USE_OXR_PICO
 #pragma message ("Pico Neo 3 OXR Extensions Enabled.")
         { XR_PICO_VIEW_STATE_EXT_ENABLE_EXTENSION_NAME, false },
@@ -838,15 +838,15 @@ struct OpenXrProgram final : IOpenXrProgram {
     void InitializeActions() {
         CHECK(m_instance != XR_NULL_HANDLE);
 
-        constexpr static const std::array<const std::string_view, 2> HTCFilterList {
-            XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
-            XR_HTC_HAND_INTERACTION_EXTENSION_NAME
-        };
         const auto IsProfileSupported = [this](const auto& profile)
         {
             if (IsRuntime(OxrRuntimeType::HTCWave)) {
                 if (profile.IsCore())
                     return false;
+                constexpr const std::array<const std::string_view, 2> HTCFilterList{
+                    XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
+                    XR_HTC_HAND_INTERACTION_EXTENSION_NAME
+                };
                 for (const auto& htcProfile : HTCFilterList) {
                     if (htcProfile == profile.extensionName)
                         return IsExtEnabled(profile.extensionName);
@@ -860,9 +860,11 @@ struct OpenXrProgram final : IOpenXrProgram {
             m_instance,
             m_session,
             m_alxrPaths,
+            IsPassthroughSupported() ?
+                [this](const ALXR::PassthroughMode newMode) { TogglePassthroughMode(newMode); } : ALXR::TogglePTModeFn {},
 #ifdef XR_USE_OXR_PICO
             m_pfnXrVibrateControllerPico,
-#endif
+#endif            
             IsProfileSupported
         );
     }
@@ -917,28 +919,6 @@ struct OpenXrProgram final : IOpenXrProgram {
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnRequestDisplayRefreshRateFB)));
         }
 
-#if 0
-#define CAT(x,y) x ## y
-#define INIT_PFN(ExtName)\
-    CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xr"#ExtName, reinterpret_cast<PFN_xrVoidFunction*>(&CAT(m_pfn,ExtName))));
-
-        if (IsExtEnabled(XR_FB_PASSTHROUGH_EXTENSION_NAME))
-        {
-            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_FB_PASSTHROUGH_EXTENSION_NAME));
-            INIT_PFN(CreatePassthroughFB);
-            INIT_PFN(DestroyPassthroughFB);
-            INIT_PFN(PassthroughStartFB);
-            INIT_PFN(PassthroughPauseFB);
-            INIT_PFN(CreatePassthroughLayerFB);
-            INIT_PFN(DestroyPassthroughLayerFB);
-            INIT_PFN(PassthroughLayerSetStyleFB);
-            INIT_PFN(PassthroughLayerPauseFB);
-            INIT_PFN(PassthroughLayerResumeFB);
-        }
-#undef INIT_PFN
-#undef CAT
-#endif
-
 #ifdef XR_USE_OXR_PICO
         const auto GetPicoInstanceProcAddr = [this](const char* const name, auto& fn)
         {
@@ -984,7 +964,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         SetDeviceColorSpace();
         UpdateSupportedDisplayRefreshRates();
-        //InitializePassthroughAPI();
+        InitializePassthroughAPI();
         return InitializeHandTrackers();
     }
 
@@ -1030,7 +1010,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         XrSystemProperties systemProperties{ .type=XR_TYPE_SYSTEM_PROPERTIES, .next = &handTrackingSystemProperties };
         CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
         if (!handTrackingSystemProperties.supportsHandTracking) {
-            Log::Write(Log::Level::Info, "XR_EXT_hand_tracking is not supported.");
+            Log::Write(Log::Level::Info, Fmt("%s is not supported.", XR_EXT_HAND_TRACKING_EXTENSION_NAME));
             // The system does not support hand tracking
             return false;
         }
@@ -1051,6 +1031,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             m_pfnLocateHandJointsEXT == nullptr  ||
             m_pfnDestroyHandTrackerEXT == nullptr)
             return false;
+        Log::Write(Log::Level::Info, Fmt("%s is enabled.", XR_EXT_HAND_TRACKING_EXTENSION_NAME));
 
         // Create a hand tracker for left hand that tracks default set of hand joints.
         const auto createHandTracker = [&](auto& handerTracker, const XrHandEXT hand)
@@ -1078,10 +1059,43 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     void InitializePassthroughAPI()
     {
-        if (m_session == XR_NULL_HANDLE ||
-            !IsExtEnabled(XR_FB_PASSTHROUGH_EXTENSION_NAME) ||
-            m_pfnCreatePassthroughFB == nullptr)
+        if (m_instance == XR_NULL_HANDLE ||
+            m_systemId == XR_NULL_SYSTEM_ID ||
+            !IsExtEnabled(XR_FB_PASSTHROUGH_EXTENSION_NAME)) {
             return;
+        }
+
+        XrSystemPassthroughPropertiesFB passthroughSystemProperties{
+            .type = XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES_FB,
+            .next = nullptr
+        };
+        XrSystemProperties systemProperties{
+            .type = XR_TYPE_SYSTEM_PROPERTIES,
+            .next = &passthroughSystemProperties
+        };
+        CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
+        if (passthroughSystemProperties.supportsPassthrough == XR_FALSE) {
+            Log::Write(Log::Level::Info, Fmt("%s is not supported.", XR_FB_PASSTHROUGH_EXTENSION_NAME));
+            return;
+        }
+        Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_FB_PASSTHROUGH_EXTENSION_NAME));
+
+#define CAT(x,y) x ## y
+#define INIT_PFN(ExtName)\
+    CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xr"#ExtName, reinterpret_cast<PFN_xrVoidFunction*>(&CAT(m_pfn,ExtName))));
+
+        INIT_PFN(CreatePassthroughFB);
+        INIT_PFN(DestroyPassthroughFB);
+        INIT_PFN(PassthroughStartFB);
+        INIT_PFN(PassthroughPauseFB);
+        INIT_PFN(CreatePassthroughLayerFB);
+        INIT_PFN(DestroyPassthroughLayerFB);
+        INIT_PFN(PassthroughLayerSetStyleFB);
+        INIT_PFN(PassthroughLayerPauseFB);
+        INIT_PFN(PassthroughLayerResumeFB);
+
+#undef INIT_PFN
+#undef CAT
 
         constexpr const XrPassthroughCreateInfoFB ptci {
             .type = XR_TYPE_PASSTHROUGH_CREATE_INFO_FB,
@@ -1104,19 +1118,27 @@ struct OpenXrProgram final : IOpenXrProgram {
             m_ptLayerData = {};
             return;
         }
+        CHECK(m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE);
 
         Log::Write(Log::Level::Info, "Passthrough API is initialized.");
     }
 
-    void SetMaskedPassthrough() {
-        if (m_ptLayerData.reconPassthroughLayer == XR_NULL_HANDLE)
-            return;
+    inline bool IsPassthroughSupported() const {
+        return m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE;
+    }
 
-        std::call_once(m_startPassthroughOnce, [&]() {
-            CHECK_XRCMD(m_pfnPassthroughStartFB(m_ptLayerData.passthrough));
-            CHECK_XRCMD(m_pfnPassthroughLayerResumeFB(m_ptLayerData.reconPassthroughLayer));
-            Log::Write(Log::Level::Info, "Passthrough (Layer) is started/resumed.");
-        });
+    std::atomic<ALXR::PassthroughMode> m_currentPTMode{ ALXR::PassthroughMode::None };
+    inline bool IsPassthroughModeEnabled() const {
+        return m_currentPTMode.load() != ALXR::PassthroughMode::None;
+    }
+
+    void StartPassthroughMode() {
+        if (!IsPassthroughSupported())
+            return;
+        CHECK_XRCMD(m_pfnPassthroughStartFB(m_ptLayerData.passthrough));
+        CHECK_XRCMD(m_pfnPassthroughLayerResumeFB(m_ptLayerData.reconPassthroughLayer));
+        Log::Write(Log::Level::Info, "Passthrough (Layer) is started/resumed.");
+
         constexpr const XrPassthroughStyleFB style {
             .type = XR_TYPE_PASSTHROUGH_STYLE_FB,
             .next = nullptr,
@@ -1126,12 +1148,35 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(m_pfnPassthroughLayerSetStyleFB(m_ptLayerData.reconPassthroughLayer, &style));
     }
 
+    void StopPassthroughMode() {
+        if (!IsPassthroughModeEnabled())
+            return;
+        assert(IsPassthroughSupported());
+        m_currentPTMode.store(ALXR::PassthroughMode::None);
+    /////////////////////////////////////////////////
+        Log::Write(Log::Level::Info, "Passthrough (Layer) is stopped/paused.");
+        CHECK_XRCMD(m_pfnPassthroughLayerPauseFB(m_ptLayerData.reconPassthroughLayer));
+        CHECK_XRCMD(m_pfnPassthroughPauseFB(m_ptLayerData.passthrough));
+    }
+
+    void TogglePassthroughMode(const ALXR::PassthroughMode newMode) {
+        assert(IsPassthroughSupported());
+        const auto lastMode = m_currentPTMode.load();
+        if (newMode == lastMode) {
+            StopPassthroughMode();
+            return;
+        }
+        if (lastMode == ALXR::PassthroughMode::None) {
+            StartPassthroughMode();
+        }
+        /////////////////////////////////////////////////
+        m_currentPTMode.store(newMode);
+    }
+
     void CreateVisualizedSpaces() {
         CHECK(m_session != XR_NULL_HANDLE);
-
 #ifdef ALXR_ENGINE_ENABLE_VIZ_SPACES
-        constexpr const std::string_view visualizedSpaces[] = { "ViewFront",        "Local", "Stage", "StageLeft", "StageRight", "StageLeftRotated",
-                                          "StageRightRotated" };
+        constexpr const std::string_view visualizedSpaces[] = { "ViewFront", "Local", "Stage", "StageLeft", "StageRight", "StageLeftRotated", "StageRightRotated" };
 
         for (const auto& visualizedSpace : visualizedSpaces) {
             XrReferenceSpaceCreateInfo referenceSpaceCreateInfo = GetXrReferenceSpaceCreateInfo(visualizedSpace);
@@ -1432,6 +1477,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             }
             case XR_SESSION_STATE_STOPPING: {
                 CHECK(m_session != XR_NULL_HANDLE);
+                StopPassthroughMode();
                 CHECK_XRCMD(xrEndSession(m_session))
                 m_sessionRunning = false;
                 break;
@@ -1619,31 +1665,30 @@ struct OpenXrProgram final : IOpenXrProgram {
         };
         CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
 
-        //SetMaskedPassthrough();
-
-        std::uint32_t layerCount = 0;
-        std::array<const XrCompositionLayerBaseHeader*, 1> layers{};
-        //std::array<const XrCompositionLayerBaseHeader*, 2> layers{};
-        //XrCompositionLayerPassthroughFB passthroughLayer;
-        //if (m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE) {
-        //    passthroughLayer = {
-        //        .type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
-        //        .next = nullptr,
-        //        .flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
-        //        .space = XR_NULL_HANDLE,
-        //        .layerHandle = m_ptLayerData.reconPassthroughLayer,
-        //    };
-        //    layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughLayer);
-        //}
-
+        XrCompositionLayerPassthroughFB passthroughLayer;
         XrCompositionLayerProjection layer {
             .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
             .next = nullptr
-        };        
+        };
+        std::uint32_t layerCount = 0;
+        std::array<const XrCompositionLayerBaseHeader*, 2> layers{};
         std::array<XrCompositionLayerProjectionView,2> projectionLayerViews;
-        if (frameState.shouldRender == XR_TRUE) {
+        if (frameState.shouldRender == XR_TRUE)
+        {
+            const auto passthroughMode = m_currentPTMode.load();
+            if (passthroughMode != ALXR::PassthroughMode::None) {
+                assert(m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE);
+                passthroughLayer = {
+                    .type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
+                    .next = nullptr,
+                    .flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+                    .space = XR_NULL_HANDLE,
+                    .layerHandle = m_ptLayerData.reconPassthroughLayer,
+                };
+                layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughLayer);
+            }
             const std::span<const XrView> views { predictedViews.begin(), predictedViews.end() };
-            if (RenderLayer(predictedDisplayTime, views, projectionLayerViews, layer)) {
+            if (RenderLayer(predictedDisplayTime, views, projectionLayerViews, layer, passthroughMode)) {
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
             }
         }
@@ -1725,20 +1770,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         return true;
     }
 
-    bool RenderLayer(const XrTime predictedDisplayTime, std::array<XrCompositionLayerProjectionView,2>& projectionLayerViews,
-        XrCompositionLayerProjection& layer) {
-
-        const uint32_t viewCapacityInput = static_cast<std::uint32_t>(m_views.size());
-        if (!LocateViews(predictedDisplayTime, viewCapacityInput, m_views.data()))
-            return false;
-        const std::span<const XrView> views { m_views.data(), m_views.size() };
-        return RenderLayer
-        (
-            predictedDisplayTime, views,
-            projectionLayerViews, layer
-        );
-    }
-
     using VizCubeList = std::vector<Cube>;
     VizCubeList GetVisualizedCubes(const XrTime predictedDisplayTime) const {
         // For each locatable space that we want to visualize, render a 25cm cube.
@@ -1787,7 +1818,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         const XrTime predictedDisplayTime,
         const std::span<const XrView>& views,
         std::array<XrCompositionLayerProjectionView,2>& projectionLayerViews,
-        XrCompositionLayerProjection& layer
+        XrCompositionLayerProjection& layer,
+        const ALXR::PassthroughMode mode
     )
     {
         assert(projectionLayerViews.size() == views.size());
@@ -1831,7 +1863,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
             if (isVideoStream)
-                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);//, cubes);
+                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, static_cast<::PassthroughMode>(mode));
             else
                 m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, vizCubes);
             
@@ -1842,14 +1874,18 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
         }
 
-        layer.space = m_appSpace;
-        layer.layerFlags = XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-        // passthrough api flags:
-        //layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
-        //                   XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
-        //                   XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
-        layer.viewCount = (uint32_t)projectionLayerViews.size();
-        layer.views = projectionLayerViews.data();
+        constexpr static const XrCompositionLayerFlags LayerFlags = //XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+            XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
+            XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+        layer = XrCompositionLayerProjection {
+            .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
+            .next = nullptr,
+            .layerFlags = LayerFlags,
+            .space = m_appSpace,
+            .viewCount = (uint32_t)projectionLayerViews.size(),
+            .views = projectionLayerViews.data()
+        };
         return true;
     }
 

@@ -9,6 +9,13 @@ struct Cube {
     XrVector3f Scale;
 };
 
+enum class PassthroughMode : std::size_t {
+    None = 0,
+    BlendLayer,
+    MaskLayer,
+    TypeCount,
+};
+
 enum class XrPixelFormat : std::uint32_t {
     Uknown = 0,
     NV12,
@@ -64,7 +71,8 @@ struct IGraphicsPlugin {
         const std::uint32_t /*ViewID*/,
         const XrCompositionLayerProjectionView& /*layerView*/,
         const XrSwapchainImageBaseHeader* /*swapchainImage*/,
-        const std::int64_t /*swapchainFormat*/
+        const std::int64_t /*swapchainFormat*/,
+        const PassthroughMode /*newMode*/ = PassthroughMode::None
     ) {}
 
     // Get recommended number of sub-data element samples in view (recommendedSwapchainSampleCount)
