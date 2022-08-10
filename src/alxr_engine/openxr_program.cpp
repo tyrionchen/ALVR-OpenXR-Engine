@@ -30,6 +30,9 @@
 #include <algorithm>
 #include <mutex>
 #include <shared_mutex>
+#ifdef XR_USE_PLATFORM_ANDROID
+    #include <unistd.h>
+#endif
 
 #include "xr_utils.h"
 #include "concurrent_queue.h"
@@ -451,6 +454,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         // Require XR_EXT_win32_appcontainer_compatible extension when building in UWP context.
         { XR_EXT_WIN32_APPCONTAINER_COMPATIBLE_EXTENSION_NAME, false },
 #endif
+#ifdef XR_USE_PLATFORM_ANDROID
+        { XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME, false },
+#endif
+        { XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME, false },
         { XR_MSFT_UNBOUNDED_REFERENCE_SPACE_EXTENSION_NAME, false },
         { XR_MSFT_HAND_INTERACTION_EXTENSION_NAME, false },
         { XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME, false },
@@ -464,6 +471,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         { XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
 #ifdef XR_USE_OXR_PICO
 #pragma message ("Pico Neo 3 OXR Extensions Enabled.")
+        { XR_PICO_PERFORMANCE_SETTINGS_EXTENSION_NAME, false },
         { XR_PICO_VIEW_STATE_EXT_ENABLE_EXTENSION_NAME, false },
         { XR_PICO_FRAME_END_INFO_EXT_EXTENSION_NAME, false },
         { XR_PICO_ANDROID_CONTROLLER_FUNCTION_EXT_ENABLE_EXTENSION_NAME, false },
@@ -1173,6 +1181,70 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_currentPTMode.store(newMode);
     }
 
+    void SetPerformanceLevels() {
+        if (!IsSessionRunning())
+            return;
+
+        if (IsExtEnabled(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)) {
+            PFN_xrPerfSettingsSetPerformanceLevelEXT setPerfLevel = nullptr;
+            CHECK_XRCMD(xrGetInstanceProcAddr
+            (
+                m_instance,
+                "xrPerfSettingsSetPerformanceLevelEXT",
+                reinterpret_cast<PFN_xrVoidFunction*>(&setPerfLevel)
+            ));
+            CHECK(setPerfLevel != nullptr);
+            CHECK_XRCMD(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
+            CHECK_XRCMD(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_BOOST_EXT));
+        }
+#ifdef XR_USE_OXR_PICO
+#if 0 // TODO: Find out if the "level" parameter takes the same values as XrPerfSettingsLevelEXT
+        if (IsExtEnabled(XR_PICO_PERFORMANCE_SETTINGS_EXTENSION_NAME)) {
+            PFN_xrSetPerformanceLevelPICO setPerfLevel = nullptr;
+            const XrResult result = xrGetInstanceProcAddr
+            (
+                m_instance,
+                "xrSetPerformanceLevelPICO",
+                reinterpret_cast<PFN_xrVoidFunction*>(&setPerfLevel)
+            );
+            if (result != XR_SUCCESS) {
+                Log::Write(Log::Level::Warning, Fmt("Unable to load xr-extension function: %s, error-code: %d", "xrSetPerformanceLevelPICO", result));
+                return;
+            }
+            CHECK(setPerfLevel != nullptr);
+            CHECK_XRCMD(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
+            CHECK_XRCMD(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_BOOST_EXT));
+        }
+#endif
+#endif
+    }
+
+#ifdef XR_USE_PLATFORM_ANDROID
+    inline bool SetAndroidAppThread(const pid_t threadId, const AndroidThreadType threadType) {
+        if (!IsSessionRunning() ||
+            !IsExtEnabled(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME))
+            return false;
+        
+        PFN_xrSetAndroidApplicationThreadKHR setAndroidAppThreadFn = nullptr;
+        CHECK_XRCMD(xrGetInstanceProcAddr
+        (
+            m_instance,
+            "xrSetAndroidApplicationThreadKHR",
+            reinterpret_cast<PFN_xrVoidFunction*>(&setAndroidAppThreadFn)
+        ));
+        Log::Write(Log::Level::Info, Fmt("Setting android app thread, type: %lu, thread-id: %d", threadType, threadId));
+        const auto result = setAndroidAppThreadFn(m_session, static_cast<XrAndroidThreadTypeKHR>(threadType), threadId);
+        if (XR_FAILED(result)) {
+            Log::Write(Log::Level::Info, Fmt("Failed setting android app thread, type: %lu, thread-id: %d, result-id: %lu", threadType, threadId, result));
+        }
+        return XR_SUCCEEDED(result);
+    }
+
+    virtual inline bool SetAndroidAppThread(const AndroidThreadType threadType) override {
+        return SetAndroidAppThread(gettid(), threadType);
+    }
+#endif
+
     void CreateVisualizedSpaces() {
         CHECK(m_session != XR_NULL_HANDLE);
 #ifdef ALXR_ENGINE_ENABLE_VIZ_SPACES
@@ -1430,6 +1502,15 @@ struct OpenXrProgram final : IOpenXrProgram {
                     m_interactionManager->LogActions();
                     break;
                 }
+                case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: {
+                    const auto& perfSettingsEvent = *reinterpret_cast<const XrEventDataPerfSettingsEXT*>(event);
+                    Log::Write(Log::Level::Info,
+                        Fmt("PerfSettingsChanged: type %d subdomain %d : level %d -> level %d",
+                            perfSettingsEvent.type,
+                            perfSettingsEvent.subDomain,
+                            perfSettingsEvent.fromLevel,
+                            perfSettingsEvent.toLevel));
+                } break;
                 case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
                     const auto& spaceChangedEvent = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
                     Log::Write(Log::Level::Verbose, Fmt("reference space: %d changing", spaceChangedEvent.referenceSpaceType));
@@ -1473,6 +1554,9 @@ struct OpenXrProgram final : IOpenXrProgram {
                 XrResult result;
                 CHECK_XRCMD(result = xrBeginSession(m_session, &sessionBeginInfo));
                 m_sessionRunning = (result == XR_SUCCESS);
+                SetPerformanceLevels();
+                SetAndroidAppThread(AndroidThreadType::AppMain);
+                SetAndroidAppThread(AndroidThreadType::RendererMain);
                 break;
             }
             case XR_SESSION_STATE_STOPPING: {

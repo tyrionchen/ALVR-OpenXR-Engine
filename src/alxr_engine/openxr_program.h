@@ -18,6 +18,13 @@ struct ALXRPaths;
 struct HapticsFeedback;
 }
 
+enum class AndroidThreadType : std::int32_t {
+    AppMain        = 1,
+    AppWorker      = 2,
+    RendererMain   = 3,
+    RendererWorker = 4
+};
+
 enum class OxrRuntimeType
 {
     SteamVR,
@@ -115,6 +122,8 @@ struct IOpenXrProgram {
 
     virtual void Pause() = 0;
     virtual void Resume() = 0;
+
+    virtual inline bool SetAndroidAppThread(const AndroidThreadType) { return false; }
 };
 
 struct Swapchain {
