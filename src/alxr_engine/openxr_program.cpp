@@ -1198,7 +1198,6 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_BOOST_EXT));
         }
 #ifdef XR_USE_OXR_PICO
-#if 0 // TODO: Find out if the "level" parameter takes the same values as XrPerfSettingsLevelEXT
         if (IsExtEnabled(XR_PICO_PERFORMANCE_SETTINGS_EXTENSION_NAME)) {
             PFN_xrSetPerformanceLevelPICO setPerfLevel = nullptr;
             const XrResult result = xrGetInstanceProcAddr
@@ -1207,15 +1206,15 @@ struct OpenXrProgram final : IOpenXrProgram {
                 "xrSetPerformanceLevelPICO",
                 reinterpret_cast<PFN_xrVoidFunction*>(&setPerfLevel)
             );
-            if (result != XR_SUCCESS) {
+            if (XR_FAILED(result) || setPerfLevel == nullptr) {
                 Log::Write(Log::Level::Warning, Fmt("Unable to load xr-extension function: %s, error-code: %d", "xrSetPerformanceLevelPICO", result));
                 return;
             }
-            CHECK(setPerfLevel != nullptr);
-            CHECK_XRCMD(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT));
-            CHECK_XRCMD(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_BOOST_EXT));
+            if (XR_FAILED(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_CPU_EXT, XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT)))
+                Log::Write(Log::Level::Warning, "Failed to set CPU performance level");
+            if (XR_FAILED(setPerfLevel(m_session, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, XR_PERF_SETTINGS_LEVEL_BOOST_EXT)))
+                Log::Write(Log::Level::Warning, "Failed to set GPU performance level");
         }
-#endif
 #endif
     }
 
