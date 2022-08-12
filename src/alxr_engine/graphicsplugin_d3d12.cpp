@@ -573,7 +573,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC& pipelineStateDesc,
         const DXGI_FORMAT swapchainFormat,
         const std::array<ComPtr<ID3DBlob>, 2>& shaders,
-        const std::array<D3D12_INPUT_ELEMENT_DESC, N>& inputElementDescs
+        const std::array<const D3D12_INPUT_ELEMENT_DESC, N>& inputElementDescs
     )
     {
         pipelineStateDesc.VS = { shaders[0]->GetBufferPointer(), shaders[0]->GetBufferSize() };
@@ -651,7 +651,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             return iter->second.Get();
         }
 
-        constexpr const std::array<D3D12_INPUT_ELEMENT_DESC, 2> inputElementDescs = {
+        constexpr static const std::array<const D3D12_INPUT_ELEMENT_DESC, 2> inputElementDescs = {
             D3D12_INPUT_ELEMENT_DESC {
                 "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
                  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
@@ -661,11 +661,10 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
                 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
             },
         };
-        const std::array<ComPtr<ID3DBlob>, 2> shaders{ m_vertexShaderBytes, m_pixelShaderBytes };
-
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineStateDesc{
             .pRootSignature = m_rootSignature.Get()
         };
+        const std::array<ComPtr<ID3DBlob>, 2> shaders{ m_vertexShaderBytes, m_pixelShaderBytes };
         MakeDefaultPipelineStateDesc(pipelineStateDesc, swapchainFormat, shaders, inputElementDescs);
 
         ComPtr<ID3D12PipelineState> pipelineState;
@@ -689,20 +688,19 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             return iter->second[VideoPipelineIndex(is3PlaneFormat, newMode)].Get();
         }
 
-        constexpr const std::array<D3D12_INPUT_ELEMENT_DESC, 2> inputElementDescs {
-            D3D12_INPUT_ELEMENT_DESC {
-                "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
-                 D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
-            },
-            D3D12_INPUT_ELEMENT_DESC {
-                "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
-                D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
-            },
-        };
-
         using BlobList = std::array<ComPtr<ID3DBlob>, 2>;
         const auto makePipeline = [&](const BlobList& shaders) -> ComPtr<ID3D12PipelineState>
         {
+            constexpr static const std::array<const D3D12_INPUT_ELEMENT_DESC, 2> inputElementDescs{
+                D3D12_INPUT_ELEMENT_DESC {
+                    "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+                     D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+                },
+                D3D12_INPUT_ELEMENT_DESC {
+                    "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+                    D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+                },
+            };
             D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineStateDesc{
                 .pRootSignature = m_rootSignature.Get()
             };
