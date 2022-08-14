@@ -48,7 +48,7 @@ struct IGraphicsPlugin {
     virtual std::vector<std::string> GetInstanceExtensions() const = 0;
 
     // Create an instance of this graphics api for the provided instance and systemId.
-    virtual void InitializeDevice(XrInstance instance, XrSystemId systemId) = 0;
+    virtual void InitializeDevice(XrInstance instance, XrSystemId systemId, const XrEnvironmentBlendMode /*newMode*/) = 0;
 
     // Select the preferred swapchain format from the list of available formats.
     virtual int64_t SelectColorSwapchainFormat(const std::vector<int64_t>& runtimeFormats) const = 0;
@@ -64,8 +64,14 @@ struct IGraphicsPlugin {
     virtual void ClearSwapchainImageStructs() {}
 
     // Render to a swapchain image for a projection view.
-    virtual void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-                            int64_t swapchainFormat, const std::vector<Cube>& cubes) = 0;
+    virtual void RenderView
+    (
+        const XrCompositionLayerProjectionView& layerView,
+        const XrSwapchainImageBaseHeader* swapchainImage,
+        const std::int64_t swapchainFormat,
+        const PassthroughMode /*newMode*/,
+        const std::vector<Cube>& cubes
+    ) = 0;
     
     virtual void BeginVideoView() {}
     virtual void EndVideoView() {}

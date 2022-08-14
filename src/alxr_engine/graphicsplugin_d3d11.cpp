@@ -133,7 +133,7 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
 
     using FeatureLvlList = std::vector<D3D_FEATURE_LEVEL>;
 
-    void InitializeDevice(XrInstance instance, XrSystemId systemId) override {
+    void InitializeDevice(XrInstance instance, XrSystemId systemId, const XrEnvironmentBlendMode newMode) override {
         PFN_xrGetD3D11GraphicsRequirementsKHR pfnGetD3D11GraphicsRequirementsKHR = nullptr;
         CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR",
                                           reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D11GraphicsRequirementsKHR)));
@@ -162,6 +162,8 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
         InitializeResources();
 
         m_graphicsBinding.device = m_device.Get();
+
+        SetEnvironmentBlendMode(newMode);
     }
 
     void InitializeD3D11VADevice(const ComPtr<IDXGIAdapter1>& adapter, const FeatureLvlList& featureLevels)
@@ -356,7 +358,7 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
 
     template < typename RenderFun >
     void RenderViewImpl(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-                    int64_t swapchainFormat, const FLOAT clearColour[4], RenderFun&& renderFn) {
+                    int64_t swapchainFormat, const ALXR::CColorType& clearColour, RenderFun&& renderFn) {
         CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
 
         ID3D11Texture2D* const colorTexture = reinterpret_cast<const XrSwapchainImageD3D11KHR*>(swapchainImage)->texture;
@@ -385,10 +387,20 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
         renderFn();
     }
 
-    virtual void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-        int64_t swapchainFormat, const std::vector<Cube>& cubes) override
+    inline std::size_t ClearColorIndex(const PassthroughMode ptMode) const {
+        static_assert(ALXR::ClearColors.size() >= 4);
+        static_assert(ALXR::VideoClearColors.size() >= 4);
+        return ptMode == PassthroughMode::None ? m_clearColorIndex : 3;
+    }
+
+    virtual void RenderView
+    (
+        const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
+        const std::int64_t swapchainFormat, const PassthroughMode mode,
+        const std::vector<Cube>& cubes
+    ) override
     {
-        RenderViewImpl(layerView, swapchainImage, swapchainFormat, DirectX::Colors::DarkSlateGray, [&]()
+        RenderViewImpl(layerView, swapchainImage, swapchainFormat, ALXR::ClearColors[ClearColorIndex(mode)], [&]()
         {
             const XMMATRIX spaceToView = XMMatrixInverse(nullptr, LoadXrPose(layerView.pose));
             XrMatrix4x4f projectionMatrix;
@@ -835,7 +847,7 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
         const PassthroughMode newMode /*= PassthroughMode::None*/
     ) override
     {
-        RenderViewImpl(layerView, swapchainImage, swapchainFormat, DirectX::Colors::Black, [&]()
+        RenderViewImpl(layerView, swapchainImage, swapchainFormat, ALXR::VideoClearColors[ClearColorIndex(newMode)], [&]()
         {
             if (currentTextureIdx == std::size_t(-1))
                 return;
@@ -880,6 +892,10 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
 
             m_deviceContext->DrawIndexed((UINT)QuadIndices.size(), 0, 0);
         });
+    }
+
+    inline void SetEnvironmentBlendMode(const XrEnvironmentBlendMode newMode) {
+        m_clearColorIndex = newMode-1;
     }
 
 #include "cuda/d3d11cuda_interop.inl"
@@ -933,6 +949,9 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
 
     // Map color buffer to associated depth buffer. This map is populated on demand.
     std::map<ID3D11Texture2D*, ComPtr<ID3D11DepthStencilView>> m_colorToDepthMap;
+
+    static_assert(XR_ENVIRONMENT_BLEND_MODE_OPAQUE == 1);
+    std::size_t m_clearColorIndex{ (XR_ENVIRONMENT_BLEND_MODE_OPAQUE - 1) };
 };
 }  // namespace
 

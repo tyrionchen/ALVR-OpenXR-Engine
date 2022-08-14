@@ -300,7 +300,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
 
     std::vector<std::string> GetInstanceExtensions() const override { return { XR_KHR_D3D12_ENABLE_EXTENSION_NAME }; }
 
-    void InitializeDevice(XrInstance instance, XrSystemId systemId) override {
+    void InitializeDevice(XrInstance instance, XrSystemId systemId, const XrEnvironmentBlendMode newMode) override {
         PFN_xrGetD3D12GraphicsRequirementsKHR pfnGetD3D12GraphicsRequirementsKHR = nullptr;
         CHECK_XRCMD(xrGetInstanceProcAddr(instance, "xrGetD3D12GraphicsRequirementsKHR",
             reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetD3D12GraphicsRequirementsKHR)));
@@ -326,6 +326,8 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
 
         m_graphicsBinding.device = m_device.Get();
         m_graphicsBinding.queue = m_cmdQueue.Get();
+
+        SetEnvironmentBlendMode(newMode);
     }
 
     void InitializeResources() {
@@ -742,7 +744,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     }
 
     template < typename RenderFun >
-    void RenderViewImpl
+    inline void RenderViewImpl
     (
         const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage, const int64_t swapchainFormat,
         RenderFun&& renderFn,
@@ -840,8 +842,18 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
         swapchainContext.SetFrameFenceValue(m_fenceValue);
     }
 
-    virtual void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-        int64_t swapchainFormat, const std::vector<Cube>& cubes) override
+    inline std::size_t ClearColorIndex(const PassthroughMode ptMode) const {
+        static_assert(ALXR::ClearColors.size() >= 4);
+        static_assert(ALXR::VideoClearColors.size() >= 4);
+        return ptMode == PassthroughMode::None ? m_clearColorIndex : 3;
+    }
+
+    virtual void RenderView
+    (
+        const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
+        const std::int64_t swapchainFormat, const PassthroughMode ptMode,
+        const std::vector<Cube>& cubes
+    ) override
     {
         using CpuDescHandle = D3D12_CPU_DESCRIPTOR_HANDLE;
         using CommandListPtr = ComPtr<ID3D12GraphicsCommandList>;
@@ -855,7 +867,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
         {
             // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
             // TODO: Do not clear to a color when using a pass-through view configuration.
-            cmdList->ClearRenderTargetView(renderTargetView, DirectX::Colors::DarkSlateGray, 0, nullptr);
+            cmdList->ClearRenderTargetView(renderTargetView, ALXR::ClearColors[ClearColorIndex(ptMode)], 0, nullptr);
             cmdList->ClearDepthStencilView(depthStencilView, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
             const D3D12_CPU_DESCRIPTOR_HANDLE renderTargets[] = { renderTargetView };
@@ -1399,7 +1411,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
 
             // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
             // TODO: Do not clear to a color when using a pass-through view configuration.
-            cmdList->ClearRenderTargetView(renderTargetView, DirectX::Colors::Black, 0, nullptr);
+            cmdList->ClearRenderTargetView(renderTargetView, ALXR::VideoClearColors[ClearColorIndex(newMode)], 0, nullptr);
             cmdList->ClearDepthStencilView(depthStencilView, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
             const D3D12_CPU_DESCRIPTOR_HANDLE renderTargets[] = { renderTargetView };
@@ -1454,6 +1466,10 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
         }, RenderPipelineType::Video, newMode);
     }
 
+    inline void SetEnvironmentBlendMode(const XrEnvironmentBlendMode newMode) {
+        m_clearColorIndex = (newMode - 1);
+    }
+
     using ID3D12CommandQueuePtr = ComPtr<ID3D12CommandQueue>;
 
 #include "cuda/d3d12cuda_interop.inl"
@@ -1477,6 +1493,9 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     std::map<DXGI_FORMAT, ComPtr<ID3D12PipelineState>> m_pipelineStates;
     ComPtr<ID3D12Resource> m_cubeVertexBuffer;
     ComPtr<ID3D12Resource> m_cubeIndexBuffer;
+
+    static_assert(XR_ENVIRONMENT_BLEND_MODE_OPAQUE == 1);
+    std::size_t m_clearColorIndex{ (XR_ENVIRONMENT_BLEND_MODE_OPAQUE - 1) };
     ////////////////////////////////////////////////////////////////////////
 
     D3D12FenceEvent                 m_texRendereComplete {};

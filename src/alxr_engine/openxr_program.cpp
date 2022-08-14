@@ -729,7 +729,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         // The graphics API can initialize the graphics device now that the systemId and instance
         // handle are available.
-        m_graphicsPlugin->InitializeDevice(m_instance, m_systemId);
+        m_graphicsPlugin->InitializeDevice(m_instance, m_systemId, m_environmentBlendMode);
     }
 
     inline std::vector<XrReferenceSpaceType> GetAvailableReferenceSpaces() const
@@ -1749,18 +1749,16 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
 
         XrCompositionLayerPassthroughFB passthroughLayer;
-        XrCompositionLayerProjection layer {
-            .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-            .next = nullptr
-        };
+        XrCompositionLayerProjection    layer;
         std::uint32_t layerCount = 0;
         std::array<const XrCompositionLayerBaseHeader*, 2> layers{};
         std::array<XrCompositionLayerProjectionView,2> projectionLayerViews;
         if (frameState.shouldRender == XR_TRUE)
         {
+            XrCompositionLayerFlags ptRenderLayerFlags = 0;
             const auto passthroughMode = m_currentPTMode.load();
-            if (passthroughMode != ALXR::PassthroughMode::None) {
-                assert(m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE);
+            if (passthroughMode != ALXR::PassthroughMode::None &&
+                m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE) {
                 passthroughLayer = {
                     .type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
                     .next = nullptr,
@@ -1769,9 +1767,11 @@ struct OpenXrProgram final : IOpenXrProgram {
                     .layerHandle = m_ptLayerData.reconPassthroughLayer,
                 };
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughLayer);
+                ptRenderLayerFlags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
             }
             const std::span<const XrView> views { predictedViews.begin(), predictedViews.end() };
             if (RenderLayer(predictedDisplayTime, views, projectionLayerViews, layer, passthroughMode)) {
+                layer.layerFlags |= ptRenderLayerFlags;
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
             }
         }
@@ -1909,7 +1909,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
         const auto vizCubes = isVideoStream ? VizCubeList{} : GetVisualizedCubes(predictedDisplayTime);
-
+        const auto ptMode = static_cast<const ::PassthroughMode>(mode);
         // Render view to the appropriate part of the swapchain image.
         for (std::uint32_t i = 0; i < views.size(); ++i) {
             // Each view has a separate swapchain which is acquired, rendered to, and released.
@@ -1946,9 +1946,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
             if (isVideoStream)
-                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, static_cast<::PassthroughMode>(mode));
+                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode);
             else
-                m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, vizCubes);
+                m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode, vizCubes);
             
             constexpr const XrSwapchainImageReleaseInfo releaseInfo{
                 .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
@@ -1957,10 +1957,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
         }
 
-        constexpr static const XrCompositionLayerFlags LayerFlags = //XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        constexpr static const XrCompositionLayerFlags LayerFlags =
             XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
-            XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT |
-            XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+            XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT;
         layer = XrCompositionLayerProjection {
             .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
             .next = nullptr,

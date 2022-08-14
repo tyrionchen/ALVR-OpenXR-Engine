@@ -2173,14 +2173,14 @@ struct SwapchainImageContext {
         return (uint32_t)(p - &swapchainImages[0]);
     }
 
-    void BindRenderTarget(uint32_t index, VkRenderPassBeginInfo* renderPassBeginInfo) {
+    inline void BindRenderTarget(const std::uint32_t index, VkRenderPassBeginInfo& renderPassBeginInfo) {
         if (renderTarget[index].fb == VK_NULL_HANDLE) {
             renderTarget[index].Create(m_vkDevice, swapchainImages[index].image, depthBuffer.depthImage, size, rp);
         }
-        renderPassBeginInfo->renderPass = rp.pass;
-        renderPassBeginInfo->framebuffer = renderTarget[index].fb;
-        renderPassBeginInfo->renderArea.offset = {0, 0};
-        renderPassBeginInfo->renderArea.extent = size;
+        renderPassBeginInfo.renderPass = rp.pass;
+        renderPassBeginInfo.framebuffer = renderTarget[index].fb;
+        renderPassBeginInfo.renderArea.offset = {0, 0};
+        renderPassBeginInfo.renderArea.extent = size;
     }
 
    private:
@@ -2495,7 +2495,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
             std::memcpy(m_vkDeviceLUID.data(), vkPhysicalDeviceIDProperties.deviceLUID, VK_UUID_SIZE);
     }
 
-    void InitializeDevice(XrInstance instance, XrSystemId systemId) override {
+    void InitializeDevice(XrInstance instance, XrSystemId systemId, const XrEnvironmentBlendMode newMode) override {
         // Create the Vulkan device for the adapter associated with the system.
         // Extension function must be loaded by name
         XrGraphicsRequirementsVulkan2KHR graphicsRequirements{ .type=XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN2_KHR, .next=nullptr };
@@ -2700,6 +2700,8 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         m_graphicsBinding.device = m_vkDevice;
         m_graphicsBinding.queueFamilyIndex = queueInfo.queueFamilyIndex;
         m_graphicsBinding.queueIndex = 0;
+
+        SetEnvironmentBlendMode(newMode);
     }
 
 #ifdef USE_ONLINE_VULKAN_SHADERC
@@ -2940,7 +2942,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
 
         const auto swapchainContext = m_swapchainImageContextMap[swapchainImage];
-        const uint32_t imageIndex = swapchainContext->ImageIndex(swapchainImage);
+        const std::uint32_t imageIndex = swapchainContext->ImageIndex(swapchainImage);
 
         m_cmdBuffer.Reset();
         m_cmdBuffer.Begin();
@@ -2948,26 +2950,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         // Ensure depth is in the right layout
         swapchainContext->depthBuffer.TransitionLayout(&m_cmdBuffer, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-        // Bind and clear eye render target
-        constexpr static const XrColor4f darkSlateGrey{ 0.184313729f, 0.309803933f, 0.309803933f, 0.2f };//1.0f };
-        constexpr static const std::array<const VkClearValue, 2> clearValues {
-            VkClearValue {.color {.float32 = { darkSlateGrey.r, darkSlateGrey.g, darkSlateGrey.b, darkSlateGrey.a }}},
-            VkClearValue {
-                .depthStencil {
-                    .depth = 1.0f,
-                    .stencil = 0
-                }
-            }
-        };
-        VkRenderPassBeginInfo renderPassBeginInfo {
-            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .pNext = nullptr,
-            .clearValueCount = (uint32_t)clearValues.size(),
-            .pClearValues = clearValues.data()
-        };
-        swapchainContext->BindRenderTarget(imageIndex, &renderPassBeginInfo);
-
-        renderFun(renderPassBeginInfo, swapchainContext);
+        renderFun(imageIndex, swapchainContext);
 
         m_cmdBuffer.End();
 #if 1 //#ifdef XR_USE_PLATFORM_ANDROID
@@ -2988,10 +2971,84 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 #endif
     }
 
-    void RenderView(const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
-        int64_t swapchainFormat, const std::vector<Cube>& cubes) override {
-        RenderViewImpl(layerView, swapchainImage, swapchainFormat, [&, this](auto& renderPassBeginInfo, auto swapchainContext)
+    using ClearValueT = std::array<const VkClearValue, 2>;
+    using OpaqueClear = ClearValueT;
+    using AdditiveClear = ClearValueT;
+    using AlphaBlendClear = ClearValueT;
+
+    constexpr static const VkClearValue ClearDepthStencilValue {
+        .depthStencil {
+            .depth = 1.0f,
+            .stencil = 0
+        }
+    };
+
+    using CColorType = std::array<const float, 3>;
+    constexpr static const CColorType DarkGraySlate{ 0.184313729f, 0.309803933f, 0.309803933f };
+    constexpr static const CColorType CClear { 0.0f, 0.0f, 0.0f };
+
+    constexpr static const std::array<const ClearValueT, 4> ConstClearValues{
+        OpaqueClear {
+            VkClearValue {.color {.float32 = { DarkGraySlate[0], DarkGraySlate[1], DarkGraySlate[2], 1.0f}}},
+            ClearDepthStencilValue
+        },
+        AdditiveClear {
+            VkClearValue {.color {.float32 = { CClear[0], CClear[1], CClear[2], 0.0f}}},
+            ClearDepthStencilValue
+        },
+        AlphaBlendClear {
+            VkClearValue {.color {.float32 = { CClear[0], CClear[1], CClear[2], 0.5f }}},
+            ClearDepthStencilValue
+        },
+        OpaqueClear { // for XR_FB_passthrough / Passthrough Modes.
+            VkClearValue {.color {.float32 = { DarkGraySlate[0], DarkGraySlate[1], DarkGraySlate[2], 0.2f}}},
+            ClearDepthStencilValue
+        },
+    };
+    static_assert(ConstClearValues.size() >= 4);
+
+    constexpr static const std::array<const ClearValueT, 4> VideoClearValues{
+        OpaqueClear {
+            VkClearValue {.color {.float32 = { CClear[0], CClear[1], CClear[2], 1.0f }}},
+            ClearDepthStencilValue
+        },
+        AdditiveClear {
+            VkClearValue {.color {.float32 = { CClear[0], CClear[1], CClear[2], 0.0f }}},
+            ClearDepthStencilValue
+        },
+        AlphaBlendClear {
+            VkClearValue {.color {.float32 = { CClear[0], CClear[1], CClear[2], 0.5f }}},
+            ClearDepthStencilValue
+        },
+        OpaqueClear { // for XR_FB_passthrough / Passthrough Modes.
+            VkClearValue {.color {.float32 = { CClear[0], CClear[1], CClear[2], 0.2f}}},
+            ClearDepthStencilValue
+        },
+    };
+    static_assert(VideoClearValues.size() >= 4);
+
+    inline std::size_t ClearValueIndex(const PassthroughMode ptMode) const {       
+        return ptMode == PassthroughMode::None ? m_clearColorIndex : 3u;
+    }
+
+    void RenderView
+    (
+        const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,
+        const std::int64_t swapchainFormat, const PassthroughMode newMode,
+        const std::vector<Cube>& cubes
+    ) override {
+        RenderViewImpl(layerView, swapchainImage, swapchainFormat, [&, this](const std::uint32_t imageIndex, const auto swapchainContext)
         {
+            const auto& clearValues = ConstClearValues[ClearValueIndex(newMode)];
+            VkRenderPassBeginInfo renderPassBeginInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                .pNext = nullptr,
+                .clearValueCount = (uint32_t)clearValues.size(),
+                .pClearValues = clearValues.data()
+            };
+            // Bind and clear eye render target
+            swapchainContext->BindRenderTarget(imageIndex, /*out*/ renderPassBeginInfo);
+
             vkCmdBeginRenderPass(m_cmdBuffer.buf, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
             vkCmdBindPipeline(m_cmdBuffer.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, swapchainContext->pipe.pipe);
@@ -3791,8 +3848,18 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         const PassthroughMode mode /*= PassthroughMode::None*/
     ) override
     {
-        RenderViewImpl(layerView, swapchainImage, swapchainFormat, [&, this](auto& renderPassBeginInfo, auto /*swapchainContext*/)
+        RenderViewImpl(layerView, swapchainImage, swapchainFormat, [&, this](const std::uint32_t imageIndex, const auto swapchainContext)
         {
+            const auto& clearValues = VideoClearValues[ClearValueIndex(mode)];
+            VkRenderPassBeginInfo renderPassBeginInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                .pNext = nullptr,
+                .clearValueCount = (uint32_t)clearValues.size(),
+                .pClearValues = clearValues.data()
+            };
+            // Bind and clear eye render target
+            swapchainContext->BindRenderTarget(imageIndex, /*out*/ renderPassBeginInfo);
+
 #ifdef XR_USE_PLATFORM_ANDROID
             if (m_currentTexture.texture.texImage == VK_NULL_HANDLE)
                 return;
@@ -3820,6 +3887,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 
             vkCmdEndRenderPass(m_cmdBuffer.buf);
         });
+    }
+
+    inline void SetEnvironmentBlendMode(const XrEnvironmentBlendMode newMode) {
+        m_clearColorIndex = (newMode - 1);
     }
     
     virtual ~VulkanGraphicsPlugin() override {
@@ -4052,6 +4123,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     VideoTexture m_currentTexture{};
     VideoTextureQueue m_videoTexQueue{ 2 };
 #endif
+
+    static_assert(XR_ENVIRONMENT_BLEND_MODE_OPAQUE == 1);
+    std::size_t m_clearColorIndex{ (XR_ENVIRONMENT_BLEND_MODE_OPAQUE - 1) };
 
 // END VIDEO STREAM DATA /////////////////////////////////////////////////////////////
 
