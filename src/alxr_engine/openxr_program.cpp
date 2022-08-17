@@ -339,12 +339,12 @@ struct OpenXrProgram final : IOpenXrProgram {
                 using namespace std::string_view_literals;
                 switch (gapi)
                 {
-                case ALXRGraphicsApi::Vulkan2:  return std::make_tuple(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, "Vulkan2"sv);
-                case ALXRGraphicsApi::Vulkan:   return std::make_tuple(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,  "Vulkan"sv);
-                case ALXRGraphicsApi::D3D12:    return std::make_tuple(XR_KHR_D3D12_ENABLE_EXTENSION_NAME,   "D3D12"sv);
-                case ALXRGraphicsApi::D3D11:    return std::make_tuple(XR_KHR_D3D11_ENABLE_EXTENSION_NAME,   "D3D11"sv);
-                case ALXRGraphicsApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv,          "OpenGLES"sv);
-                default: return std::make_tuple(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, "OpenGL"sv);
+                case ALXRGraphicsApi::Vulkan2:  return std::make_tuple("XR_KHR_vulkan_enable2"sv, "Vulkan2"sv);
+                case ALXRGraphicsApi::Vulkan:   return std::make_tuple("XR_KHR_vulkan_enable"sv, "Vulkan"sv);
+                case ALXRGraphicsApi::D3D12:    return std::make_tuple("XR_KHR_D3D12_enable"sv, "D3D12"sv);
+                case ALXRGraphicsApi::D3D11:    return std::make_tuple("XR_KHR_D3D11_enable"sv, "D3D11"sv);
+                case ALXRGraphicsApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
+                default: return std::make_tuple("XR_KHR_opengl_enable"sv, "OpenGL"sv);
                 }
             };
             for (size_t apiIndex = ALXRGraphicsApi::Vulkan2; apiIndex < size_t(ALXRGraphicsApi::ApiCount); ++apiIndex) {
@@ -464,7 +464,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         { XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME, false },
         { XR_HTC_HAND_INTERACTION_EXTENSION_NAME, false },
         { XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME, false },
+#ifdef XR_USE_PLATFORM_WIN32
         { XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME, false },
+#endif
         { XR_EXT_HAND_TRACKING_EXTENSION_NAME, false },
         { XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME, false },
         { XR_FB_COLOR_SPACE_EXTENSION_NAME, false },
@@ -480,12 +482,22 @@ struct OpenXrProgram final : IOpenXrProgram {
 #endif
     };
     ExtensionMap m_supportedGraphicsContexts = {
-        { XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, false },
-        { XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,  false },
-        { XR_KHR_D3D12_ENABLE_EXTENSION_NAME,   false },
-        { XR_KHR_D3D11_ENABLE_EXTENSION_NAME,   false },
-        { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,  false },
-        { "XR_KHR_opengl_es_enable",            false }
+#ifdef XR_USE_GRAPHICS_API_VULKAN
+        { XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME,   false },
+        { XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,    false },
+#endif
+#ifdef XR_USE_GRAPHICS_API_D3D12
+        { XR_KHR_D3D12_ENABLE_EXTENSION_NAME,     false },
+#endif
+#ifdef XR_USE_GRAPHICS_API_D3D11
+        { XR_KHR_D3D11_ENABLE_EXTENSION_NAME,     false },
+#endif                                            
+#ifdef XR_USE_GRAPHICS_API_OPENGL
+        { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,    false },
+#endif
+#ifdef XR_USE_GRAPHICS_API_OPENGL_ES
+        { XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME, false }
+#endif
     };
 
     void LogLayersAndExtensions() {
