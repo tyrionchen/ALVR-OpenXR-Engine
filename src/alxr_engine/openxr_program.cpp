@@ -339,12 +339,12 @@ struct OpenXrProgram final : IOpenXrProgram {
                 using namespace std::string_view_literals;
                 switch (gapi)
                 {
-                case ALXRGraphicsApi::Vulkan2: return std::make_tuple("XR_KHR_vulkan_enable2"sv, "Vulkan2"sv);
-                case ALXRGraphicsApi::Vulkan: return std::make_tuple("XR_KHR_vulkan_enable"sv, "Vulkan"sv);
-                case ALXRGraphicsApi::D3D12: return std::make_tuple("XR_KHR_D3D12_enable"sv, "D3D12"sv);
-                case ALXRGraphicsApi::D3D11: return std::make_tuple("XR_KHR_D3D11_enable"sv, "D3D11"sv);
-                case ALXRGraphicsApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
-                default: return std::make_tuple("XR_KHR_opengl_enable"sv, "OpenGL"sv);
+                case ALXRGraphicsApi::Vulkan2:  return std::make_tuple(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, "Vulkan2"sv);
+                case ALXRGraphicsApi::Vulkan:   return std::make_tuple(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,  "Vulkan"sv);
+                case ALXRGraphicsApi::D3D12:    return std::make_tuple(XR_KHR_D3D12_ENABLE_EXTENSION_NAME,   "D3D12"sv);
+                case ALXRGraphicsApi::D3D11:    return std::make_tuple(XR_KHR_D3D11_ENABLE_EXTENSION_NAME,   "D3D11"sv);
+                case ALXRGraphicsApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv,          "OpenGLES"sv);
+                default: return std::make_tuple(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME, "OpenGL"sv);
                 }
             };
             for (size_t apiIndex = ALXRGraphicsApi::Vulkan2; apiIndex < size_t(ALXRGraphicsApi::ApiCount); ++apiIndex) {
@@ -463,11 +463,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         { XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME, false },
         { XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME, false },
         { XR_HTC_HAND_INTERACTION_EXTENSION_NAME, false },
-        { "XR_KHR_convert_timespec_time", false },
-        { "XR_KHR_win32_convert_performance_counter_time", false },
-        { "XR_EXT_hand_tracking", false },
-        { "XR_FB_display_refresh_rate", false },
-        { "XR_FB_color_space", false },
+        { XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME, false },
+        { XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME, false },
+        { XR_EXT_HAND_TRACKING_EXTENSION_NAME, false },
+        { XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME, false },
+        { XR_FB_COLOR_SPACE_EXTENSION_NAME, false },
         { XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
 #ifdef XR_USE_OXR_PICO
 #pragma message ("Pico Neo 3 OXR Extensions Enabled.")
@@ -480,12 +480,12 @@ struct OpenXrProgram final : IOpenXrProgram {
 #endif
     };
     ExtensionMap m_supportedGraphicsContexts = {
-        { "XR_KHR_vulkan_enable2",   false },
-        { "XR_KHR_vulkan_enable",    false },
-        { "XR_KHR_D3D12_enable",     false },
-        { "XR_KHR_D3D11_enable",     false },
-        { "XR_KHR_opengl_enable",    false },
-        { "XR_KHR_opengl_es_enable", false }
+        { XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME, false },
+        { XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,  false },
+        { XR_KHR_D3D12_ENABLE_EXTENSION_NAME,   false },
+        { XR_KHR_D3D11_ENABLE_EXTENSION_NAME,   false },
+        { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,  false },
+        { "XR_KHR_opengl_es_enable",            false }
     };
 
     void LogLayersAndExtensions() {
@@ -889,36 +889,36 @@ struct OpenXrProgram final : IOpenXrProgram {
         CHECK(m_session != XR_NULL_HANDLE);
 
 #ifdef XR_USE_PLATFORM_WIN32
-        if (IsExtEnabled("XR_KHR_win32_convert_performance_counter_time"))
+        if (IsExtEnabled(XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME))
         {
-            Log::Write(Log::Level::Info, "XR_KHR_win32_convert_performance_counter_time enabled.");
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertTimeToWin32PerformanceCounterKHR",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertTimeToWin32PerformanceCounterKHR)));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertWin32PerformanceCounterToTimeKHR",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertWin32PerformanceCounterToTimeKHR)));
         }
 #endif
-        if (IsExtEnabled("XR_KHR_convert_timespec_time"))
+        if (IsExtEnabled(XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME))
         {
-            Log::Write(Log::Level::Info, "XR_KHR_convert_timespec_time enabled.");
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_KHR_CONVERT_TIMESPEC_TIME_EXTENSION_NAME));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertTimespecTimeToTimeKHR",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertTimespecTimeToTimeKHR)));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrConvertTimeToTimespecTimeKHR",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertTimeToTimespecTimeKHR)));
         }
 
-        if (IsExtEnabled("XR_FB_color_space"))
+        if (IsExtEnabled(XR_FB_COLOR_SPACE_EXTENSION_NAME))
         {
-            Log::Write(Log::Level::Info, "XR_FB_color_space enabled.");
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_FB_COLOR_SPACE_EXTENSION_NAME));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrEnumerateColorSpacesFB",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnEnumerateColorSpacesFB)));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetColorSpaceFB",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetColorSpaceFB)));
         }
 
-        if (IsExtEnabled("XR_FB_display_refresh_rate"))
+        if (IsExtEnabled(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
         {
-            Log::Write(Log::Level::Info, "XR_FB_display_refresh_rate enabled.");
+            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrEnumerateDisplayRefreshRatesFB",
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnEnumerateDisplayRefreshRatesFB)));
             CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrGetDisplayRefreshRateFB",
