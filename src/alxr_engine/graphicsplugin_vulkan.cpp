@@ -2611,7 +2611,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
             .sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
             .pNext = nullptr,
 #ifdef XR_ENABLE_VULKAN_VALIDATION_LAYER
-            .flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_INFORMATION_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT | VK_DEBUG_REPORT_DEBUG_BIT_EXT,
+            .flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_INFORMATION_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT | VK_DEBUG_REPORT_DEBUG_BIT_EXT,
 #else
             .flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT,
 #endif
@@ -4338,21 +4338,11 @@ struct VulkanGraphicsPluginLegacy final : public VulkanGraphicsPlugin {
                 extensions.push_back(createInfo->vulkanCreateInfo->ppEnabledExtensionNames[i]);
             }
 
-            VkPhysicalDeviceFeatures features{};
-            memcpy(&features, createInfo->vulkanCreateInfo->pEnabledFeatures, sizeof(features));
-
-#if !defined(XR_USE_PLATFORM_ANDROID)
-            VkPhysicalDeviceFeatures availableFeatures{};
-            vkGetPhysicalDeviceFeatures(m_vkPhysicalDevice, &availableFeatures);
-            if (availableFeatures.shaderStorageImageMultisample == VK_TRUE) {
-                // Setting this quiets down a validation error triggered by the Oculus runtime
-                features.shaderStorageImageMultisample = VK_TRUE;
-            }
-#endif
+            // NOTE: Calling function's passed XrVulkanDeviceCreateInfoKHR::VkDeviceCreateInfo will be shallo cloned
+            //       pointer chains will still refer to parent stack, this is intentional to maintain any extension structures/flags.
 
             VkDeviceCreateInfo deviceInfo{.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext=nullptr};
-            memcpy(&deviceInfo, createInfo->vulkanCreateInfo, sizeof(deviceInfo));
-            deviceInfo.pEnabledFeatures = &features;
+            std::memcpy(&deviceInfo, createInfo->vulkanCreateInfo, sizeof(deviceInfo));
             deviceInfo.enabledExtensionCount = (uint32_t)extensions.size();
             deviceInfo.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
 

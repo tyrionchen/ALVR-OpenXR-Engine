@@ -573,7 +573,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
             .action = m_poseAction,
             .subactionPath = m_handSubactionPath[hand]
         };
-        XrActionStatePose poseState{ .type = XR_TYPE_ACTION_STATE_POSE, .next = nullptr };
+        XrActionStatePose poseState{ .type = XR_TYPE_ACTION_STATE_POSE, .next = nullptr, .isActive = XR_FALSE };
         CHECK_XRCMD(xrGetActionStatePose(m_session, &getInfo, &poseState));
         m_handActive[hand] = poseState.isActive;
 
@@ -601,7 +601,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
         const auto& activeProfile = *activeProfilePtr;
         forEachButton(m_boolActionMap, activeProfile.boolMap[hand], [&](const ALVR_INPUT button)
         {
-            XrActionStateBoolean boolValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr };
+            XrActionStateBoolean boolValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr, .isActive = XR_FALSE };
             if (XR_FAILED(xrGetActionStateBoolean(m_session, &getInfo, &boolValue)))
                 return;
             if (boolValue.isActive == XR_TRUE && boolValue.currentState == XR_TRUE) {
@@ -627,7 +627,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
         };
         forEachButton(m_scalarActionMap, activeProfile.scalarMap[hand], [&](const ALVR_INPUT button)
         {
-            XrActionStateFloat floatValue{ .type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr };
+            XrActionStateFloat floatValue{ .type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr, .isActive = XR_FALSE };
             if (XR_FAILED(xrGetActionStateFloat(m_session, &getInfo, &floatValue)) ||
                 floatValue.isActive == XR_FALSE)
                 return;
@@ -648,7 +648,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
         };
         forEachButton(m_vector2fActionMap, activeProfile.vector2fMap[hand], [&](const ALVR_INPUT button)
         {
-            XrActionStateVector2f vec2Value{ .type = XR_TYPE_ACTION_STATE_VECTOR2F, .next = nullptr };
+            XrActionStateVector2f vec2Value{ .type = XR_TYPE_ACTION_STATE_VECTOR2F, .next = nullptr, .isActive = XR_FALSE };
             if (XR_FAILED(xrGetActionStateVector2f(m_session, &getInfo, &vec2Value)) ||
                 vec2Value.isActive == XR_FALSE)
                 return;
@@ -660,7 +660,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
 
         forEachButton(m_boolToScalarActionMap, activeProfile.boolToScalarMap[hand], [&](const ALVR_INPUT button)
         {
-            XrActionStateBoolean boolValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr };
+            XrActionStateBoolean boolValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr, .isActive = XR_FALSE };
             if (XR_FAILED(xrGetActionStateBoolean(m_session, &getInfo, &boolValue)))
                 return;
             if (boolValue.isActive == XR_TRUE && boolValue.currentState == XR_TRUE) {
@@ -672,7 +672,7 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
 
         forEachButton(m_scalarToBoolActionMap, activeProfile.scalarToBoolMap[hand], [&](const ALVR_INPUT button)
         {
-            XrActionStateFloat floatValue{ .type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr };
+            XrActionStateFloat floatValue{ .type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr, .isActive = XR_FALSE };
             if (XR_FAILED(xrGetActionStateFloat(m_session, &getInfo, &floatValue)))
                 return;
             // This value was obtained from logging the output of VrApi,
@@ -711,7 +711,7 @@ inline bool InteractionManager::PollQuitAction(const InteractionProfile& activeP
         .action = m_quitAction,
         .subactionPath = XR_NULL_PATH
     };
-    XrActionStateBoolean quitValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr };
+    XrActionStateBoolean quitValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr, .isActive = XR_FALSE };
     CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &quitValue));
     if (quitValue.isActive == XR_TRUE && quitValue.currentState == XR_TRUE) {
         using namespace std::literals::chrono_literals;
@@ -761,7 +761,7 @@ inline bool InteractionManager::IsClicked(const std::size_t hand, const ALVR_INP
         .action = alvrAction.xrAction,
         .subactionPath = m_handSubactionPath[hand]
     };
-    XrActionStateBoolean value{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr };
+    XrActionStateBoolean value{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr, .isActive = XR_FALSE };
     CHECK_XRCMD(xrGetActionStateBoolean(m_session, &getInfo, &value));
     if (value.isActive == XR_FALSE)
         return false;

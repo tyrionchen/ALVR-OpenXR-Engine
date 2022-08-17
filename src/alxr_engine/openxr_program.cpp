@@ -1591,7 +1591,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         if (m_pfnLocateHandJointsEXT == nullptr || time == 0)
             return;
 
-        const bool isHandOnControllerPose = IsRuntime(OxrRuntimeType::SteamVR) ||
+        const bool isHandOnControllerPose = IsRuntime(OxrRuntimeType::HTCWave) ||
+                                            IsRuntime(OxrRuntimeType::SteamVR) ||
                                             IsRuntime(OxrRuntimeType::WMR);
         std::array<XrMatrix4x4f, XR_HAND_JOINT_COUNT_EXT> oculusOrientedJointPoses;
         for (const auto hand : { Side::LEFT,Side::RIGHT })
