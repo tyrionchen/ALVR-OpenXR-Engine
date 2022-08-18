@@ -507,7 +507,7 @@ inline void InteractionManager::InitializeActions(IsProfileSupportedFn&& isProfi
     CreateActions(XR_ACTION_TYPE_FLOAT_INPUT,    m_scalarActionMap);
     CreateActions(XR_ACTION_TYPE_VECTOR2F_INPUT, m_vector2fActionMap);
     CreateActions(XR_ACTION_TYPE_BOOLEAN_INPUT,  m_boolToScalarActionMap);
-    CreateActions(XR_ACTION_TYPE_FLOAT_INPUT,    m_scalarToBoolActionMap);
+    CreateActions(XR_ACTION_TYPE_BOOLEAN_INPUT,  m_scalarToBoolActionMap);
 
     XrActionSpaceCreateInfo actionSpaceInfo {
         .type = XR_TYPE_ACTION_SPACE_CREATE_INFO,
@@ -672,13 +672,10 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
 
         forEachButton(m_scalarToBoolActionMap, activeProfile.scalarToBoolMap[hand], [&](const ALVR_INPUT button)
         {
-            XrActionStateFloat floatValue{ .type = XR_TYPE_ACTION_STATE_FLOAT, .next = nullptr, .isActive = XR_FALSE };
-            if (XR_FAILED(xrGetActionStateFloat(m_session, &getInfo, &floatValue)))
+            XrActionStateBoolean boolValue{ .type = XR_TYPE_ACTION_STATE_BOOLEAN, .next = nullptr, .isActive = XR_FALSE };
+            if (XR_FAILED(xrGetActionStateBoolean(m_session, &getInfo, &boolValue)))
                 return;
-            // This value was obtained from logging the output of VrApi,
-            // logging the trigger/grip-values when trigger/grip-click is (first) active.
-            constexpr static const float TriggerThreshold = 0.05f;
-            if (floatValue.isActive == XR_TRUE && floatValue.currentState > TriggerThreshold) {
+            if (boolValue.isActive == XR_TRUE && boolValue.currentState == XR_TRUE) {
                 controllerInfo.buttons |= ALVR_BUTTON_FLAG(button);
             }
         });
