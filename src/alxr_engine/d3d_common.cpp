@@ -13,13 +13,6 @@
 
 #include "d3d_common.h"
 
-// Export symbols to get the high performance gpu as first adapter in IDXGIFactory::EnumAdapters().
-// This can be also necessary for the IMFActivate::ActivateObject method if no windows graphic settings are present.
-extern "C" {
-    _declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
-    _declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 0x00000001;
-}
-
 using namespace Microsoft::WRL;
 using namespace DirectX;
 

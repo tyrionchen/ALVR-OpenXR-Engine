@@ -24,6 +24,18 @@
 #include "latency_manager.h"
 #include "decoder_thread.h"
 
+#if defined(XR_USE_PLATFORM_WIN32) && defined(XR_EXPORT_HIGH_PERF_GPU_SELECTION_SYMBOLS)
+#pragma message("Enabling Symbols to select high-perf GPUs first")
+// Export symbols to get the high performance gpu as first adapter in IDXGIFactory::EnumAdapters().
+// This can be also necessary for the IMFActivate::ActivateObject method if no windows graphic settings are present.
+extern "C" {
+    // http://developer.download.nvidia.com/devzone/devcenter/gamegraphics/files/OptimusRenderingPolicies.pdf
+    _declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    // https://gpuopen.com/learn/amdpowerxpressrequesthighperformance/
+    _declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 0x00000001;
+}
+#endif
+
 constexpr inline const ALXREyeInfo EyeInfoZero {
     .eyeFov = { {0,0,0,0}, {0,0,0,0} },
     .ipd = 0.0f
