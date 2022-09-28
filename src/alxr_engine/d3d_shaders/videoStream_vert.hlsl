@@ -40,10 +40,16 @@ cbuffer ViewProjectionConstantBuffer : register(b1) {
     #define VS_GET_VIEW_PROJ(input) ViewProjection
 #endif
 
+#ifdef ENABLE_MVP_TRANSFORM
+    #define VS_MVP_TRANSFORM(input, pos) mul(mul(float4(input.Pos, 1), Model), VS_GET_VIEW_PROJ(input))
+#else
+    #define VS_MVP_TRANSFORM(input, pos) float4(input.Pos, 1)
+#endif
+
 PSVertex MainVS(Vertex input) {
     PSVertex output;
-    output.Pos = mul(mul(float4(input.Pos, 1), Model), VS_GET_VIEW_PROJ(input));
-    
+    output.Pos = VS_MVP_TRANSFORM(input, Position);
+
     output.uv = input.uv;    
     if (VS_GET_VIEW_INDEX(input) > 0) {
         output.uv.x += 0.5f;

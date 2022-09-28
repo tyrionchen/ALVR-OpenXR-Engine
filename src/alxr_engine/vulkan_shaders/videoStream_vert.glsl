@@ -4,7 +4,6 @@
 #ifdef ENABLE_MULTIVEW_EXT
     #extension GL_EXT_multiview : enable
 #endif
-
 #pragma vertex
 
 layout (std140, push_constant) uniform buf
@@ -16,6 +15,20 @@ layout (std140, push_constant) uniform buf
     uint ViewID;
 #endif
 } ubuf;
+
+#ifdef ENABLE_MULTIVEW_EXT
+    #define VS_GET_VIEW_INDEX(input) gl_ViewIndex
+    #define VS_GET_VIEW_PROJ(input) input.mvp[gl_ViewIndex]
+#else
+    #define VS_GET_VIEW_INDEX(input) input.ViewID
+    #define VS_GET_VIEW_PROJ(input) input.mvp
+#endif
+
+#ifdef ENABLE_MVP_TRANSFORM
+    #define VS_MVP_TRANSFORM(input, pos) VS_GET_VIEW_PROJ(input) * vec4(pos, 1.0)
+#else
+    #define VS_MVP_TRANSFORM(input, pos) vec4(pos, 1.0)
+#endif
 
 layout (location = 0) in vec3 Position;
 layout (location = 1) in vec2 UV;
@@ -29,23 +42,10 @@ out gl_PerVertex
 void main()
 {
     vec2 ouv = UV;
-
-    const bool isRightView =
-#ifdef ENABLE_MULTIVEW_EXT
-        gl_ViewIndex > 0;
-#else
-        ubuf.ViewID > 0;
-#endif
-    if (isRightView) {
+    if (VS_GET_VIEW_INDEX(ubuf) > 0) {
         ouv.x += 0.5f;
     }
     oUV = ouv;
-
-    gl_Position =
-#ifdef ENABLE_MULTIVEW_EXT
-        ubuf.mvp[gl_ViewIndex] * vec4(Position, 1.0);
-#else
-        ubuf.mvp * vec4(Position, 1.0);
-#endif
+    gl_Position = VS_MVP_TRANSFORM(ubuf, Position);
     gl_Position.y = -gl_Position.y;
 }

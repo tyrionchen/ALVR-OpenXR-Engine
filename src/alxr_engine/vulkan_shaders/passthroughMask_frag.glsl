@@ -5,6 +5,7 @@
     // required by glslangValidator
     #extension GL_GOOGLE_include_directive : require
 #endif
+#pragma fragment
 
 // TODO: Make this into a specialization constant.
 const vec3 key_color = vec3(0.01, 0.01, 0.01);
@@ -12,8 +13,6 @@ const vec3 key_color = vec3(0.01, 0.01, 0.01);
 #include "common/baseVideoFrag.glsl"
 
 layout(location = 0) out vec4 FragColor;
-
-#pragma fragment
 
 void main()
 {

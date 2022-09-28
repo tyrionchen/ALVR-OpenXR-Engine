@@ -320,6 +320,17 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
     template < const std::size_t N >
     using ShaderByteCodeList = CoreShaders::ShaderByteCodeSpanList<N>;
 
+    enum RootParamIndex : UINT {
+        ModelTransform=0,
+        ViewProjTransform,
+        LumaTexture,
+        ChromaTexture,
+        ChromaUTexture = ChromaTexture,
+        ChromaVTexture,
+        FoveatedDecodeParams,
+        TypeCount
+    };
+
     D3D12GraphicsPlugin(const std::shared_ptr<Options>&, std::shared_ptr<IPlatformPlugin>) {}
 
     inline ~D3D12GraphicsPlugin() override { CloseHandle(m_fenceEvent); }
@@ -447,13 +458,13 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
         texture2Range1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
         texture3Range1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
 
-        CD3DX12_ROOT_PARAMETER1  rootParams1[6];
-        rootParams1[0].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
-        rootParams1[1].InitAsConstantBufferView(1, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
-        rootParams1[2].InitAsDescriptorTable(1, &texture1Range1, D3D12_SHADER_VISIBILITY_PIXEL);
-        rootParams1[3].InitAsDescriptorTable(1, &texture2Range1, D3D12_SHADER_VISIBILITY_PIXEL);
-        rootParams1[4].InitAsDescriptorTable(1, &texture3Range1, D3D12_SHADER_VISIBILITY_PIXEL);
-        rootParams1[5].InitAsConstantBufferView(2, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_PIXEL);
+        CD3DX12_ROOT_PARAMETER1  rootParams1[RootParamIndex::TypeCount];
+        rootParams1[RootParamIndex::ModelTransform      ].InitAsConstantBufferView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+        rootParams1[RootParamIndex::ViewProjTransform   ].InitAsConstantBufferView(1, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+        rootParams1[RootParamIndex::LumaTexture         ].InitAsDescriptorTable(1, &texture1Range1, D3D12_SHADER_VISIBILITY_PIXEL);
+        rootParams1[RootParamIndex::ChromaUTexture      ].InitAsDescriptorTable(1, &texture2Range1, D3D12_SHADER_VISIBILITY_PIXEL);
+        rootParams1[RootParamIndex::ChromaVTexture      ].InitAsDescriptorTable(1, &texture3Range1, D3D12_SHADER_VISIBILITY_PIXEL);
+        rootParams1[RootParamIndex::FoveatedDecodeParams].InitAsConstantBufferView(2, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_PIXEL);
 
         constexpr const D3D12_STATIC_SAMPLER_DESC sampler {
             .Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR,
@@ -1042,7 +1053,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
                 std::memcpy(data, &viewProjection, sizeof(viewProjection));
                 viewProjectionCBuffer->Unmap(0, nullptr);
             }
-            cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
+            cmdList->SetGraphicsRootConstantBufferView(RootParamIndex::ViewProjTransform, viewProjectionCBuffer->GetGPUVirtualAddress());
 
             RenderVisCubes(cubes, swapchainContext, cmdList);
 
@@ -1087,7 +1098,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
                 std::memcpy(data, &viewProjection, sizeof(viewProjection));
                 viewProjectionCBuffer->Unmap(0, nullptr);
             }
-            cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
+            cmdList->SetGraphicsRootConstantBufferView(RootParamIndex::ViewProjTransform, viewProjectionCBuffer->GetGPUVirtualAddress());
 
             RenderVisCubes(cubes, swapchainContext, cmdList);
 
@@ -1130,7 +1141,7 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
                 const D3D12_RANGE writeRange{ offset, offset + cubeCBufferSize };
                 modelCBuffer->Unmap(0, &writeRange);
             }
-            cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress() + offset);            
+            cmdList->SetGraphicsRootConstantBufferView(RootParamIndex::ModelTransform, modelCBuffer->GetGPUVirtualAddress() + offset);
             // Draw the cube.
             cmdList->DrawIndexedInstanced((UINT)std::size(Geometry::c_cubeIndices), 1, 0, 0, 0);
             
@@ -1611,10 +1622,12 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             
             ID3D12DescriptorHeap* const ppHeaps[] = { m_srvHeap.Get() };
             cmdList->SetDescriptorHeaps((UINT)std::size(ppHeaps), ppHeaps);
-            cmdList->SetGraphicsRootDescriptorTable(2, videoTex.lumaGpuHandle); // Second texture will be (texture1+1)
-            cmdList->SetGraphicsRootDescriptorTable(3, videoTex.chromaGpuHandle);
+            cmdList->SetGraphicsRootDescriptorTable(RootParamIndex::LumaTexture, videoTex.lumaGpuHandle); // Second texture will be (texture1+1)
+            cmdList->SetGraphicsRootDescriptorTable(RootParamIndex::ChromaTexture, videoTex.chromaGpuHandle);
             if (m_is3PlaneFormat)
-                cmdList->SetGraphicsRootDescriptorTable(4, videoTex.chromaVGpuHandle);
+                cmdList->SetGraphicsRootDescriptorTable(RootParamIndex::ChromaVTexture, videoTex.chromaVGpuHandle);
+            if (m_fovDecodeParams)
+                cmdList->SetGraphicsRootConstantBufferView(RootParamIndex::FoveatedDecodeParams, swapchainContext.GetFoveationParamCBuffer()->GetGPUVirtualAddress());
             
             cmdList->ClearRenderTargetView(renderTargetView, ALXR::VideoClearColors[ClearColorIndex(newMode)], 0, nullptr);
             cmdList->ClearDepthStencilView(depthStencilView, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -1622,50 +1635,13 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             const D3D12_CPU_DESCRIPTOR_HANDLE renderTargets[] = { renderTargetView };
             cmdList->OMSetRenderTargets((UINT)std::size(renderTargets), renderTargets, true, &depthStencilView);
 
-            // Set shaders and constant buffers.
-            ALXR::MultiViewProjectionConstantBuffer viewProjection{};
-            for (std::size_t viewIndex = 0; viewIndex < 2; ++viewIndex) {
-                XMStoreFloat4x4(&viewProjection.ViewProjection[viewIndex], XMMatrixIdentity());
-            }
-            ID3D12Resource* const viewProjectionCBuffer = swapchainContext.GetViewProjectionCBuffer();
-            {
-                constexpr const D3D12_RANGE NoReadRange{ 0, 0 };
-                void* data = nullptr;
-                CHECK_HRCMD(viewProjectionCBuffer->Map(0, &NoReadRange, &data));
-                assert(data != nullptr);
-                std::memcpy(data, &viewProjection, sizeof(viewProjection));
-                viewProjectionCBuffer->Unmap(0, nullptr);
-            }
-            cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
-
             using namespace Geometry;
-            const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = { {m_quadVertexBuffer->GetGPUVirtualAddress(), QuadVerticesSize, sizeof(QuadVertex)} };
+            const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {{ m_quadVertexBuffer->GetGPUVirtualAddress(), QuadVerticesSize, sizeof(QuadVertex)} };
             cmdList->IASetVertexBuffers(0, (UINT)std::size(vertexBufferView), vertexBufferView);
 
             const D3D12_INDEX_BUFFER_VIEW indexBufferView{ m_quadIndexBuffer->GetGPUVirtualAddress(), QuadIndicesSize, DXGI_FORMAT_R16_UINT };
             cmdList->IASetIndexBuffer(&indexBufferView);
             cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-            constexpr const std::uint32_t modelBufferSize = AlignTo<D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT>(sizeof(ALXR::ModelConstantBuffer));
-            swapchainContext.RequestModelCBuffer(modelBufferSize);
-            ID3D12Resource* const modelCBuffer = swapchainContext.GetModelCBuffer();
-
-            ALXR::ModelConstantBuffer model;
-            XMStoreFloat4x4(&model.Model, XMMatrixIdentity());
-            {
-                constexpr const D3D12_RANGE NoReadRange{ 0, 0 };
-                uint8_t* data = nullptr;
-                CHECK_HRCMD(modelCBuffer->Map(0, &NoReadRange, reinterpret_cast<void**>(&data)));
-                assert(data != nullptr);
-                std::memcpy(data, &model, sizeof(model));
-                const D3D12_RANGE writeRange{ 0, modelBufferSize };
-                modelCBuffer->Unmap(0, &writeRange);
-            }
-            cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress());
-
-            if (m_fovDecodeParams) {
-                cmdList->SetGraphicsRootConstantBufferView(5, swapchainContext.GetFoveationParamCBuffer()->GetGPUVirtualAddress());
-            }
 
             // Draw Video Quad
             cmdList->DrawIndexedInstanced((UINT)QuadIndices.size(), 1, 0, 0, 0);
@@ -1692,10 +1668,25 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             
             ID3D12DescriptorHeap* const ppHeaps[] = { m_srvHeap.Get() };
             cmdList->SetDescriptorHeaps((UINT)std::size(ppHeaps), ppHeaps);
-            cmdList->SetGraphicsRootDescriptorTable(2, videoTex.lumaGpuHandle); // Second texture will be (texture1+1)
-            cmdList->SetGraphicsRootDescriptorTable(3, videoTex.chromaGpuHandle);
+            cmdList->SetGraphicsRootDescriptorTable(RootParamIndex::LumaTexture, videoTex.lumaGpuHandle); // Second texture will be (texture1+1)
+            cmdList->SetGraphicsRootDescriptorTable(RootParamIndex::ChromaTexture, videoTex.chromaGpuHandle);
             if (m_is3PlaneFormat)
-                cmdList->SetGraphicsRootDescriptorTable(4, videoTex.chromaVGpuHandle);
+                cmdList->SetGraphicsRootDescriptorTable(RootParamIndex::ChromaVTexture, videoTex.chromaVGpuHandle);
+            if (m_fovDecodeParams)
+                cmdList->SetGraphicsRootConstantBufferView(RootParamIndex::FoveatedDecodeParams, swapchainContext.GetFoveationParamCBuffer()->GetGPUVirtualAddress());
+
+            // Set shaders and constant buffers.
+            ID3D12Resource* const viewProjectionCBuffer = swapchainContext.GetViewProjectionCBuffer();
+            {
+                const ALXR::ViewProjectionConstantBuffer viewProjection{ .ViewID = viewID };
+                constexpr const D3D12_RANGE NoReadRange{ 0, 0 };
+                void* data = nullptr;
+                CHECK_HRCMD(viewProjectionCBuffer->Map(0, &NoReadRange, &data));
+                assert(data != nullptr);
+                std::memcpy(data, &viewProjection, sizeof(viewProjection));
+                viewProjectionCBuffer->Unmap(0, nullptr);
+            }
+            cmdList->SetGraphicsRootConstantBufferView(RootParamIndex::ViewProjTransform, viewProjectionCBuffer->GetGPUVirtualAddress());
 
             // Clear swapchain and depth buffer. NOTE: This will clear the entire render target view, not just the specified view.
             cmdList->ClearRenderTargetView(renderTargetView, ALXR::VideoClearColors[ClearColorIndex(newMode)], 0, nullptr);
@@ -1704,53 +1695,13 @@ struct D3D12GraphicsPlugin final : public IGraphicsPlugin {
             const D3D12_CPU_DESCRIPTOR_HANDLE renderTargets[] = { renderTargetView };
             cmdList->OMSetRenderTargets((UINT)std::size(renderTargets), renderTargets, true, &depthStencilView);
 
-            // Set shaders and constant buffers.
-            ID3D12Resource* const viewProjectionCBuffer = swapchainContext.GetViewProjectionCBuffer();
-            ALXR::ViewProjectionConstantBuffer viewProjection{
-                .ViewID = viewID
-            };
-            XMStoreFloat4x4(&viewProjection.ViewProjection, XMMatrixIdentity()); //XMMatrixTranspose(spaceToView * LoadXrMatrix(projectionMatrix)));
-            {
-                constexpr const D3D12_RANGE NoReadRange{ 0, 0 };
-                void* data = nullptr;
-                CHECK_HRCMD(viewProjectionCBuffer->Map(0, &NoReadRange, &data));
-                assert(data != nullptr);
-                std::memcpy(data, &viewProjection, sizeof(viewProjection));
-                viewProjectionCBuffer->Unmap(0, nullptr);
-            }
-            cmdList->SetGraphicsRootConstantBufferView(1, viewProjectionCBuffer->GetGPUVirtualAddress());
-
             using namespace Geometry;
-            const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {
-                {m_quadVertexBuffer->GetGPUVirtualAddress(), QuadVerticesSize, sizeof(QuadVertex)} };
+            const D3D12_VERTEX_BUFFER_VIEW vertexBufferView[] = {{ m_quadVertexBuffer->GetGPUVirtualAddress(), QuadVerticesSize, sizeof(QuadVertex)} };
             cmdList->IASetVertexBuffers(0, (UINT)std::size(vertexBufferView), vertexBufferView);
 
-            const D3D12_INDEX_BUFFER_VIEW indexBufferView{ m_quadIndexBuffer->GetGPUVirtualAddress(), QuadIndicesSize,
-                                                            DXGI_FORMAT_R16_UINT };
+            const D3D12_INDEX_BUFFER_VIEW indexBufferView{ m_quadIndexBuffer->GetGPUVirtualAddress(), QuadIndicesSize, DXGI_FORMAT_R16_UINT };
             cmdList->IASetIndexBuffer(&indexBufferView);
             cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-            constexpr const std::uint32_t modelBufferSize = AlignTo<D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT>(sizeof(ALXR::ModelConstantBuffer));
-            swapchainContext.RequestModelCBuffer(modelBufferSize);
-            ID3D12Resource* const modelCBuffer = swapchainContext.GetModelCBuffer();
-
-            // Compute and update the model transform.
-            ALXR::ModelConstantBuffer model;
-            XMStoreFloat4x4(&model.Model, XMMatrixIdentity());
-            {
-                constexpr const D3D12_RANGE NoReadRange{ 0, 0 };
-                std::uint8_t* data = nullptr;
-                CHECK_HRCMD(modelCBuffer->Map(0, &NoReadRange, reinterpret_cast<void**>(&data)));
-                assert(data != nullptr);
-                std::memcpy(data, &model, sizeof(model));
-                const D3D12_RANGE writeRange{ 0, modelBufferSize };
-                modelCBuffer->Unmap(0, &writeRange);
-            }
-            cmdList->SetGraphicsRootConstantBufferView(0, modelCBuffer->GetGPUVirtualAddress());
-
-            if (m_fovDecodeParams) {
-                cmdList->SetGraphicsRootConstantBufferView(5, swapchainContext.GetFoveationParamCBuffer()->GetGPUVirtualAddress());
-            }
 
             // Draw Video Quad
             cmdList->DrawIndexedInstanced((UINT)QuadIndices.size(), 1, 0, 0, 0);

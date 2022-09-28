@@ -799,7 +799,7 @@ struct VertexBuffer final : public VertexBufferBase {
         return true;
     }
 
-    inline void UpdateIndicies(const std::uint16_t* data, const std::uint32_t size, const std::uint32_t offset = 0) {
+    inline void UpdateIndices(const std::uint16_t* data, const std::uint32_t size, const std::uint32_t offset = 0) {
         uint16_t* map = nullptr;
         CHECK_VKCMD(vkMapMemory(m_vkDevice, idxMem, sizeof(map[0]) * offset, sizeof(map[0]) * size, 0, (void**)&map));
         std::copy_n(data, size, map);
@@ -3037,7 +3037,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         const std::uint32_t quadIndexCount = sizeof(Geometry::QuadIndices) / sizeof(Geometry::QuadIndices[0]);
         const std::uint32_t quadVertexCount = sizeof(Geometry::QuadVertices) / sizeof(Geometry::QuadVertices[0]);
         m_quadBuffer.Create(quadIndexCount, quadVertexCount);
-        m_quadBuffer.UpdateIndicies(Geometry::QuadIndices.data(), quadIndexCount, 0);
+        m_quadBuffer.UpdateIndices(Geometry::QuadIndices.data(), quadIndexCount, 0);
         m_quadBuffer.UpdateVertices(Geometry::QuadVertices.data(), quadVertexCount, 0);
     }
 
@@ -3090,7 +3090,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         uint32_t numCubeIdicies = sizeof(Geometry::c_cubeIndices) / sizeof(Geometry::c_cubeIndices[0]);
         uint32_t numCubeVerticies = sizeof(Geometry::c_cubeVertices) / sizeof(Geometry::c_cubeVertices[0]);
         m_drawBuffer.Create(numCubeIdicies, numCubeVerticies);
-        m_drawBuffer.UpdateIndicies(Geometry::c_cubeIndices, numCubeIdicies, 0);
+        m_drawBuffer.UpdateIndices(Geometry::c_cubeIndices, numCubeIdicies, 0);
         m_drawBuffer.UpdateVertices(Geometry::c_cubeVertices, numCubeVerticies, 0);
 
         InitializeVideoResources();
@@ -4222,16 +4222,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 
             // Bind index and vertex buffers
             vkCmdBindIndexBuffer(m_cmdBuffer.buf, m_quadBuffer.idxBuf, 0, VK_INDEX_TYPE_UINT16);
-            constexpr const VkDeviceSize offset = 0;
+            constexpr static const VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(m_cmdBuffer.buf, 0, 1, &m_quadBuffer.vtxBuf, &offset);
 
-            MultiViewProjectionUniform mvp1;
-            XrMatrix4x4f_CreateIdentity(&mvp1.mvp[0]);
-            XrMatrix4x4f_CreateIdentity(&mvp1.mvp[1]);            
-            vkCmdPushConstants(m_cmdBuffer.buf, m_videoStreamLayout.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MultiViewProjectionUniform), &mvp1);
-
             vkCmdDrawIndexed(m_cmdBuffer.buf, m_quadBuffer.count.idx, 1, 0, 0, 0);
-
             vkCmdEndRenderPass(m_cmdBuffer.buf);
         });
     }
@@ -4270,16 +4264,13 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 
             // Bind index and vertex buffers
             vkCmdBindIndexBuffer(m_cmdBuffer.buf, m_quadBuffer.idxBuf, 0, VK_INDEX_TYPE_UINT16);
-            constexpr const VkDeviceSize offset = 0;
+            constexpr static const VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(m_cmdBuffer.buf, 0, 1, &m_quadBuffer.vtxBuf, &offset);
 
-            ViewProjectionUniform mvp1;
-            XrMatrix4x4f_CreateIdentity(&mvp1.mvp);
-            mvp1.ViewID = viewID;
-
+            const ViewProjectionUniform mvp1{ .ViewID = viewID };
             vkCmdPushConstants(m_cmdBuffer.buf, m_videoStreamLayout.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ViewProjectionUniform), &mvp1);
-            vkCmdDrawIndexed(m_cmdBuffer.buf, m_quadBuffer.count.idx, 1, 0, 0, 0);
 
+            vkCmdDrawIndexed(m_cmdBuffer.buf, m_quadBuffer.count.idx, 1, 0, 0, 0);
             vkCmdEndRenderPass(m_cmdBuffer.buf);
         });
     }

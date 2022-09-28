@@ -242,7 +242,7 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
         if (SUCCEEDED(m_device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS3, &options, sizeof(options)))) {
             m_isMultiViewSupported = options.VPAndRTArrayIndexFromAnyShaderFeedingRasterizer;
         }
-        
+
         const CoreShaders::Path smDir = m_isMultiViewSupported ? "SM5/multivew" : "SM5";
         m_coreShaders = smDir;
 
@@ -466,20 +466,6 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
                 return;
             const auto& videoTex = m_videoTextures[currentTextureIdx];
 
-            // Set shaders and constant buffers.
-            ALXR::MultiViewProjectionConstantBuffer viewProjections;
-            for (std::size_t vindex = 0; vindex < 2; ++vindex) {
-                XMStoreFloat4x4(&viewProjections.ViewProjection[vindex], XMMatrixIdentity());
-            }
-            m_deviceContext->UpdateSubresource(m_viewProjectionCBuffer.Get(), 0, nullptr, &viewProjections, 0, 0);
-
-            ALXR::ModelConstantBuffer model;
-            XMStoreFloat4x4(&model.Model, XMMatrixIdentity());
-            m_deviceContext->UpdateSubresource(m_modelCBuffer.Get(), 0, nullptr, &model, 0, 0);
-
-            const bool is3PlaneFormat = videoTex.chromaVSRV != nullptr;
-            ID3D11Buffer* const constantBuffers[] = { m_modelCBuffer.Get(), m_viewProjectionCBuffer.Get() };
-            m_deviceContext->VSSetConstantBuffers(0, (UINT)std::size(constantBuffers), constantBuffers);
             m_deviceContext->VSSetShader(m_videoVertexShader.Get(), nullptr, 0);
 
             if (const auto fovDecParmPtr = m_fovDecodeParams) {
@@ -487,7 +473,8 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
                 m_deviceContext->UpdateSubresource(m_fovDecodeCBuffer.Get(), 0, nullptr, &fdParam, 0, 0);
                 ID3D11Buffer* const psConstantBuffers[] = { m_fovDecodeCBuffer.Get() };
                 m_deviceContext->PSSetConstantBuffers(2, (UINT)std::size(psConstantBuffers), psConstantBuffers);
-            }            
+            }
+            const bool is3PlaneFormat = videoTex.chromaVSRV != nullptr;
             m_deviceContext->PSSetShader(m_videoPixelShader[VideoShaderIndex(is3PlaneFormat, newMode)].Get(), nullptr, 0);
 
             const std::array<ID3D11ShaderResourceView*, 3> srvs{
@@ -1009,19 +996,11 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
                 return;
             const auto& videoTex = m_videoTextures[currentTextureIdx];
 
-            // Set shaders and constant buffers.
-            ALXR::ViewProjectionConstantBuffer viewProjection;
-            viewProjection.ViewID = viewID;
-            XMStoreFloat4x4(&viewProjection.ViewProjection, XMMatrixIdentity());
+            const ALXR::ViewProjectionConstantBuffer viewProjection{ .ViewID = viewID };
             m_deviceContext->UpdateSubresource(m_viewProjectionCBuffer.Get(), 0, nullptr, &viewProjection, 0, 0);
 
-            ALXR::ModelConstantBuffer model;
-            XMStoreFloat4x4(&model.Model, XMMatrixIdentity());
-            m_deviceContext->UpdateSubresource(m_modelCBuffer.Get(), 0, nullptr, &model, 0, 0);
-
-            const bool is3PlaneFormat = videoTex.chromaVSRV != nullptr;
-            ID3D11Buffer* const constantBuffers[] = { m_modelCBuffer.Get(), m_viewProjectionCBuffer.Get() };
-            m_deviceContext->VSSetConstantBuffers(0, (UINT)std::size(constantBuffers), constantBuffers);
+            ID3D11Buffer* const constantBuffers[] = { m_viewProjectionCBuffer.Get() };
+            m_deviceContext->VSSetConstantBuffers(1, (UINT)std::size(constantBuffers), constantBuffers);
             m_deviceContext->VSSetShader(m_videoVertexShader.Get(), nullptr, 0);
 
             if (const auto fovDecParmPtr = m_fovDecodeParams) {
@@ -1030,8 +1009,9 @@ struct D3D11GraphicsPlugin final : public IGraphicsPlugin {
                 ID3D11Buffer* const psConstantBuffers[] = { m_fovDecodeCBuffer.Get() };
                 m_deviceContext->PSSetConstantBuffers(2, (UINT)std::size(psConstantBuffers), psConstantBuffers);
             }
+            const bool is3PlaneFormat = videoTex.chromaVSRV != nullptr;
             m_deviceContext->PSSetShader(m_videoPixelShader[VideoShaderIndex(is3PlaneFormat, newMode)].Get(), nullptr, 0);
-
+            
             const std::array<ID3D11ShaderResourceView*, 3> srvs {
                 videoTex.lumaSRV.Get(),
                 videoTex.chromaSRV.Get(),

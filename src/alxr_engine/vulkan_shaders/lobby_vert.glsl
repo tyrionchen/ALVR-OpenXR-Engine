@@ -4,7 +4,6 @@
 #ifdef ENABLE_MULTIVEW_EXT
     #extension GL_EXT_multiview : enable
 #endif
-
 #pragma vertex
 
 layout(std140, push_constant) uniform buf

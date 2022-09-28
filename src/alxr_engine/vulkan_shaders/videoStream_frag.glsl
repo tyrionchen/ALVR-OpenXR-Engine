@@ -5,12 +5,11 @@
     // required by glslangValidator
     #extension GL_GOOGLE_include_directive : require
 #endif
+#pragma fragment
 
 #include "common/baseVideoFrag.glsl"
 
 layout(location = 0) out vec4 FragColor;
-
-#pragma fragment
 
 void main()
 {
