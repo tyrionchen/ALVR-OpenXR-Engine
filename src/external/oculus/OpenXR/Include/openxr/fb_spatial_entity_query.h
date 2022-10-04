@@ -187,10 +187,23 @@ XRAPI_ATTR XrResult XRAPI_CALL xrRetrieveSpaceQueryResultsFB(
 
 #endif // XR_EXTENSION_PROTOTYPES
 #endif // !XR_NO_PROTOTYPES
+#endif // XR_FB_spatial_entity_query
 
 // =============================================================================
 // Begin Backwards Compatibility (DEPRECATED)
 // =============================================================================
+// Separate include guard for experimental backwards compatibility,
+// to make sure this still gets included even when the extension
+// is included in openxr.h
+#ifndef XR_FBX_spatial_entity_query
+#define XR_FBX_spatial_entity_query 1
+
+// Conditionally define experimental versions, since they are not getting defined
+// if the extension is included from openxr.h
+#ifndef XR_FBX2_spatial_entity_query_SPEC_VERSION
+#define XR_FBX2_spatial_entity_query_SPEC_VERSION 2
+#define XR_FBX2_SPATIAL_ENTITY_QUERY_EXTENSION_NAME "XR_FBX2_spatial_entity_query"
+#endif
 
 #ifdef XR_FB_spatial_entity_query_EXPERIMENTAL_VERSION
 
@@ -299,7 +312,7 @@ typedef XrResult(XRAPI_PTR* PFN_xrQuerySpatialEntityFBX2)(
 // End Backwards Compatibility (DEPRECATED)
 // =============================================================================
 
-#endif // XR_FB_spatial_entity_query
+#endif // XR_FBX_spatial_entity_query
 
 #ifdef __cplusplus
 }

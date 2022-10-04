@@ -21,7 +21,7 @@ using OVR::Vector4f;
 static const char* AxisVertexShaderSrc = R"glsl(
     uniform JointMatrices
     {
-        highp mat4 Joints[64];
+        highp mat4 Joints[128];
     } jb;
 
     attribute highp vec4 Position;

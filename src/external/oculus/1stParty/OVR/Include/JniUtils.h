@@ -344,17 +344,18 @@ inline jclass ovr_GetLocalClassReferenceWithLoader(
     JNIEnv* jni,
     jobject classLoader,
     const char* className,
-    const bool fail = true) {
+    const bool fail = true,
+    const bool warn = true) {
     // This is a lambda because if it were at file scope it would need to be inlined since
     // this is a header, and that could mean the errorMsg[256] declaration could take up
     // 256 bytes on the stack each time the function is called (which is currently 3x in
     // this function). Whether or not that is actually the case is up to the compiler and
     // optimizations, but C++ doesn't guarantee stack variables only take up space within
     // the code block in which they are declared.
-    auto checkJNIException = [](JNIEnv* jni, const char* fmt, ...) {
+    auto checkJNIException = [](JNIEnv* jni, const bool warn, const char* fmt, ...) {
         if (jni->ExceptionOccurred()) {
             // something else caused a JNI exception before this and didn't clear it
-            if (fmt != nullptr) {
+            if (warn && fmt != nullptr) {
                 char errorMsg[256];
                 va_list argPtr;
                 va_start(argPtr, fmt);
@@ -368,6 +369,7 @@ inline jclass ovr_GetLocalClassReferenceWithLoader(
 
     checkJNIException(
         jni,
+        warn,
         "UNEXPECTED before FindClass( '%s' ) in ovr_GetLocalClassReferenceWithLoader",
         className);
 
@@ -382,14 +384,15 @@ inline jclass ovr_GetLocalClassReferenceWithLoader(
     if (localClass == 0) {
         if (fail) {
             OVR_FAIL("FindClass( %s ) failed", className);
-        } else {
+        } else if (warn) {
             OVR_WARN("FindClass( %s ) failed", className);
         }
-        checkJNIException(jni, "class '%s' not found.", className);
+        checkJNIException(jni, warn, "class '%s' not found.", className);
     } else {
         // We shouldn't get an exception if the class was found.
         checkJNIException(
             jni,
+            warn,
             "UNEXPECTED after loadClass( '%s' ) in ovr_GetLocalClassReferenceWithLoader!",
             className);
     }
@@ -414,19 +417,22 @@ inline jclass ovr_GetLocalClassReference(
     JNIEnv* jni,
     jobject activityObject,
     const char* className,
-    const bool fail = true) {
+    const bool fail = true,
+    const bool warn = true) {
     JavaObject classLoaderObject(jni, ovr_GetClassLoader(jni, activityObject));
 
     return ovr_GetLocalClassReferenceWithLoader(
-        jni, classLoaderObject.GetJObject(), className, fail);
+        jni, classLoaderObject.GetJObject(), className, fail, warn);
 }
 // This can be called from any thread but does need the activity object.
 inline jclass ovr_GetGlobalClassReference(
     JNIEnv* jni,
     jobject activityObject,
     const char* className,
-    const bool fail = true) {
-    JavaClass localClass(jni, ovr_GetLocalClassReference(jni, activityObject, className, fail));
+    const bool fail = true,
+    const bool warn = true) {
+    JavaClass localClass(
+        jni, ovr_GetLocalClassReference(jni, activityObject, className, fail, warn));
 
     // Turn it into a global reference so it can be safely used on other threads.
     jclass globalClass = (jclass)jni->NewGlobalRef(localClass.GetJClass());

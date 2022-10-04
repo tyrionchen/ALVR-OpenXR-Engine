@@ -130,8 +130,9 @@ class SimpleTargetMenu : public OVRFW::VRMenu {
     virtual ~SimpleTargetMenu(){};
 };
 
-bool TinyUI::Init(const xrJava* context, OVRFW::ovrFileSys* FileSys) {
+bool TinyUI::Init(const xrJava* context, OVRFW::ovrFileSys* FileSys, bool updateColors) {
     const xrJava* java = context;
+    UpdateColors = updateColors;
 
     /// Leftovers that aren't used
     auto SoundEffectPlayer = new OvrGuiSys::ovrDummySoundEffectPlayer();
@@ -169,8 +170,9 @@ void TinyUI::Shutdown() {
     OvrGuiSys::Destroy(GuiSys);
 }
 
-void TinyUI::AddHitTestRay(const OVR::Posef& ray, bool isClicking) {
+void TinyUI::AddHitTestRay(const OVR::Posef& ray, bool isClicking, int deviceNum) {
     OVRFW::TinyUI::HitTestDevice device;
+    device.deviceNum = deviceNum;
     device.pointerStart = ray.Transform({0.0f, 0.0f, 0.0f});
     device.pointerEnd = ray.Transform({0.0f, 0.0f, -1.0f});
     device.clicked = isClicking;
@@ -181,13 +183,16 @@ void TinyUI::Update(const OVRFW::ovrApplFrameIn& in) {
     /// Hit test
 
     /// clear previous frame
-    for (auto& device : PreviousFrameDevices) {
-        if (device.hitObject) {
-            device.hitObject->SetSurfaceColor(0, BackgroundColor);
+    if (UpdateColors) {
+        for (auto& device : PreviousFrameDevices) {
+            if (device.hitObject) {
+                device.hitObject->SetSurfaceColor(0, BackgroundColor);
+            }
         }
     }
 
-    /// hit tesst
+    /// hit test
+    bool hitHandled = false;
     for (auto& device : Devices) {
         Vector3f pointerStart = device.pointerStart;
         Vector3f pointerEnd = device.pointerEnd;
@@ -203,21 +208,40 @@ void TinyUI::Update(const OVRFW::ovrApplFrameIn& in) {
                 auto it = ButtonHandlers.find(device.hitObject);
                 if (it != ButtonHandlers.end()) {
                     /// hover highlight
-                    device.hitObject->SetSurfaceColor(0, HoverColor);
+                    if (UpdateColors) {
+                        device.hitObject->SetSurfaceColor(0, HoverColor);
+                    }
                     pointerEnd = targetEnd;
                     if (device.clicked) {
                         // debounce
                         for (auto& prevFrameDevice : PreviousFrameDevices) {
-                            if (device.hitObject == prevFrameDevice.hitObject) {
+                            if (device.deviceNum == prevFrameDevice.deviceNum &&
+                                device.hitObject == prevFrameDevice.hitObject) {
                                 if (prevFrameDevice.clicked == false) {
                                     // click highlight
-                                    device.hitObject->SetSurfaceColor(0, HighlightColor);
+                                    if (UpdateColors) {
+                                        device.hitObject->SetSurfaceColor(0, HighlightColor);
+                                    }
                                     // run event handler
                                     it->second();
+                                    hitHandled = true;
                                 }
                                 break;
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!hitHandled && UnhandledClickHandler) {
+        for (auto& device : Devices) {
+            if (device.clicked) {
+                for (auto& prevFrameDevice : PreviousFrameDevices) {
+                    if (device.deviceNum == prevFrameDevice.deviceNum &&
+                        prevFrameDevice.clicked == false) {
+                        UnhandledClickHandler();
                     }
                 }
             }
@@ -309,6 +333,10 @@ OVRFW::VRMenuObject* TinyUI::AddToggleButton(
     return b;
 }
 
+void TinyUI::SetUnhandledClickHandler(const std::function<void(void)>& postHandler) {
+    UnhandledClickHandler = postHandler;
+}
+
 OVRFW::VRMenuObject* TinyUI::AddSlider(
     const std::string& label,
     const OVR::Vector3f& position,
@@ -320,7 +348,7 @@ OVRFW::VRMenuObject* TinyUI::AddSlider(
     VRMenuObject* val = CreateMenu("0.0", position + Vector3f{0.35f, 0.0f, 0.0f}, {100.0f, 50.0f});
     VRMenuObject* gt = CreateMenu("+", position + Vector3f{0.50f, 0.0f, 0.0f}, {50.0f, 50.0f});
 
-    auto udpateText = [=]() {
+    auto updateText = [=]() {
         std::stringstream ss;
         ss << std::setprecision(4) << std::fixed;
         ss << *value;
@@ -328,18 +356,18 @@ OVRFW::VRMenuObject* TinyUI::AddSlider(
     };
     ButtonHandlers[lt] = [=]() {
         *value -= delta;
-        udpateText();
+        updateText();
     };
     ButtonHandlers[gt] = [=]() {
         *value += delta;
-        udpateText();
+        updateText();
     };
     ButtonHandlers[val] = [=]() {
         *value = defaultValue;
-        udpateText();
+        updateText();
     };
-    ButtonHandlers[lb] = [=]() { udpateText(); };
-    udpateText();
+    ButtonHandlers[lb] = [=]() { updateText(); };
+    updateText();
     return lb;
 }
 

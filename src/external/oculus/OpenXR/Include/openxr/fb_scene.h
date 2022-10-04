@@ -11,6 +11,8 @@ Language    :   C99
 
 #pragma once
 
+#include <openxr/fb_spatial_entity.h>
+
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -27,6 +29,15 @@ extern "C" {
 #else
 #error "unknown experimental version number for XR_FB_scene_EXPERIMENTAL_VERSION"
 #endif
+
+static const XrSpaceComponentTypeFB XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB =
+    (XrSpaceComponentTypeFB)3;
+static const XrSpaceComponentTypeFB XR_SPACE_COMPONENT_TYPE_BOUNDED_3D_FB =
+    (XrSpaceComponentTypeFB)4;
+static const XrSpaceComponentTypeFB XR_SPACE_COMPONENT_TYPE_SEMANTIC_LABELS_FB =
+    (XrSpaceComponentTypeFB)5;
+static const XrSpaceComponentTypeFB XR_SPACE_COMPONENT_TYPE_ROOM_LAYOUT_FB =
+    (XrSpaceComponentTypeFB)6;
 
 // Helper structs to define a 3D bounding box, similar to the 2D counterparts.
 typedef struct XrExtent3DfFB {
@@ -53,13 +64,13 @@ typedef struct XrSemanticLabelsFB {
     const void* XR_MAY_ALIAS next;
 
     // Input, capacity of the label buffer in byte.
-    uint32_t byteCapacityInput;
+    uint32_t bufferCapacityInput;
 
     // Output, size of the label buffer in byte.
-    uint32_t byteCountOutput;
+    uint32_t bufferCountOutput;
 
     // Multiple labels represented by raw string, separated by comma (,).
-    char* labels;
+    char* buffer;
 } XrSemanticLabelsFB;
 
 // Room layout component for two-call idiom with xrGetSpaceRoomLayoutFB.
@@ -175,9 +186,8 @@ xrGetSpaceRoomLayoutFB(XrSession session, XrSpace space, XrRoomLayoutFB* roomLay
 
 #endif // XR_EXTENSION_PROTOTYPES
 #endif // !XR_NO_PROTOTYPES
-
-
 #endif // XR_FB_scene
+
 
 #ifdef __cplusplus
 }

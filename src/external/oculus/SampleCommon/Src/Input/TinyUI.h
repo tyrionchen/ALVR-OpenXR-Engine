@@ -30,13 +30,14 @@ class TinyUI {
     ~TinyUI() {}
 
     struct HitTestDevice {
+        int deviceNum = 0;
         OVR::Vector3f pointerStart = {0.0f, 0.0f, 0.0f};
         OVR::Vector3f pointerEnd = {0.0f, 0.0f, 1.0f};
         OVRFW::VRMenuObject* hitObject = nullptr;
         bool clicked = false;
     };
 
-    bool Init(const xrJava* context, OVRFW::ovrFileSys* FileSys);
+    bool Init(const xrJava* context, OVRFW::ovrFileSys* FileSys, bool updateColors = true);
     void Shutdown();
     void Update(const OVRFW::ovrApplFrameIn& in);
     void Render(const OVRFW::ovrApplFrameIn& in, OVRFW::ovrRendererOutput& out);
@@ -63,6 +64,7 @@ class TinyUI {
         const OVR::Vector3f& position,
         const OVR::Vector2f& size = {100.0f, 50.0f},
         const std::function<void(void)>& postHandler = {});
+    void SetUnhandledClickHandler(const std::function<void(void)>& postHandler = {});
 
     OVRFW::OvrGuiSys& GetGuiSys() {
         return *GuiSys;
@@ -75,7 +77,7 @@ class TinyUI {
     std::vector<OVRFW::TinyUI::HitTestDevice>& HitTestDevices() {
         return Devices;
     }
-    void AddHitTestRay(const OVR::Posef& ray, bool isClicking);
+    void AddHitTestRay(const OVR::Posef& ray, bool isClicking, int deviceNum = 0);
 
     /// ui toggle
     void ShowAll();
@@ -103,6 +105,8 @@ class TinyUI {
     std::unordered_map<VRMenuObject*, std::function<void(void)>> ButtonHandlers;
     std::vector<OVRFW::TinyUI::HitTestDevice> Devices;
     std::vector<OVRFW::TinyUI::HitTestDevice> PreviousFrameDevices;
+    bool UpdateColors;
+    std::function<void(void)> UnhandledClickHandler;
 };
 
 } // namespace OVRFW

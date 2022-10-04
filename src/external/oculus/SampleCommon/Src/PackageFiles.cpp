@@ -137,7 +137,7 @@ static bool ovr_ReadFileFromOtherApplicationPackageInternal(
     // the file is compressed.
     if (info.compression_method != 0 && CachePath[0]) {
         char cacheName[1024];
-        sprintf(cacheName, "%s/%08x.bin", CachePath, (unsigned)info.crc);
+        snprintf(cacheName, sizeof(cacheName), "%s/%08x.bin", CachePath, (unsigned)info.crc);
         const int fd = open(cacheName, O_RDONLY);
         if (fd > 0) {
             struct stat s = {};
@@ -194,10 +194,10 @@ static bool ovr_ReadFileFromOtherApplicationPackageInternal(
     // Optionally write out to the cache directory
     if (info.compression_method != 0 && CachePath[0]) {
         char tempName[1024];
-        sprintf(tempName, "%s/%08x.tmp", CachePath, (unsigned)info.crc);
+        snprintf(tempName, sizeof(tempName), "%s/%08x.tmp", CachePath, (unsigned)info.crc);
 
         char cacheName[1024];
-        sprintf(cacheName, "%s/%08x.bin", CachePath, (unsigned)info.crc);
+        snprintf(cacheName, sizeof(cacheName), "%s/%08x.bin", CachePath, (unsigned)info.crc);
         const int fd = open(tempName, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd > 0) {
             const int r = write(fd, buffer, length);

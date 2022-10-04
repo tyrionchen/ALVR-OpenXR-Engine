@@ -3243,8 +3243,6 @@ void android_main(struct android_app* app) {
     double startTime = -1.0;
 
     // App-specific input
-    float appMoveX = 0.0f;
-    float appMoveY = 0.0f;
     float appJoystickX = 0.0f;
     float appJoystickY = 0.0f;
 
@@ -3450,14 +3448,8 @@ void android_main(struct android_app* app) {
         XrActionStateBoolean toggleState = GetActionStateBoolean(toggleAction);
 
         {
-            XrActionStateFloat moveXState = GetActionStateFloat(moveOnXAction);
-            XrActionStateFloat moveYState = GetActionStateFloat(moveOnYAction);
-            if (moveXState.changedSinceLastSync) {
-                appMoveX = moveXState.currentState;
-            }
-            if (moveYState.changedSinceLastSync) {
-                appMoveY = moveYState.currentState;
-            }
+            (void)GetActionStateFloat(moveOnXAction);
+            (void)GetActionStateFloat(moveOnYAction);
 
             XrActionStateVector2f moveJoystickState = GetActionStateVector2(moveOnJoystickAction);
             if (moveJoystickState.changedSinceLastSync) {

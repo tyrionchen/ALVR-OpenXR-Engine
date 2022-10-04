@@ -1660,9 +1660,6 @@ ovrScene_Create(AAssetManager* amgr, XrInstance instance, XrSession session, ovr
                 ALOGE("Failed to load texture from KTX image");
             }
 
-            // free the image info
-            free((void*)ktxImageInfo.data);
-
             uint32_t index = 0;
             XrSwapchainImageAcquireInfo acquireInfo = {XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, NULL};
             OXR(xrAcquireSwapchainImage(scene->CubeMapSwapChain.Handle, &acquireInfo, &index));
@@ -1674,7 +1671,6 @@ ovrScene_Create(AAssetManager* amgr, XrInstance instance, XrSession session, ovr
             OXR(xrReleaseSwapchainImage(scene->CubeMapSwapChain.Handle, &releaseInfo));
         } else {
             ALOGE("Failed to load KTX image - generating procedural cubemap");
-            int swapChainTexId = 0;
             XrSwapchainCreateInfo swapChainCreateInfo;
             memset(&swapChainCreateInfo, 0, sizeof(swapChainCreateInfo));
             swapChainCreateInfo.type = XR_TYPE_SWAPCHAIN_CREATE_INFO;
@@ -1709,8 +1705,6 @@ ovrScene_Create(AAssetManager* amgr, XrInstance instance, XrSession session, ovr
                 length,
                 &length,
                 (XrSwapchainImageBaseHeader*)scene->CubeMapSwapChainImage));
-
-            swapChainTexId = scene->CubeMapSwapChainImage[0].image;
 
             uint32_t* img = (uint32_t*)malloc(w * w * sizeof(uint32_t));
             for (int j = 0; j < w; j++) {
@@ -1978,10 +1972,10 @@ ovrScene_Create(AAssetManager* amgr, XrInstance instance, XrSession session, ovr
 
         for (int y = 0; y < QUAD_HEIGHT; y++) {
             for (int x = 0; x < QUAD_WIDTH; x++) {
-                int gray = ((x ^ (x >> 1)) ^ (y ^ (y >> 1))) & 0xff;
-                int r = gray + 255.0f * ((1.0f - (gray / 255.0f)) * (x / (QUAD_WIDTH - 1.0f)));
-                int g = gray + 255.0f * ((1.0f - (gray / 255.0f)) * (y / (QUAD_HEIGHT - 1.0f)));
-                int rgba = (0xff << 24) | (gray << 16) | (g << 8) | r;
+                uint32_t gray = ((x ^ (x >> 1)) ^ (y ^ (y >> 1))) & 0xff;
+                uint32_t r = gray + 255.0f * ((1.0f - (gray / 255.0f)) * (x / (QUAD_WIDTH - 1.0f)));
+                uint32_t g = gray + 255.0f * ((1.0f - (gray / 255.0f)) * (y / (QUAD_HEIGHT - 1.0f)));
+                uint32_t rgba = (0xffu << 24) | (gray << 16) | (g << 8) | r;
                 texData[y * QUAD_WIDTH + x] = rgba;
             }
         }
@@ -3949,6 +3943,7 @@ void android_main(struct android_app* app) {
     }
 
     ovrRenderer_Destroy(&appState.Renderer);
+
 
     free(projections);
 

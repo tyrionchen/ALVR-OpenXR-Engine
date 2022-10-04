@@ -49,7 +49,7 @@ extern "C" {
 typedef enum XrSpaceStorageLocationFB {
     XR_SPACE_STORAGE_LOCATION_INVALID_FB = 0,
     XR_SPACE_STORAGE_LOCATION_LOCAL_FB = 1,
-        XR_SPACE_STORAGE_LOCATION_MAX_ENUM_FB = 0x7FFFFFFF
+    XR_SPACE_STORAGE_LOCATION_MAX_ENUM_FB = 0x7FFFFFFF
 } XrSpaceStorageLocationFB;
 
 // Whether data should be persisted indefinitely or otherwise
@@ -132,10 +132,25 @@ xrEraseSpaceFB(XrSession session, const XrSpaceEraseInfoFB* info, XrAsyncRequest
 
 #endif // XR_EXTENSION_PROTOTYPES
 #endif // !XR_NO_PROTOTYPES
+#endif // XR_FB_spatial_entity_storage
 
 // =============================================================================
 // Begin Backwards Compatibility (DEPRECATED)
 // =============================================================================
+
+// Separate include guard for experimental backwards compatibility,
+// to make sure this still gets included even when the extension
+// is included in openxr.h
+#ifndef XR_FBX_spatial_entity_storage
+#define XR_FBX_spatial_entity_storage 1
+
+
+// Conditionally define experimental versions, since they are not getting defined
+// if the extension is included from openxr.h
+#ifndef XR_FBX2_spatial_entity_storage_SPEC_VERSION
+#define XR_FBX2_spatial_entity_storage_SPEC_VERSION 2
+#define XR_FBX2_SPATIAL_ENTITY_STORAGE_EXTENSION_NAME "XR_FBX2_spatial_entity_storage"
+#endif
 
 #ifdef XR_FB_spatial_entity_storage_EXPERIMENTAL_VERSION
 
@@ -232,11 +247,10 @@ XRAPI_ATTR XrResult XRAPI_CALL xrSpatialEntityEraseSpaceFB(
 
 #endif // XR_FB_spatial_entity_storage_EXPERIMENTAL_VERSION
 
+#endif // XR_FBX_spatial_entity_storage
 // =============================================================================
 // End Backwards Compatibility (DEPRECATED)
 // =============================================================================
-
-#endif // XR_FB_spatial_entity_storage
 
 #ifdef __cplusplus
 }

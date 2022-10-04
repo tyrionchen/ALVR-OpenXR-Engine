@@ -68,15 +68,15 @@ typedef enum XrSpaceComponentTypeFB {
     // enables save, load, erase, etc.
     XR_SPACE_COMPONENT_TYPE_STORABLE_FB = 1,
         // Bounded 2D component, used in fb_scene extension.
-    XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB = 3,
+    // XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB = 3,
     // Bounded 3D component, used in fb_scene extension.
-    XR_SPACE_COMPONENT_TYPE_BOUNDED_3D_FB = 4,
+    // XR_SPACE_COMPONENT_TYPE_BOUNDED_3D_FB = 4,
     // Semantic labels component, used in fb_scene extension.
-    XR_SPACE_COMPONENT_TYPE_SEMANTIC_LABELS_FB = 5,
+    // XR_SPACE_COMPONENT_TYPE_SEMANTIC_LABELS_FB = 5,
     // Room layout component, used in fb_scene extension.
-    XR_SPACE_COMPONENT_TYPE_ROOM_LAYOUT_FB = 6,
+    // XR_SPACE_COMPONENT_TYPE_ROOM_LAYOUT_FB = 6,
     // Space container component, used in fb_spatial_entity_container extension.
-    XR_SPACE_COMPONENT_TYPE_SPACE_CONTAINER_FB = 7,
+    // XR_SPACE_COMPONENT_TYPE_SPACE_CONTAINER_FB = 7,
         XR_SPACE_COMPONENT_TYPE_MAX_ENUM_FB = 0x7FFFFFFF
 } XrSpaceComponentTypeFB;
 
@@ -221,10 +221,26 @@ XRAPI_ATTR XrResult XRAPI_CALL xrGetSpaceComponentStatusFB(
 
 #endif /* XR_EXTENSION_PROTOTYPES */
 #endif /* !XR_NO_PROTOTYPES */
+#endif // XR_FB_spatial_entity
 
 // =============================================================================
 // Begin Backwards Compatibility (DEPRECATED)
 // =============================================================================
+
+// Separate include guard for experimental backwards compatibility,
+// to make sure this still gets included even when the extension
+// is included in openxr.h
+#ifndef XR_FBX_spatial_entity
+#define XR_FBX_spatial_entity 1
+
+// Conditionally define experimental versions, since they are not getting defined
+// if the extension is included from openxr.h
+
+#ifndef XR_FBX2_spatial_entity_SPEC_VERSION
+#define XR_FBX2_spatial_entity_SPEC_VERSION 2
+#define XR_FBX2_SPATIAL_ENTITY_EXTENSION_NAME "XR_FBX2_spatial_entity"
+#endif
+
 
 #ifdef XR_FB_spatial_entity_EXPERIMENTAL_VERSION
 
@@ -352,7 +368,7 @@ XRAPI_ATTR XrResult XRAPI_CALL xrGetComponentStatusFB(
 // End Backwards Compatibility (DEPRECATED)
 // =============================================================================
 
-#endif // XR_FB_spatial_entity
+#endif // XR_FBX_spatial_entity
 
 #ifdef __cplusplus
 }

@@ -91,6 +91,7 @@ typedef void(GL_APIENTRY* PFNGLFRAMEBUFFERTEXTURE2DMULTISAMPLEEXTPROC)(
 #include "Render/Framebuffer.h"
 #include "Render/SurfaceRender.h"
 
+std::string OXR_ResultToString(XrInstance instance, XrResult result);
 void OXR_CheckErrors(XrInstance instance, XrResult result, const char* function, bool failOnError);
 
 #if defined(DEBUG) || defined(_DEBUG)
@@ -110,6 +111,13 @@ static inline OVR::Vector2f FromXrVector2f(const XrVector2f& s) {
     OVR::Vector2f r;
     r.x = s.x;
     r.y = s.y;
+    return r;
+}
+
+static inline OVR::Vector2f FromXrExtent2Df(const XrExtent2Df& s) {
+    OVR::Vector2f r;
+    r.x = s.width;
+    r.y = s.height;
     return r;
 }
 
@@ -181,6 +189,61 @@ static inline OVR::Posef FromXrPosef(const XrPosef& s) {
 
 namespace OVRFW {
 
+class XrApp;
+
+typedef struct XrStructureHeader {
+    XrStructureType type;
+    void* XR_MAY_ALIAS next;
+} XrStructureHeader;
+
+class MainLoopContext {
+   public:
+    MainLoopContext(xrJava& javaContext, XrApp* xrApp) : javaContext_(javaContext), xrApp_(xrApp) {}
+    virtual ~MainLoopContext() {
+        xrApp_ = nullptr;
+    }
+
+    const xrJava& GetJavaContext() const {
+        return javaContext_;
+    }
+    virtual void HandleOsEvents() = 0;
+    virtual bool ShouldExitMainLoop() const = 0;
+    virtual bool IsExitRequested() const = 0;
+
+   protected:
+    const xrJava javaContext_;
+    class XrApp* xrApp_ = nullptr;
+};
+
+#if defined(ANDROID)
+class ActivityMainLoopContext : public MainLoopContext {
+   public:
+    ActivityMainLoopContext(xrJava& javaContext, XrApp* xrApp, struct android_app* app)
+        : MainLoopContext(javaContext, xrApp), app_(app) {}
+    ~ActivityMainLoopContext() override {
+        app_ = nullptr;
+    }
+
+    void HandleOsEvents() override;
+    bool ShouldExitMainLoop() const override;
+    bool IsExitRequested() const override;
+
+   private:
+    struct android_app* app_ = nullptr;
+};
+#elif defined(WIN32)
+class WindowsMainLoopContext : public MainLoopContext {
+   public:
+    WindowsMainLoopContext(xrJava& javaContext, XrApp* xrApp)
+        : MainLoopContext(javaContext, xrApp) {}
+    ~WindowsMainLoopContext() override {}
+
+    void HandleOsEvents() override;
+    bool ShouldExitMainLoop() const override;
+    bool IsExitRequested() const override;
+};
+#endif
+
 class XrApp {
    public:
     //============================
@@ -202,17 +265,23 @@ class XrApp {
         const int32_t mainThreadTid,
         const int32_t renderThreadTid,
         const int cpuLevel,
-        const int gpuLevel)
+        const int gpuLevel,
+        const bool isOverlay)
         : BackgroundColor(0.0f, 0.6f, 0.1f, 1.0f),
           CpuLevel(cpuLevel),
           GpuLevel(gpuLevel),
           MainThreadTid(mainThreadTid),
           RenderThreadTid(renderThreadTid),
-          NumFramebuffers(MAX_NUM_EYES) {}
-    XrApp() : XrApp(0, 0, CPU_LEVEL, GPU_LEVEL) {}
+          NumFramebuffers(MAX_NUM_EYES),
+          isOverlay_(isOverlay) {}
+    XrApp() : XrApp(0, 0, CPU_LEVEL, GPU_LEVEL, false) {}
+    XrApp(const bool isOverlay) : XrApp(0, 0, CPU_LEVEL, GPU_LEVEL, isOverlay) {}
     virtual ~XrApp() = default;
 
-    // App entry point
+    // Android Service-based apps should just call MainLoop from their main thead
+    void MainLoop(MainLoopContext& context);
+
+// Android Activity-based apps and Windows apps can call Run from their entry point
 #if defined(ANDROID)
     void Run(struct android_app* app);
 #else
@@ -246,6 +315,26 @@ class XrApp {
     void HandleAndroidCmd(struct android_app* app, int32_t cmd);
 #endif // defined(ANDROID)
 
+    bool GetShouldExit() const {
+        return ShouldExit;
+    }
+    void SetShouldExit(const bool b) {
+        ShouldExit = b;
+    }
+
+#if defined(ANDROID)
+    bool GetResumed() const {
+        return Resumed;
+    }
+    bool GetSessionActive() const {
+        return SessionActive;
+    }
+#endif // ANDROID
+
+    bool IsOverlay() const {
+        return isOverlay_;
+    }
+
    protected:
     int GetNumFramebuffers() const {
         return NumFramebuffers;
@@ -255,7 +344,6 @@ class XrApp {
     }
 
     std::vector<XrExtensionProperties> GetXrExtensionProperties() const;
-
     //============================
     // App functions
     // All App* function can be overridden by the derived application class to
@@ -263,6 +351,22 @@ class XrApp {
 
     // Returns a list of OpenXr extensions needed for this app
     virtual std::vector<const char*> GetExtensions();
+
+    // Apps can override this to return next chain that will be linked into
+    // XrCreateInstanceInfo.next. Note that all of the structures returned in the next chain must
+    // persist until the call to FreeInstanceCreateInfoNextChain() at which point the app may free
+    // the structures if it allocated them dynamically.
+    virtual const void* GetInstanceCreateInfoNextChain();
+    virtual void FreeInstanceCreateInfoNextChain(const void* nextChain);
+
+    // Apps can override this to return next chain that will be linked into
+    // XrCreateSessionInfo.next. Note that all of the structures returned in the next chain must
+    // persist until the call to FreeSessionCreateInfoNextChain() at which point the app may free
+    // the structures if it allocated them dynamically.
+    virtual const void* GetSessionCreateInfoNextChain();
+    virtual void FreeSessionCreateInfoNextChain(const void* nextChain);
+
+    virtual void GetInitialSceneUri(std::string& sceneUri) const;
 
     // Called when the application initializes.
     // Must return true if the application initializes successfully.
@@ -304,6 +408,14 @@ class XrApp {
     }
     virtual void PostProjectionAddLayer(xrCompositorLayerUnion* layers, int& layerCount) {
         /// do nothing
+    }
+
+    // Add application specified SessionCreateInfo
+    virtual void PreCreateSession(XrSessionCreateInfo& sci) {
+        // do nothing
+    }
+    virtual void PostCreateSession(XrSessionCreateInfo& sci) {
+        // do nothing
     }
 
     // Returns a map from interaction profile paths to vectors of suggested bindings.
@@ -372,7 +484,7 @@ class XrApp {
    private:
     // Called one time when the application process starts.
     // Returns true if the application initialized successfully.
-    bool Init(const xrJava* context);
+    bool Init(const xrJava& context);
 
     // Called on each session creation
     bool InitSession();
@@ -381,7 +493,7 @@ class XrApp {
     void EndSession();
 
     // Called one time when the applicatoin process exits
-    void Shutdown(const xrJava* context);
+    void Shutdown(const xrJava& context);
 
     // Called to handle any lifecycle state changes. This will call
     // AppPaused() and AppResumed()
@@ -422,11 +534,11 @@ class XrApp {
     bool ShouldExit = false;
     bool Focused = false;
 
-    // When set the framework will skip calling
-    // SyncActionSets(), this is useful if an app
+    // When set the framework will not bind any actions and will
+    // skip calling SyncActionSets(), this is useful if an app
     // wants control over xrSyncAction
     // Note: This means input in ovrApplFrameIn won't be set
-    bool SkipSyncActions = false;
+    bool SkipInputHandling = false;
 
     XrInstance Instance = XR_NULL_HANDLE;
     XrSession Session = XR_NULL_HANDLE;
@@ -484,7 +596,7 @@ class XrApp {
 
     ovrFramebuffer FrameBuffer[MAX_NUM_EYES];
     int NumFramebuffers = MAX_NUM_EYES;
-
+    bool isOverlay_ = false;
     bool IsAppFocused = false;
     bool RunWhilePaused = false;
 };

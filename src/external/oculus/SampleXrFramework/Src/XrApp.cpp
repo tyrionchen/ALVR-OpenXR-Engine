@@ -19,7 +19,15 @@ Language    :   c++
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/prctl.h> // for prctl( PR_SET_NAME )
-#endif // defined(ANDROID)
+#elif defined(WIN32)
+// Favor the high performance NVIDIA or AMD GPUs
+extern "C" {
+// http://developer.download.nvidia.com/devzone/devcenter/gamegraphics/files/OptimusRenderingPolicies.pdf
+__declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+// https://gpuopen.com/learn/amdpowerxpressrequesthighperformance/
+__declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 0x00000001;
+}
+#endif //  defined(WIN32) defined(ANDROID)
 
 using OVR::Bounds3f;
 using OVR::Matrix4f;
@@ -29,14 +37,19 @@ using OVR::Vector2f;
 using OVR::Vector3f;
 using OVR::Vector4f;
 
+std::string OXR_ResultToString(XrInstance instance, XrResult result) {
+    char errorBuffer[XR_MAX_RESULT_STRING_SIZE]{};
+    xrResultToString(instance, result, errorBuffer);
+    return std::string{errorBuffer};
+}
+
 void OXR_CheckErrors(XrInstance instance, XrResult result, const char* function, bool failOnError) {
     if (XR_FAILED(result)) {
-        char errorBuffer[XR_MAX_RESULT_STRING_SIZE]{};
-        xrResultToString(instance, result, errorBuffer);
+        const std::string error = OXR_ResultToString(instance, result);
         if (failOnError) {
-            ALOGE("OpenXR error: %s: %s\n", function, errorBuffer);
+            ALOGE("OpenXR error: %s: %s\n", function, error.c_str());
         } else {
-            ALOGV("OpenXR error: %s: %s\n", function, errorBuffer);
+            ALOGV("OpenXR error: %s: %s\n", function, error.c_str());
         }
     }
 }
@@ -136,7 +149,7 @@ void XrApp::HandleSessionStateChanges(XrSessionState state) {
     if (state == XR_SESSION_STATE_READY) {
 #if defined(ANDROID)
         assert(Resumed);
-        assert(NativeWindow != NULL);
+        assert(NativeWindow != NULL || IsOverlay());
 #endif // defined(ANDROID)
         assert(SessionActive == false);
 
@@ -280,7 +293,19 @@ void XrApp::HandleXrEvents() {
                         Focused = false;
                         break;
                     case XR_SESSION_STATE_READY:
+#if defined(ANDROID)
+                        if (IsOverlay()) {
+                            Resumed = true;
+                        }
+#endif
+                        HandleSessionStateChanges(session_state_changed_event->state);
+                        break;
                     case XR_SESSION_STATE_STOPPING:
+#if defined(ANDROID)
+                        if (IsOverlay()) {
+                            Resumed = false;
+                        }
+#endif
                         HandleSessionStateChanges(session_state_changed_event->state);
                         break;
                     case XR_SESSION_STATE_EXITING:
@@ -465,15 +490,21 @@ std::vector<XrExtensionProperties> XrApp::GetXrExtensionProperties() const {
 // Override this for custom action bindings, or modify the default bindings.
 std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> XrApp::GetSuggestedBindings(
     XrInstance instance) {
-    std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> suggestedBindings{};
+    if (SkipInputHandling) {
+        return std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>>{};
+    }
 
+    std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> suggestedBindings{};
     // By default we support "oculus/touch_controller" and "khr/simple_controller" as a fallback
     // All supported controllers should be explicitly listed here
-    XrPath simpleInteractionProfile = XR_NULL_PATH;
-    XrPath touchInteractionProfile = XR_NULL_PATH;
 
+#if defined(USE_SIMPLE_CONTROLLER_PROFILE)
+    XrPath simpleInteractionProfile = XR_NULL_PATH;
     OXR(xrStringToPath(
         instance, "/interaction_profiles/khr/simple_controller", &simpleInteractionProfile));
+#endif
+
+    XrPath touchInteractionProfile = XR_NULL_PATH;
     OXR(xrStringToPath(
         instance, "/interaction_profiles/oculus/touch_controller", &touchInteractionProfile));
 
@@ -524,6 +555,7 @@ std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> XrApp::GetSugg
     suggestedBindings[touchInteractionProfile].emplace_back(
         ActionSuggestedBinding(TriggerTouchAction, "/user/hand/right/input/trigger/touch"));
 
+#if defined(USE_SIMPLE_CONTROLLER_PROFILE)
     // -----------------------------------------
     // Default bindings for khr/simple_controller
     // -----------------------------------------
@@ -545,13 +577,30 @@ std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> XrApp::GetSugg
         ActionSuggestedBinding(ButtonBAction, "/user/hand/right/input/menu/click"));
     suggestedBindings[simpleInteractionProfile].emplace_back(
         ActionSuggestedBinding(ButtonMenuAction, "/user/hand/left/input/menu/click"));
+#endif
 
     return suggestedBindings;
 }
 
+const void* XrApp::GetInstanceCreateInfoNextChain() {
+    return nullptr;
+}
+
+void XrApp::FreeInstanceCreateInfoNextChain(const void* nextChain) {}
+
+const void* XrApp::GetSessionCreateInfoNextChain() {
+    return nullptr;
+}
+
+void XrApp::FreeSessionCreateInfoNextChain(const void* nextChain) {}
+
+void XrApp::GetInitialSceneUri(std::string& sceneUri) const {
+    sceneUri = "apk:///assets/box.ovrscene";
+}
+
 // Called one time when the application process starts.
 // Returns true if the application initialized successfully.
-bool XrApp::Init(const xrJava* context) {
+bool XrApp::Init(const xrJava& context) {
 #if defined(ANDROID)
     // Loader
     PFN_xrInitializeLoaderKHR xrInitializeLoaderKHR;
@@ -562,8 +611,8 @@ bool XrApp::Init(const xrJava* context) {
         memset(&loaderInitializeInfoAndroid, 0, sizeof(loaderInitializeInfoAndroid));
         loaderInitializeInfoAndroid.type = XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR;
         loaderInitializeInfoAndroid.next = NULL;
-        loaderInitializeInfoAndroid.applicationVM = context->Vm;
-        loaderInitializeInfoAndroid.applicationContext = context->ActivityObject;
+        loaderInitializeInfoAndroid.applicationVM = context.Vm;
+        loaderInitializeInfoAndroid.applicationContext = context.ActivityObject;
         xrInitializeLoaderKHR((XrLoaderInitInfoBaseHeaderKHR*)&loaderInitializeInfoAndroid);
     }
 #endif // defined(ANDROID)
@@ -660,10 +709,12 @@ bool XrApp::Init(const xrJava* context) {
     appInfo.engineVersion = 0;
     appInfo.apiVersion = XR_CURRENT_API_VERSION;
 
+    const void* nextChain = GetInstanceCreateInfoNextChain();
+
     XrInstanceCreateInfo instanceCreateInfo;
     memset(&instanceCreateInfo, 0, sizeof(instanceCreateInfo));
     instanceCreateInfo.type = XR_TYPE_INSTANCE_CREATE_INFO;
-    instanceCreateInfo.next = nullptr;
+    instanceCreateInfo.next = nextChain;
     instanceCreateInfo.createFlags = 0;
     instanceCreateInfo.applicationInfo = appInfo;
     instanceCreateInfo.enabledApiLayerCount = 0;
@@ -678,6 +729,7 @@ bool XrApp::Init(const xrJava* context) {
         exit(1);
     }
 
+    FreeInstanceCreateInfoNextChain(nextChain);
     ///
 
     XrInstanceProperties instanceInfo;
@@ -772,44 +824,57 @@ bool XrApp::Init(const xrJava* context) {
     SystemId = systemId;
 
     // Actions
-    BaseActionSet = CreateActionSet(1, "base_action_set", "Action Set used on main loop");
+    if (!SkipInputHandling) {
+        BaseActionSet = CreateActionSet(1, "base_action_set", "Action Set used on main loop");
 
-    OXR(xrStringToPath(Instance, "/user/hand/left", &LeftHandPath));
-    OXR(xrStringToPath(Instance, "/user/hand/right", &RightHandPath));
-    XrPath handSubactionPaths[2] = {LeftHandPath, RightHandPath};
+        OXR(xrStringToPath(Instance, "/user/hand/left", &LeftHandPath));
+        OXR(xrStringToPath(Instance, "/user/hand/right", &RightHandPath));
+        XrPath handSubactionPaths[2] = {LeftHandPath, RightHandPath};
 
-    AimPoseAction = CreateAction(
-        BaseActionSet, XR_ACTION_TYPE_POSE_INPUT, "aim_pose", NULL, 2, handSubactionPaths);
-    GripPoseAction = CreateAction(
-        BaseActionSet, XR_ACTION_TYPE_POSE_INPUT, "grip_pose", NULL, 2, handSubactionPaths);
+        AimPoseAction = CreateAction(
+            BaseActionSet, XR_ACTION_TYPE_POSE_INPUT, "aim_pose", NULL, 2, handSubactionPaths);
+        GripPoseAction = CreateAction(
+            BaseActionSet, XR_ACTION_TYPE_POSE_INPUT, "grip_pose", NULL, 2, handSubactionPaths);
 
-    JoystickAction = CreateAction(
-        BaseActionSet, XR_ACTION_TYPE_VECTOR2F_INPUT, "move_on_joy", NULL, 2, handSubactionPaths);
+        JoystickAction = CreateAction(
+            BaseActionSet,
+            XR_ACTION_TYPE_VECTOR2F_INPUT,
+            "move_on_joy",
+            NULL,
+            2,
+            handSubactionPaths);
 
-    IndexTriggerAction = CreateAction(
-        BaseActionSet, XR_ACTION_TYPE_FLOAT_INPUT, "index_trigger", NULL, 2, handSubactionPaths);
+        IndexTriggerAction = CreateAction(
+            BaseActionSet,
+            XR_ACTION_TYPE_FLOAT_INPUT,
+            "index_trigger",
+            NULL,
+            2,
+            handSubactionPaths);
 
-    GripTriggerAction = CreateAction(
-        BaseActionSet, XR_ACTION_TYPE_FLOAT_INPUT, "grip_trigger", NULL, 2, handSubactionPaths);
-    ButtonAAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_a", NULL);
-    ButtonBAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_b", NULL);
-    ButtonXAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_x", NULL);
-    ButtonYAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", NULL);
-    ButtonMenuAction =
-        CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_menu", NULL);
-    ThumbStickTouchAction =
-        CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "thumb_stick_touch", NULL);
-    ThumbRestTouchAction =
-        CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "thumb_rest_touch", NULL);
-    TriggerTouchAction =
-        CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "index_trigger_touch", NULL);
+        GripTriggerAction = CreateAction(
+            BaseActionSet, XR_ACTION_TYPE_FLOAT_INPUT, "grip_trigger", NULL, 2, handSubactionPaths);
+        ButtonAAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_a", NULL);
+        ButtonBAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_b", NULL);
+        ButtonXAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_x", NULL);
+        ButtonYAction = CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", NULL);
+        ButtonMenuAction =
+            CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_menu", NULL);
+        ThumbStickTouchAction =
+            CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "thumb_stick_touch", NULL);
+        ThumbRestTouchAction =
+            CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "thumb_rest_touch", NULL);
+        TriggerTouchAction =
+            CreateAction(BaseActionSet, XR_ACTION_TYPE_BOOLEAN_INPUT, "index_trigger_touch", NULL);
+    }
 
     /// Interaction profile can be overridden
-    std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> allSuggestedBindings =
+    const std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> allSuggestedBindings =
         GetSuggestedBindings(GetInstance());
 
     // Best practice is for apps to suggest bindings for *ALL* interaction profiles
-    // that the app supports. Loop over all interaction profiles we support and suggest bindings:
+    // that the app supports. Loop over all interaction profiles we support and suggest
+    // bindings:
     for (auto& [interactionProfilePath, bindings] : allSuggestedBindings) {
         XrInteractionProfileSuggestedBinding suggestedBindings = {};
         suggestedBindings.type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING;
@@ -821,41 +886,47 @@ bool XrApp::Init(const xrJava* context) {
         OXR(xrSuggestInteractionProfileBindings(Instance, &suggestedBindings));
     }
 
-    FileSys = std::unique_ptr<OVRFW::ovrFileSys>(ovrFileSys::Create(*context));
+    FileSys = std::unique_ptr<OVRFW::ovrFileSys>(ovrFileSys::Create(context));
     if (FileSys) {
         OVRFW::ovrFileSys& fs = *FileSys;
         MaterialParms materialParms;
         materialParms.UseSrgbTextureFormats = false;
-        SceneModel = std::unique_ptr<OVRFW::ModelFile>(LoadModelFile(
-            fs, "apk:///assets/box.ovrscene", Scene.GetDefaultGLPrograms(), materialParms));
-        if (SceneModel != nullptr) {
-            Scene.SetWorldModel(*SceneModel);
-            Vector3f modelOffset;
-            modelOffset.x = 0.5f;
-            modelOffset.y = 0.0f;
-            modelOffset.z = -2.25f;
-            Scene.GetWorldModel()->State.SetMatrix(
-                Matrix4f::Scaling(2.5f, 2.5f, 2.5f) * Matrix4f::Translation(modelOffset));
+        std::string sceneUri;
+        GetInitialSceneUri(sceneUri);
+        if (!sceneUri.empty()) {
+            SceneModel = std::unique_ptr<OVRFW::ModelFile>(
+                LoadModelFile(fs, sceneUri.c_str(), Scene.GetDefaultGLPrograms(), materialParms));
+            if (SceneModel != nullptr) {
+                Scene.SetWorldModel(*SceneModel);
+                Vector3f modelOffset;
+                modelOffset.x = 0.5f;
+                modelOffset.y = 0.0f;
+                modelOffset.z = -2.25f;
+                Scene.GetWorldModel()->State.SetMatrix(
+                    Matrix4f::Scaling(2.5f, 2.5f, 2.5f) * Matrix4f::Translation(modelOffset));
+            }
         }
     }
     SurfaceRender.Init();
 
-    return AppInit(context);
+    return AppInit(&context);
 }
 
 bool XrApp::InitSession() {
     // Create the OpenXR Session.
+    const void* nextChain = GetSessionCreateInfoNextChain();
+
 #if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
     XrGraphicsBindingOpenGLESAndroidKHR graphicsBindingAndroidGLES = {};
     graphicsBindingAndroidGLES.type = XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR;
-    graphicsBindingAndroidGLES.next = NULL;
+    graphicsBindingAndroidGLES.next = nextChain;
     graphicsBindingAndroidGLES.display = Egl.Display;
     graphicsBindingAndroidGLES.config = Egl.Config;
     graphicsBindingAndroidGLES.context = Egl.Context;
 #elif defined(XR_USE_GRAPHICS_API_OPENGL)
     XrGraphicsBindingOpenGLWin32KHR graphicsBindingGL = {};
     graphicsBindingGL.type = XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR;
-    graphicsBindingGL.next = NULL;
+    graphicsBindingGL.next = nextChain;
     graphicsBindingGL.hDC = Egl.hDC;
     graphicsBindingGL.hGLRC = Egl.hGLRC;
 #endif // defined(XR_USE_GRAPHICS_API_OPENGL_ES)
@@ -871,12 +942,16 @@ bool XrApp::InitSession() {
     sessionCreateInfo.createFlags = 0;
     sessionCreateInfo.systemId = SystemId;
 
+    PreCreateSession(sessionCreateInfo);
     XrResult initResult;
     OXR(initResult = xrCreateSession(Instance, &sessionCreateInfo, &Session));
     if (initResult != XR_SUCCESS) {
         ALOGE("Failed to create XR session: %d.", initResult);
         exit(1);
     }
+    PostCreateSession(sessionCreateInfo);
+
+    FreeSessionCreateInfoNextChain(nextChain);
 
     // App only supports the primary stereo view config.
     const XrViewConfigurationType supportedViewConfigType =
@@ -1021,7 +1096,7 @@ bool XrApp::InitSession() {
 
     // xrAttachSessionActionSets can only be called once, so skip it if the application
     // is doing it manually
-    if (!SkipSyncActions) {
+    if (!SkipInputHandling) {
         // Attach to session
         AttachActionSets();
     }
@@ -1048,7 +1123,7 @@ void XrApp::EndSession() {
 }
 
 // Called one time when the applicatoin process exits
-void XrApp::Shutdown(const xrJava* context) {
+void XrApp::Shutdown(const xrJava& context) {
     OXR(xrDestroyInstance(Instance));
 }
 
@@ -1201,7 +1276,7 @@ void XrApp::SyncActionSets(ovrApplFrameIn& in) {
 }
 
 void XrApp::HandleInput(ovrApplFrameIn& in) {
-    if (!SkipSyncActions) {
+    if (!SkipInputHandling) {
         // Sync default actions
         SyncActionSets(in);
     }
@@ -1295,83 +1370,80 @@ void XrApp::Update(const ovrApplFrameIn& in) {}
 
 void XrApp::Render(const ovrApplFrameIn& in, ovrRendererOutput& out) {}
 
-// App entry point
 #if defined(ANDROID)
-void XrApp::Run(struct android_app* app) {
-    ALOGV("----------------------------------------------------------------");
-    ALOGV("android_app_entry()");
-    ALOGV("    android_main()");
+void ActivityMainLoopContext::HandleOsEvents() {
+    // Read all pending events.
+    for (;;) {
+        int events;
+        struct android_poll_source* source;
+        // If the timeout is zero, returns immediately without blocking.
+        // If the timeout is negative, waits indefinitely until an event appears.
+        const int timeoutMilliseconds =
+            (xrApp_->GetResumed() == false && xrApp_->GetSessionActive() == false &&
+             app_->destroyRequested == 0)
+            ? -1
+            : 0;
+        if (ALooper_pollAll(timeoutMilliseconds, NULL, &events, (void**)&source) < 0) {
+            break;
+        }
 
-    // TODO: We should make this not required for OOPC apps.
-    ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_KEEP_SCREEN_ON, 0);
+        // Process this event.
+        if (source != NULL) {
+            source->process(app_, source);
+        }
+    }
+}
 
-    JNIEnv* Env;
-    (*app->activity->vm).AttachCurrentThread(&Env, nullptr);
+bool ActivityMainLoopContext::ShouldExitMainLoop() const {
+    return app_->destroyRequested;
+}
 
-    // Note that AttachCurrentThread will reset the thread name.
-    prctl(PR_SET_NAME, (long)"XrApp::Main", 0, 0, 0);
+bool ActivityMainLoopContext::IsExitRequested() const {
+    return xrApp_->GetShouldExit();
+}
+#elif defined(WIN32)
+void WindowsMainLoopContext::HandleOsEvents() {
+    MSG msg;
+    while (::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) > 0) {
+        if (msg.message == WM_QUIT) {
+            xrApp_->SetShouldExit(true);
+        } else {
+            ::TranslateMessage(&msg);
+            ::DispatchMessage(&msg);
+        }
+    }
+}
 
-    Context.Vm = app->activity->vm;
-    Context.Env = Env;
-    Context.ActivityObject = app->activity->clazz;
+bool WindowsMainLoopContext::ShouldExitMainLoop() const {
+    return false;
+}
+
+bool WindowsMainLoopContext::IsExitRequested() const {
+    return xrApp_->GetShouldExit();
+}
 #else
-void XrApp::Run() {
-    Context.Vm = nullptr;
-    Context.Env = nullptr;
-    Context.ActivityObject = nullptr;
+#error "Platform not supported!"
 #endif // defined(ANDROID)
-    Init(&Context);
 
+// Main application loop. The MainLoopContext is a functor that allows
+// an application to overload exit condition and event polling within the
+// loop. This allows Android Activity-based apps, Android Service-based apps,
+// and Windows apps to all use the same thread loop.
+void XrApp::MainLoop(MainLoopContext& loopContext) {
+    Init(loopContext.GetJavaContext());
     InitSession();
-
-#if defined(ANDROID)
-    app->userData = this;
-    app->onAppCmd = app_handle_cmd;
-#endif // defined(ANDROID)
 
     bool stageBoundsDirty = true;
     int frameCount = -1;
 
-#if defined(ANDROID)
-    while (app->destroyRequested == 0) {
-#else
-    while (true) {
-#endif // defined(ANDROID)
+    while (!loopContext.ShouldExitMainLoop()) {
         frameCount++;
 
-#if defined(ANDROID)
-        // Read all pending events.
-        for (;;) {
-            int events;
-            struct android_poll_source* source;
-            // If the timeout is zero, returns immediately without blocking.
-            // If the timeout is negative, waits indefinitely until an event appears.
-            const int timeoutMilliseconds =
-                (Resumed == false && SessionActive == false && app->destroyRequested == 0) ? -1 : 0;
-            if (ALooper_pollAll(timeoutMilliseconds, NULL, &events, (void**)&source) < 0) {
-                break;
-            }
-
-            // Process this event.
-            if (source != NULL) {
-                source->process(app, source);
-            }
-        }
-#elif defined(WIN32)
-        MSG msg;
-        while (::PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) > 0) {
-            if (msg.message == WM_QUIT) {
-                ShouldExit = true;
-            } else {
-                ::TranslateMessage(&msg);
-                ::DispatchMessage(&msg);
-            }
-        }
-#endif // defined(ANDROID)
+        loopContext.HandleOsEvents();
 
         HandleXrEvents();
 
-        if (ShouldExit) {
+        if (loopContext.IsExitRequested()) {
             break;
         }
 
@@ -1530,7 +1602,47 @@ void XrApp::Run() {
     }
 
     EndSession();
-    Shutdown(&Context);
+    Shutdown(loopContext.GetJavaContext());
+}
+
+// App entry point
+#if defined(ANDROID)
+void XrApp::Run(struct android_app* app) {
+    // Setup Activity-specific state
+    ALOGV("----------------------------------------------------------------");
+    ALOGV("android_app_entry()");
+    ALOGV("    android_main()");
+
+    // TODO: We should make this not required for OOPC apps.
+    ANativeActivity_setWindowFlags(app->activity, AWINDOW_FLAG_KEEP_SCREEN_ON, 0);
+
+    JNIEnv* Env;
+    (*app->activity->vm).AttachCurrentThread(&Env, nullptr);
+
+    // Note that AttachCurrentThread will reset the thread name.
+    prctl(PR_SET_NAME, (long)"XrApp::Main", 0, 0, 0);
+
+    Context.Vm = app->activity->vm;
+    Context.Env = Env;
+    Context.ActivityObject = app->activity->clazz;
+
+    app->userData = this;
+    app->onAppCmd = app_handle_cmd;
+
+    ActivityMainLoopContext loopContext(Context, this, app);
+#elif defined(WIN32)
+void XrApp::Run() {
+    Context.Vm = nullptr;
+    Context.Env = nullptr;
+    Context.ActivityObject = nullptr;
+
+    WindowsMainLoopContext loopContext(Context, this);
+#else
+#error "Platform not supported!"
+#endif // defined(ANDROID)
+
+    MainLoop(loopContext);
+
 #if defined(ANDROID)
     (*app->activity->vm).DetachCurrentThread();
 #endif // defined(ANDROID)

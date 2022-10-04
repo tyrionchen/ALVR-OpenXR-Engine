@@ -687,12 +687,12 @@ std::string GetSemanticLabels(ovrApp& app, const XrSpace space) {
     // First call.
     OXR(app.FunPtrs.xrGetSpaceSemanticLabelsFB(app.Session, space, &labels));
     // Second call
-    std::vector<char> labelData(labels.byteCountOutput);
-    labels.byteCapacityInput = labelData.size();
-    labels.labels = labelData.data();
+    std::vector<char> labelData(labels.bufferCountOutput);
+    labels.bufferCapacityInput = labelData.size();
+    labels.buffer = labelData.data();
     OXR(app.FunPtrs.xrGetSpaceSemanticLabelsFB(app.Session, space, &labels));
 
-    return std::string(labels.labels, labels.byteCountOutput);
+    return std::string(labels.buffer, labels.bufferCountOutput);
 }
 
 bool UpdateOvrPlane(ovrApp& app, ovrPlane& plane) {

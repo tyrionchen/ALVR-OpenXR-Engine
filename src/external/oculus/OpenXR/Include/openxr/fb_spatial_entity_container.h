@@ -10,6 +10,8 @@ Language    :   C99
 
 #pragma once
 
+#include <openxr/fb_spatial_entity.h>
+
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -26,6 +28,9 @@ extern "C" {
 #else
 #error "unknown experimental version number for XR_FB_spatial_entity_container_EXPERIMENTAL_VERSION"
 #endif
+
+static const XrSpaceComponentTypeFB XR_SPACE_COMPONENT_TYPE_SPACE_CONTAINER_FB =
+    (XrSpaceComponentTypeFB)7;
 
 // Space container component.
 static const XrStructureType XR_TYPE_SPACE_CONTAINER_FB = (XrStructureType)1000199000;
@@ -64,9 +69,8 @@ xrGetSpaceContainerFB(XrSession session, XrSpace space, XrSpaceContainerFB* spac
 
 #endif // XR_EXTENSION_PROTOTYPES
 #endif // !XR_NO_PROTOTYPES
-
-
 #endif // XR_FB_spatial_entity_container
+
 
 #ifdef __cplusplus
 }
