@@ -4469,6 +4469,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 #endif
         }
 
+        inline bool IsValid() const {
+            return texture.IsValid();
+        }
+
         constexpr inline std::size_t StagingBufferSize() const
         {
             return VulkanGraphicsPlugin::StagingBufferSize(width, height, format);
