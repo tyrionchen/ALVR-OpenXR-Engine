@@ -369,7 +369,7 @@ void alxr_on_receive(const unsigned char* packet, unsigned int packetSize)
 void alxr_on_haptics_feedback(unsigned long long path, float duration_s, float frequency, float amplitude)
 {
     if (const auto programPtr = gProgram) {
-        programPtr->EnqueueHapticFeedback(ALXR::HapticsFeedback {
+        programPtr->ApplyHapticFeedback(ALXR::HapticsFeedback {
             .alxrPath   = path,
             .amplitude  = amplitude,
             .duration   = duration_s,

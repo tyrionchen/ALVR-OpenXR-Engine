@@ -890,10 +890,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             m_session,
             m_alxrPaths,
             IsPassthroughSupported() ?
-                [this](const ALXR::PassthroughMode newMode) { TogglePassthroughMode(newMode); } : ALXR::TogglePTModeFn {},
-#ifdef XR_USE_OXR_PICO
-            m_pfnXrVibrateControllerPico,
-#endif            
+                [this](const ALXR::PassthroughMode newMode) { TogglePassthroughMode(newMode); } : ALXR::TogglePTModeFn {},          
             IsProfileSupported
         );
     }
@@ -2452,10 +2449,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         return true;
     }
 
-    virtual inline void EnqueueHapticFeedback(const ALXR::HapticsFeedback& hapticFeedback) override
+    virtual inline void ApplyHapticFeedback(const ALXR::HapticsFeedback& hapticFeedback) override
     {
         assert(m_interactionManager != nullptr);
-        m_interactionManager->EnqueueHapticFeedback(hapticFeedback);
+        m_interactionManager->ApplyHapticFeedback(hapticFeedback);
     }
 
     virtual inline void SetStreamConfig(const ALXRStreamConfig& config) override

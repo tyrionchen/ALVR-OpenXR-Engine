@@ -20,7 +20,6 @@
 #include "xr_utils.h"
 #include "interaction_profiles.h"
 #include "timing.h"
-#include "concurrent_queue.h"
 #include "ALVR-common/packet_types.h"
 
 namespace Side {
@@ -81,9 +80,6 @@ struct InteractionManager {
         XrSession session,
         const ALXRPaths& alxrPaths,
         const TogglePTModeFn& togglePTMode,
-#ifdef XR_USE_OXR_PICO
-        const PFN_xrVibrateControllerPico picoVibrateFn,
-#endif
         IsProfileSupportedFn&& isProfileSupported
     );
     InteractionManager(const InteractionManager&) = delete;
@@ -114,7 +110,7 @@ struct InteractionManager {
 
     void SetActiveProfile(const XrPath profilePath);
     void SetActiveFromCurrentProfile();
-    void EnqueueHapticFeedback(const HapticsFeedback& hapticFeedback) { m_hapticsQueue.push(hapticFeedback); }
+    void ApplyHapticFeedback(const HapticsFeedback& hapticFeedback);
 
 private:
     template < typename IsProfileSupportedFn >
@@ -130,7 +126,6 @@ private:
     bool PollQuitAction(const InteractionProfile& activeProfile);
     bool PollPassthrougMode(const InteractionProfile& activeProfile) const;
 
-    void ApplyHapticFeedback(const InteractionProfile* const activeProfile, const ControllerInfoList& cil);
     void RequestExitSession();
 
     void LogActionSourceName(XrAction action, const char* const actionName) const;
@@ -158,9 +153,6 @@ private:
     static_assert(ClockType::is_steady);
     using time_point = ClockType::time_point;
     time_point m_quitStartTime{};
-
-    using HapticsFeedbackQueue = xrconcurrency::concurrent_queue<HapticsFeedback>;
-    HapticsFeedbackQueue m_hapticsQueue;
 
     struct ALVRAction
     {
@@ -229,25 +221,16 @@ inline InteractionManager::InteractionManager
     XrSession session,
     const ALXRPaths& alxrPaths,
     const TogglePTModeFn& togglePTMode,
-#ifdef XR_USE_OXR_PICO
-    const PFN_xrVibrateControllerPico picoVibrateFn,
-#endif
     IsProfileSupportedFn&& isProfileSupported
 )
 : m_alxrPaths{ alxrPaths },
   m_instance{ instance },
   m_session{ session },
   m_togglePTMode { togglePTMode }
-#ifdef XR_USE_OXR_PICO
-  , m_pfnXrVibrateControllerPico{picoVibrateFn}
-#endif
 {
     CHECK(m_alxrPaths != ALXR_NULL_PATHS);
     CHECK(m_instance != XR_NULL_HANDLE);
     CHECK(m_session != XR_NULL_HANDLE);
-#ifdef XR_USE_OXR_PICO
-    CHECK(m_pfnXrVibrateControllerPico != nullptr);
-#endif
     InitializeActions(std::forward<IsProfileSupportedFn>(isProfileSupported));
 }
 
@@ -684,7 +667,6 @@ inline void InteractionManager::PollActions(InteractionManager::ControllerInfoLi
             controllerInfo.enabled = true;
     }
     
-    ApplyHapticFeedback(activeProfilePtr, controllerInfoList);
     if (activeProfilePtr) {
         const auto& activeProfile = *activeProfilePtr;
         PollPassthrougMode(activeProfile);
@@ -808,49 +790,28 @@ inline bool InteractionManager::PollPassthrougMode(const InteractionProfile& act
     return false;
 }
 
-inline void InteractionManager::ApplyHapticFeedback(const InteractionProfile* const activeProfilePtr, const InteractionManager::ControllerInfoList& controllerInfo)
+inline void InteractionManager::ApplyHapticFeedback(const HapticsFeedback& hapticFeedback)
 {
-    assert(m_session != XR_NULL_HANDLE);
-    constexpr static const size_t MaxPopPerFrame = 20;
-    size_t popCount = 0;
-    HapticsFeedback hapticFeedback;
-    while (m_hapticsQueue.try_pop(hapticFeedback) && popCount < MaxPopPerFrame)
-    {
-        const size_t hand = hapticFeedback.alxrPath == m_alxrPaths.right_haptics ? 1 : 0;
-        if (activeProfilePtr &&
-            activeProfilePtr->hapticPath &&
-            !controllerInfo[hand].isHand)
-        {
-            //Log::Write(Log::Level::Info, Fmt("Haptics: amp:%f duration:%f freq:%f", hapticFeedback.amplitude, hapticFeedback.duration, hapticFeedback.frequency));
-#ifdef XR_USE_OXR_PICO
-            if (m_pfnXrVibrateControllerPico) {
-                m_pfnXrVibrateControllerPico
-                (
-                    m_instance,
-                    hapticFeedback.amplitude,
-                    static_cast<int>(hapticFeedback.duration * 1000.0f),
-                    hand
-                );
-            }
-#else
-            const XrHapticVibration vibration{
-                .type = XR_TYPE_HAPTIC_VIBRATION,
-                .next = nullptr,
-                .duration = static_cast<XrDuration>(static_cast<double>(hapticFeedback.duration) * 1e+9),
-                .frequency = hapticFeedback.frequency,
-                .amplitude = hapticFeedback.amplitude
-            };
-            const XrHapticActionInfo hapticActionInfo{
-                .type = XR_TYPE_HAPTIC_ACTION_INFO,
-                .next = nullptr,
-                .action = m_vibrateAction,
-                .subactionPath = m_handSubactionPath[hand]
-            };
-            /*CHECK_XRCMD*/(xrApplyHapticFeedback(m_session, &hapticActionInfo, reinterpret_cast<const XrHapticBaseHeader*>(&vibration)));
-#endif
-        }
-        ++popCount;
-    }
+    if (m_session == XR_NULL_HANDLE)
+        return;
+    const auto activeProfilePtr = m_activeProfile.load();
+    if (activeProfilePtr == nullptr || !activeProfilePtr->hapticPath)
+        return;
+    const size_t hand = hapticFeedback.alxrPath == m_alxrPaths.right_haptics ? 1 : 0;
+    const XrHapticVibration vibration{
+        .type = XR_TYPE_HAPTIC_VIBRATION,
+        .next = nullptr,
+        .duration = static_cast<XrDuration>(static_cast<double>(hapticFeedback.duration) * 1e+9),
+        .frequency = hapticFeedback.frequency,
+        .amplitude = hapticFeedback.amplitude
+    };
+    const XrHapticActionInfo hapticActionInfo{
+        .type = XR_TYPE_HAPTIC_ACTION_INFO,
+        .next = nullptr,
+        .action = m_vibrateAction,
+        .subactionPath = m_handSubactionPath[hand]
+    };
+    /*CHECK_XRCMD*/(xrApplyHapticFeedback(m_session, &hapticActionInfo, reinterpret_cast<const XrHapticBaseHeader*>(&vibration)));
 }
 
 inline void InteractionManager::RequestExitSession()

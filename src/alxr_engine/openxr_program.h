@@ -103,7 +103,7 @@ struct IOpenXrProgram {
 
     virtual bool GetTrackingInfo(TrackingInfo& info) /*const*/ = 0;
 
-    virtual void EnqueueHapticFeedback(const ALXR::HapticsFeedback&) = 0;
+    virtual void ApplyHapticFeedback(const ALXR::HapticsFeedback&) = 0;
 
     virtual void SetStreamConfig(const ALXRStreamConfig& config) = 0;
     virtual bool GetStreamConfig(ALXRStreamConfig& config) const = 0;
