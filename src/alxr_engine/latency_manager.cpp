@@ -107,3 +107,31 @@ void LatencyManager::SendTimeSync() {
     timeSync.clientTime = GetSystemTimestampUs();
     m_callbackCtx.timeSyncSendFn(&timeSync);
 }
+
+void LatencyManager::SendFrameReRenderTimeSync() {
+    if (m_callbackCtx.timeSyncSendFn == nullptr)
+        return;
+    TimeSync timeSync
+    {
+        .type = ALVR_PACKET_TYPE_TIME_SYNC,
+        .mode = 0,
+        .sequence = ++m_timeSyncSequence,
+
+        .packetsLostTotal = LatencyCollector::Instance().getPacketsLostTotal(),
+        .packetsLostInSecond = LatencyCollector::Instance().getPacketsLostInSecond(),
+
+        .averageTotalLatency = 0,
+        .averageSendLatency = 0,
+        .averageTransportLatency = 0,
+        .averageDecodeLatency = 0,
+        .idleTime = 0,
+
+        .fecFailure = m_rt_state.isFecFailed.load(),
+        .fecFailureInSecond = LatencyCollector::Instance().getFecFailureInSecond(),
+        .fecFailureTotal = LatencyCollector::Instance().getFecFailureTotal(),
+
+        .fps = LatencyCollector::Instance().getFramesInSecond()
+    };
+    timeSync.clientTime = GetSystemTimestampUs();
+    m_callbackCtx.timeSyncSendFn(&timeSync);
+}

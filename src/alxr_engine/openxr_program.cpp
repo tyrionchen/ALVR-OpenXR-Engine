@@ -1811,18 +1811,6 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     void RenderFrame() override {
         CHECK(m_session != XR_NULL_HANDLE);
-        const auto renderMode = m_renderMode.load();
-        const bool isVideoStream = renderMode == RenderMode::VideoStream;
-        std::uint64_t videoFrameDisplayTime = std::uint64_t(-1);
-        if (isVideoStream) {
-            m_graphicsPlugin->BeginVideoView();
-            videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
-        }
-        const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1);
-        // rendered1 appears to be unused.
-        //if (timeRender)
-        //    LatencyCollector::Instance().rendered1(videoFrameIndex);
-
         constexpr const XrFrameWaitInfo frameWaitInfo{
             .type = XR_TYPE_FRAME_WAIT_INFO,
             .next = nullptr
@@ -1835,6 +1823,17 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_PredicatedLatencyOffset.store(frameState.predictedDisplayPeriod);
         m_lastPredicatedDisplayTime.store(frameState.predictedDisplayTime);
 
+        const auto renderMode = m_renderMode.load();
+        const bool isVideoStream = renderMode == RenderMode::VideoStream;
+        std::uint64_t videoFrameDisplayTime = std::uint64_t(-1);
+        if (isVideoStream) {
+            m_graphicsPlugin->BeginVideoView();
+            videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
+        }
+        const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1) &&
+                                videoFrameDisplayTime != m_lastVideoFrameIndex;
+        m_lastVideoFrameIndex = videoFrameDisplayTime;
+        
         XrTime predictedDisplayTime;
         const auto predictedViews = GetPredicatedViews(frameState, renderMode, videoFrameDisplayTime, /*out*/ predictedDisplayTime);
 
@@ -1900,7 +1899,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         };
         CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
 
-        LatencyManager::Instance().SubmitAndSync(videoFrameDisplayTime);
+        LatencyManager::Instance().SubmitAndSync(videoFrameDisplayTime, !timeRender);
         if (isVideoStream)
             m_graphicsPlugin->EndVideoView();
         
@@ -2652,7 +2651,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     std::vector<Swapchain> m_swapchains;
     std::map<XrSwapchain, std::vector<XrSwapchainImageBaseHeader*>> m_swapchainImages;
     std::vector<XrView> m_views;
-    int64_t m_colorSwapchainFormat{-1};
+    std::int64_t m_colorSwapchainFormat{-1};
     std::atomic<RenderMode> m_renderMode{ RenderMode::Lobby };
 
     std::vector<XrSpace> m_visualizedSpaces;
@@ -2749,6 +2748,7 @@ struct OpenXrProgram final : IOpenXrProgram {
     mutable std::shared_mutex m_trackingFrameMapMutex;        
     TrackingFrameMap          m_trackingFrameMap{};
     std::atomic<XrDuration>   m_PredicatedLatencyOffset{ 0 };
+    std::uint64_t             m_lastVideoFrameIndex = std::uint64_t(-1);
     static constexpr const std::size_t MaxTrackingFrameCount = 360 * 3;
 /// End Tracking Thread State ////////////////////////////////////////////////////
 

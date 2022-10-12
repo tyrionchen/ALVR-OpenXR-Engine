@@ -28,12 +28,15 @@ struct LatencyManager
 	);
 	void OnTimeSyncRecieved(const TimeSync& timeSync);
 
-	inline void SubmitAndSync(const std::uint64_t frameIndex)
+	inline void SubmitAndSync(const std::uint64_t frameIndex, const bool reRenderOnly = false)
 	{
 		if (frameIndex == std::uint64_t(-1))
 			return;
 		LatencyCollector::Instance().submit(frameIndex);
-		SendTimeSync();
+		if (reRenderOnly)
+			SendFrameReRenderTimeSync();
+		else
+			SendTimeSync();
 	}
 
 	inline void ResetAll() {
@@ -68,6 +71,7 @@ private:
 		const std::uint32_t toPacketCounter
 	);
 	void SendTimeSync();
+	void SendFrameReRenderTimeSync();
 
 	CallbackCtx m_callbackCtx {
 		.sendFn = nullptr,
