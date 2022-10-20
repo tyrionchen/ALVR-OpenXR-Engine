@@ -35,15 +35,9 @@ extern "C" {
 // computes the depth of the sample directly from the layer parameters.
 // XrCompositionLayerDepthTestFB may only be chained to layers that support depth.
 
-#if defined(XR_FB_composition_layer_depth_test_EXPERIMENTAL_VERSION)
-#if XR_FB_composition_layer_depth_test_EXPERIMENTAL_VERSION != 1
-#error \
-    "unknown experimental version number for XR_FB_composition_layer_depth_test_EXPERIMENTAL_VERSION"
-#endif
-
 #define XR_FB_composition_layer_depth_test 1
 #define XR_FB_composition_layer_depth_test_SPEC_VERSION 1
-#define XR_FB_COMPOSITION_LAYER_DEPTH_TEST_EXTENSION_NAME "XR_FBX1_composition_layer_depth_test"
+#define XR_FB_COMPOSITION_LAYER_DEPTH_TEST_EXTENSION_NAME "XR_FB_composition_layer_depth_test"
 
 typedef enum XrCompareOpFB {
     XR_COMPARE_OP_NEVER_FB = 0,
@@ -74,9 +68,8 @@ typedef struct XrCompositionLayerDepthTestFB {
     XrCompareOpFB compareOp;
 } XrCompositionLayerDepthTestFB;
 
-#endif // defined(XR_FB_composition_layer_depth_test_EXPERIMENTAL_VERSION)
-
 #endif // XR_FB_composition_layer_depth_test
+
 
 #ifdef __cplusplus
 }

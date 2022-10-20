@@ -521,7 +521,6 @@ void ovrApp::Clear() {
 void ovrApp::HandleSessionStateChanges(XrSessionState state) {
     if (state == XR_SESSION_STATE_READY) {
         assert(Resumed);
-        assert(NativeWindow != NULL);
         assert(SessionActive == false);
 
         XrSessionBeginInfo sessionBeginInfo = {};

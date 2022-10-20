@@ -14,7 +14,8 @@ Copyright : Copyright (c) Facebook Technologies, LLC and its affiliates. All rig
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h> // for memset
-#include <map>
+#include <unordered_map>
+#include <utility>
 #include <math.h>
 #include <string>
 #include <time.h>
@@ -454,6 +455,7 @@ struct ovrExtensionFunctionPointers {
     PFN_xrRetrieveSpaceQueryResultsFB xrRetrieveSpaceQueryResultsFB = nullptr;
     PFN_xrSaveSpaceFB xrSaveSpaceFB = nullptr;
     PFN_xrEraseSpaceFB xrEraseSpaceFB = nullptr;
+    PFN_xrGetSpaceUuidFB xrGetSpaceUuidFB = nullptr;
     };
 
 struct ovrEnableComponentEvent {
@@ -507,7 +509,7 @@ struct ovrApp {
     // Provided by SpatialAnchorGl, which is not aware of VrApi or OpenXR
     ovrAppRenderer AppRenderer;
 
-    std::map<XrAsyncRequestIdFB, XrSpace> DestroySpaceEventMap;
+    std::unordered_map<XrAsyncRequestIdFB, XrSpace> DestroySpaceEventMap;
 };
 
 void ovrApp::Clear() {
@@ -856,7 +858,7 @@ void ovrApp::HandleXrEvents() {
             case XR_TYPE_EVENT_DATA_SPACE_QUERY_COMPLETE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_QUERY_COMPLETE_FB");
             } break;
-            case XR_TYPE_EVENT_DATA_SPACE_SAVE_COMPLETE_FB: {
+                        case XR_TYPE_EVENT_DATA_SPACE_SAVE_COMPLETE_FB: {
                 ALOGV("xrPollEvent: received XR_TYPE_EVENT_DATA_SPACE_SAVE_COMPLETE_FB");
                 const XrEventDataSpaceSaveCompleteFB* saveResult =
                     (XrEventDataSpaceSaveCompleteFB*)(baseEventHeader);
@@ -1610,6 +1612,10 @@ int main() {
         instance,
         "xrCreateSpatialAnchorFB",
         (PFN_xrVoidFunction*)(&app.FunPtrs.xrCreateSpatialAnchorFB)));
+    OXR(xrGetInstanceProcAddr(
+        instance,
+        "xrGetSpaceUuidFB",
+        (PFN_xrVoidFunction*)(&app.FunPtrs.xrGetSpaceUuidFB)));
     OXR(xrGetInstanceProcAddr(
         instance,
         "xrEnumerateSpaceSupportedComponentsFB",

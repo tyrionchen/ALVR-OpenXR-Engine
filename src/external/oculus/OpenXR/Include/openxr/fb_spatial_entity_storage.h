@@ -144,7 +144,6 @@ xrEraseSpaceFB(XrSession session, const XrSpaceEraseInfoFB* info, XrAsyncRequest
 #ifndef XR_FBX_spatial_entity_storage
 #define XR_FBX_spatial_entity_storage 1
 
-
 // Conditionally define experimental versions, since they are not getting defined
 // if the extension is included from openxr.h
 #ifndef XR_FBX2_spatial_entity_storage_SPEC_VERSION

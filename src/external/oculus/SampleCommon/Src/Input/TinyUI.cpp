@@ -342,11 +342,18 @@ OVRFW::VRMenuObject* TinyUI::AddSlider(
     const OVR::Vector3f& position,
     float* value,
     const float defaultValue,
-    const float delta) {
+    const float delta,
+    const float minLimit,
+    const float maxLimit) {
     VRMenuObject* lb = CreateMenu(label, position, {150.0f, 50.0f});
     VRMenuObject* lt = CreateMenu("-", position + Vector3f{0.20f, 0.0f, 0.0f}, {50.0f, 50.0f});
     VRMenuObject* val = CreateMenu("0.0", position + Vector3f{0.35f, 0.0f, 0.0f}, {100.0f, 50.0f});
     VRMenuObject* gt = CreateMenu("+", position + Vector3f{0.50f, 0.0f, 0.0f}, {50.0f, 50.0f});
+
+    if (defaultValue < minLimit || defaultValue > maxLimit) {
+        ALOGE("TinyUI Slider: defaultValue cannot be out of limit");
+        return lb;
+    }
 
     auto updateText = [=]() {
         std::stringstream ss;
@@ -356,10 +363,12 @@ OVRFW::VRMenuObject* TinyUI::AddSlider(
     };
     ButtonHandlers[lt] = [=]() {
         *value -= delta;
+        *value = std::max(minLimit, *value);
         updateText();
     };
     ButtonHandlers[gt] = [=]() {
         *value += delta;
+        *value = std::min(maxLimit, *value);
         updateText();
     };
     ButtonHandlers[val] = [=]() {

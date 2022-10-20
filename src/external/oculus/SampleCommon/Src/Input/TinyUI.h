@@ -56,7 +56,9 @@ class TinyUI {
         const OVR::Vector3f& position,
         float* value,
         const float defaultValue,
-        const float delta = 0.02f);
+        const float delta = 0.02f,
+        const float minLimit = -FLT_MAX,
+        const float maxLimit = FLT_MAX);
     OVRFW::VRMenuObject* AddToggleButton(
         const std::string& labelTextOn,
         const std::string& labelTextOff,
