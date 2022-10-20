@@ -3173,6 +3173,9 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 
         m_cmdBuffer.Wait();
         m_cmdBuffer.Reset();
+#ifdef XR_USE_PLATFORM_ANDROID
+        m_videoTextures[VidTextureIndex::DeferredDelete].Clear();
+#endif
         m_cmdBuffer.Begin();
 
         // Ensure depth is in the right layout
@@ -3627,13 +3630,12 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 #endif
         m_renderTex = std::size_t(-1);
         m_currentVideoTex = 0;
-
-#ifdef XR_USE_PLATFORM_ANDROID
-        m_currentTexture.Clear();
-        m_videoTexQueue = VideoTextureQueue(2);
-#else
+        
         //m_texRendereComplete.WaitForGpu();
         m_videoTextures = { VideoTexture {}, VideoTexture {} };
+#ifdef XR_USE_PLATFORM_ANDROID
+        m_videoTexQueue = VideoTextureQueue(2);
+#else
         m_lastTexIndex = std::size_t(-1);
         textureIdx = std::size_t(-1);
 #endif
@@ -3958,8 +3960,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
 #ifdef XR_USE_PLATFORM_ANDROID
         VideoTexture newVideoTex{};
         if (m_videoTexQueue.try_dequeue(newVideoTex)) {
-            m_currentTexture = std::move(newVideoTex);
-            UpdateVideoTextureBinding(m_currentTexture);
+            auto& newCurrentTexture = m_videoTextures[VidTextureIndex::Current];
+            m_videoTextures[VidTextureIndex::DeferredDelete] = std::move(newCurrentTexture);
+            newCurrentTexture = std::move(newVideoTex);
+            UpdateVideoTextureBinding(newCurrentTexture);
         }
 #else
         textureIdx = m_renderTex.load();
@@ -3979,7 +3983,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     
     virtual std::uint64_t GetVideoFrameIndex() const override {
 #ifdef XR_USE_PLATFORM_ANDROID
-        return m_currentTexture.frameIndex;
+        return m_videoTextures[VidTextureIndex::Current].frameIndex;
 #else
         return textureIdx == std::uint64_t(-1) ?
             textureIdx :
@@ -4206,9 +4210,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
             swapchainContext.BindRenderTarget(imageIndex, /*out*/ renderPassBeginInfo);
 
 #ifdef XR_USE_PLATFORM_ANDROID
-            if (m_currentTexture.texture.texImage == VK_NULL_HANDLE)
+            auto& currentTexture = m_videoTextures[VidTextureIndex::Current];
+            if (currentTexture.texture.texImage == VK_NULL_HANDLE)
                 return;
-            m_currentTexture.texture.TransitionLayout(m_cmdBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            currentTexture.texture.TransitionLayout(m_cmdBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 #else
             if (textureIdx == std::size_t(-1))
                 return;
@@ -4248,9 +4253,10 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
             swapchainContext.BindRenderTarget(imageIndex, /*out*/ renderPassBeginInfo);
 
 #ifdef XR_USE_PLATFORM_ANDROID
-            if (m_currentTexture.texture.texImage == VK_NULL_HANDLE)
+            auto& currentTexture = m_videoTextures[VidTextureIndex::Current];
+            if (currentTexture.texture.texImage == VK_NULL_HANDLE)
                 return;
-            m_currentTexture.texture.TransitionLayout(m_cmdBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            currentTexture.texture.TransitionLayout(m_cmdBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 #else
             if (textureIdx == std::size_t(-1))
                 return;
@@ -4513,6 +4519,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         UpdateVideoTextureBinding(m_videoTextures[vidTexIndex]);
     }
 
+    static_assert(VideoTexCount >= 2);
     std::array<VideoTexture, VideoTexCount>  m_videoTextures{};
     std::atomic<std::size_t>            m_currentVideoTex{ 0 },
                                         m_renderTex{ std::size_t(-1) };
@@ -4521,8 +4528,11 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     std::size_t m_lastTexIndex = std::size_t(-1);
     std::size_t textureIdx = std::size_t(-1);
 #else
+    enum VidTextureIndex : std::size_t {
+        Current,
+        DeferredDelete
+    };
     using VideoTextureQueue = moodycamel::BlockingReaderWriterCircularBuffer<VideoTexture>; //atomic_queue::AtomicQueue2<VideoTexture, 2>;// moodycamel::BlockingReaderWriterCircularBuffer<VideoTexture>; // xrconcurrency::concurrent_queue<VideoTexture>; //
-    VideoTexture m_currentTexture{};
     VideoTextureQueue m_videoTexQueue{ 2 };
 #endif
 
