@@ -707,6 +707,13 @@ if (USE_OCULUS_MOBILE_LOADER AND ANDROID)
             TARGET
             openxr_loader
             PROPERTY
+            INTERFACE_INCLUDE_DIRECTORIES
+            ${OCULUS_OPENXR_MOBILE_SDK}/Include
+    )
+    set_property(
+            TARGET
+            openxr_loader
+            PROPERTY
             IMPORTED_LOCATION
             ${OCULUS_OPENXR_MOBILE_SDK}/Libs/Android/${ANDROID_ABI}/${BUILD_TYPE_DIR}/libopenxr_loader.so
     )
