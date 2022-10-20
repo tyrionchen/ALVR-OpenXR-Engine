@@ -2384,7 +2384,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         return GetEyeInfo(eyeInfo, m_lastPredicatedDisplayTime);
     }
 
-    virtual bool GetTrackingInfo(TrackingInfo& info) /*const*/ override
+    virtual bool GetTrackingInfo(TrackingInfo& info, const bool clientPredict) /*const*/ override
     {
         const XrDuration predicatedLatencyOffsetNs = m_PredicatedLatencyOffset.load();
         info = {
@@ -2421,6 +2421,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         // info.HeadPose_LinearVelocity    = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
         // info.HeadPose_AngularVelocity   = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
 
+        const auto lastPredicatedDisplayTime = m_lastPredicatedDisplayTime.load();
+        const auto& inputPredicatedTime = clientPredict ? predicatedDisplayTimeXR : lastPredicatedDisplayTime;
+
         for (const auto hand : { Side::LEFT, Side::RIGHT }) {
             auto& newContInfo = info.controller[hand];
 #ifdef XR_USE_OXR_PICO
@@ -2432,9 +2435,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             //
             //  This workaround will induce some small amount of "lag" as the times don't account for network latency and the HMD poses being in future times.
             //
-            const auto spaceLoc = GetHandSpaceLocation(hand, m_lastPredicatedDisplayTime);
+            const auto spaceLoc = GetHandSpaceLocation(hand, lastPredicatedDisplayTime);
 #else
-            const auto spaceLoc = GetHandSpaceLocation(hand, predicatedDisplayTimeXR);
+            const auto spaceLoc = GetHandSpaceLocation(hand, inputPredicatedTime);
 #endif
             newContInfo.position        = ToTrackingVector3(spaceLoc.pose.position);
             newContInfo.orientation     = ToTrackingQuat(spaceLoc.pose.orientation);
@@ -2442,7 +2445,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             newContInfo.angularVelocity = ToTrackingVector3(spaceLoc.angularVelocity);
         }
 
-        PollHandTrackers(predicatedDisplayTimeXR, info.controller);
+        PollHandTrackers(inputPredicatedTime, info.controller);
 
         LatencyCollector::Instance().tracking(predicatedDisplayTimeNs);
         return true;

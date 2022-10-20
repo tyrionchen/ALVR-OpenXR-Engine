@@ -27,7 +27,7 @@ DLLEXPORT void alxr_set_stream_config(const ALXRStreamConfig config);
 DLLEXPORT ALXRGuardianData alxr_get_guardian_data();
 
 DLLEXPORT void alxr_on_receive(const unsigned char* packet, unsigned int packetSize);
-DLLEXPORT void alxr_on_tracking_update(bool clientsidePrediction);
+DLLEXPORT void alxr_on_tracking_update(const bool clientsidePrediction);
 DLLEXPORT void alxr_on_haptics_feedback(unsigned long long path, float duration_s, float frequency, float amplitude);
 DLLEXPORT void alxr_on_server_disconnect();
 DLLEXPORT void alxr_on_pause();

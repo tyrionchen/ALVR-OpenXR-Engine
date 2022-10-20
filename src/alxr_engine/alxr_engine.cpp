@@ -316,7 +316,7 @@ inline void LogViewConfig(const ALXREyeInfo& newEyeInfo)
         newEyeInfo.ipd * 1000.0f, lEyeFovStr.c_str(), rEyeFovStr.c_str()));
 }
 
-void alxr_on_tracking_update(bool /*clientsidePrediction*/)
+void alxr_on_tracking_update(const bool clientsidePrediction)
 {
     const auto rustCtx = gRustCtx;
     if (rustCtx == nullptr)
@@ -340,7 +340,7 @@ void alxr_on_tracking_update(bool /*clientsidePrediction*/)
     xrProgram->PollActions();
 
     TrackingInfo newInfo;
-    if (!xrProgram->GetTrackingInfo(newInfo))
+    if (!xrProgram->GetTrackingInfo(newInfo, clientsidePrediction))
         return;
     rustCtx->inputSend(&newInfo);
 }
