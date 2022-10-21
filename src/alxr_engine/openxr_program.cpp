@@ -473,6 +473,13 @@ struct OpenXrProgram final : IOpenXrProgram {
         { XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME, false },
         { XR_FB_COLOR_SPACE_EXTENSION_NAME, false },
         { XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
+#ifdef XR_USE_OXR_OCULUS
+        // TODO: Uncomment these to enable using FB facial & social eye tracking extensions
+        //       Uncomment alvr\openxr-client\alxr-android-client\quest\Cargo.toml the relevant use-features/permissions
+        //       Add permission requests to alvr\openxr-client\alxr-android-client\src\permissions.rs
+        // { XR_FB_EYE_TRACKING_SOCIAL_EXTENSION_NAME, false },
+        // { XR_FB_FACE_TRACKING_EXTENSION_NAME, false },
+#endif
 #ifdef XR_USE_OXR_PICO
 #pragma message ("Pico Neo 3 OXR Extensions Enabled.")
         { XR_PICO_PERFORMANCE_SETTINGS_EXTENSION_NAME, false },
@@ -999,6 +1006,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         SetDeviceColorSpace();
         UpdateSupportedDisplayRefreshRates();
         InitializePassthroughAPI();
+        InitializeEyeTrackers();
+        InitializeFacialTracker();
         return InitializeHandTrackers();
     }
 
@@ -1031,6 +1040,50 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         CHECK_XRCMD(m_pfnSetColorSpaceFB(m_session, XR_COLOR_SPACE_REC2020_FB));
         Log::Write(Log::Level::Info, "Color space set.");
+        return true;
+    }
+
+    bool InitializeEyeTrackers()
+    {
+#ifdef XR_USE_OXR_OCULUS
+        //XrSystemEyeTrackingPropertiesFB eyeTrackingSystemProperties{
+        //    .type = XR_TYPE_SYSTEM_EYE_TRACKING_PROPERTIES_FB,
+        //    .next = nullptr
+        //};
+        //XrSystemProperties systemProperties{
+        //    .type = XR_TYPE_SYSTEM_PROPERTIES,
+        //    .next = &eyeTrackingSystemProperties
+        //};
+        //CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
+        //if (!eyeTrackingSystemProperties.supportsEyeTracking) {
+        //    Log::Write(Log::Level::Info, Fmt("%s is not supported.", XR_FB_EYE_TRACKING_SOCIAL_EXTENSION_NAME));
+        //    return false;
+        //}
+
+        //Log::Write(Log::Level::Info, Fmt("%s is enabled.", XR_FB_EYE_TRACKING_SOCIAL_EXTENSION_NAME));
+#endif
+        return true;
+    }
+
+    bool InitializeFacialTracker()
+    {
+#ifdef XR_USE_OXR_OCULUS
+        //XrSystemFaceTrackingPropertiesFB faceTrackingSystemProperties{
+        //    .type = XR_TYPE_SYSTEM_FACE_TRACKING_PROPERTIES_FB,
+        //    .next = nullptr
+        //};
+        //XrSystemProperties systemProperties{
+        //    .type = XR_TYPE_SYSTEM_PROPERTIES,
+        //    .next = &faceTrackingSystemProperties
+        //};
+        //CHECK_XRCMD(xrGetSystemProperties(m_instance, m_systemId, &systemProperties));
+        //if (!faceTrackingSystemProperties.supportsFaceTracking) {
+        //    Log::Write(Log::Level::Info, Fmt("%s is not supported.", XR_FB_FACE_TRACKING_EXTENSION_NAME));
+        //    return false;
+        //}
+
+        //Log::Write(Log::Level::Info, Fmt("%s is enabled.", XR_FB_FACE_TRACKING_EXTENSION_NAME));
+#endif
         return true;
     }
 

@@ -111,6 +111,10 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include <openxr/openxr_reflection.h>
+#ifdef XR_USE_OXR_OCULUS
+#include <openxr/fb_eye_tracking_social.h>
+#include <openxr/fb_face_tracking.h>
+#endif
 #ifdef XR_USE_OXR_PICO
 #include <openxr/openxr_pico.h>
 #endif

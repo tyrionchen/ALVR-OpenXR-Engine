@@ -717,6 +717,7 @@ if (USE_OCULUS_MOBILE_LOADER AND ANDROID)
             IMPORTED_LOCATION
             ${OCULUS_OPENXR_MOBILE_SDK}/Libs/Android/${ANDROID_ABI}/${BUILD_TYPE_DIR}/libopenxr_loader.so
     )
+    add_definitions(-DXR_USE_OXR_OCULUS)
 elseif (USE_PICO_MOBILE_LOADER AND ANDROID)
     message(STATUS "Using Pico Neo (3) Mobile OpenXR Loader.")
     set(PICO_OPENXR_MOBILE_SDK ${PROJECT_SOURCE_DIR}/src/external/pico-neo/OpenXR)
