@@ -111,6 +111,7 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         assert(options->AppSpace == "Stage");
         assert(options->ViewConfiguration == "Stereo");
         options->DisableLinearizeSrgb = ctx.disableLinearizeSrgb;
+        options->DisableSuggestedBindings = ctx.noSuggestedBindings;
         if (options->GraphicsPlugin.empty())
             options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
 

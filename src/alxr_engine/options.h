@@ -64,6 +64,7 @@ struct Options {
     std::string AppSpace{"Stage"};
 
     bool DisableLinearizeSrgb=false;
+    bool DisableSuggestedBindings = false;
 
     struct {
         XrFormFactor FormFactor{XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};

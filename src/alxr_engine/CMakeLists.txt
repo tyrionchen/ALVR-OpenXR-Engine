@@ -168,6 +168,15 @@ elseif (WIN32)
     set(ONE_API_TTB_LIBS)
 endif()
 
+
+    
+set(OCULUS_OXR_EXT_HEADERS)
+if (USE_OCULUS_OXR_EXT_HEADERS AND NOT ANDROID)
+    message(STATUS "Oculus OpenXR Extension Headers Enabled")
+    set(OCULUS_OXR_EXT_HEADERS ${OCULUS_OPENXR_MOBILE_SDK}/Include)
+    add_definitions(-DXR_USE_OXR_OCULUS)
+endif()
+
 target_include_directories(alxr_engine
     PRIVATE
     ${PROJECT_SOURCE_DIR}/src
@@ -176,6 +185,7 @@ target_include_directories(alxr_engine
     # for OpenXR headers
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_BINARY_DIR}/include
+    ${OCULUS_OXR_EXT_HEADERS}
 
     # for helper headers
     ${PROJECT_SOURCE_DIR}/external/include

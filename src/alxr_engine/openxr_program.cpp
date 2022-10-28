@@ -876,6 +876,8 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         const auto IsProfileSupported = [this](const auto& profile)
         {
+            if (m_options && m_options->DisableSuggestedBindings)
+                return false;
             if (IsRuntime(OxrRuntimeType::HTCWave)) {
                 if (profile.IsCore())
                     return false;

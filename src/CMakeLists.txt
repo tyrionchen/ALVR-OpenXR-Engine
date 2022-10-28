@@ -117,6 +117,7 @@ option(
     "Enable exception handling in the loader. Leave this on unless your standard library is built to not throw."
     ON
 )
+option(USE_OCULUS_OXR_EXT_HEADERS "Use the Oculus Mobile OpenXR SDK extension HEADERS only, for e.g. pure (air)link" OFF)
 option(USE_OCULUS_MOBILE_LOADER "Links to the Oculus Mobile OpenXR SDK to use this loader (BUILD_LOADER will be ignored)" OFF)
 option(USE_PICO_MOBILE_LOADER "Links to the Pico Neo (3) OpenXR SDK to use this loader (BUILD_LOADER will be ignored)" OFF)
 
@@ -693,15 +694,15 @@ if(ANDROID)
     find_library(ANDROID_LOG_LIBRARY NAMES log)
 endif()
 
+set(OCULUS_OPENXR_MOBILE_SDK ${PROJECT_SOURCE_DIR}/src/external/oculus/OpenXR)
+string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE_LOWERED)
+if (${BUILD_TYPE_LOWERED} MATCHES ".*debug.*")
+    set(BUILD_TYPE_DIR Debug)
+else()
+    set(BUILD_TYPE_DIR Release)
+endif()
 if (USE_OCULUS_MOBILE_LOADER AND ANDROID)
     message(STATUS "Using Oculus Mobile OpenXR Loader.")
-    set(OCULUS_OPENXR_MOBILE_SDK ${PROJECT_SOURCE_DIR}/src/external/oculus/OpenXR)
-    string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE_LOWERED)
-    if (${BUILD_TYPE_LOWERED} MATCHES ".*debug.*")
-        set(BUILD_TYPE_DIR Debug)
-    else()
-        set(BUILD_TYPE_DIR Release)
-    endif()
     add_library(openxr_loader SHARED IMPORTED)
     set_property(
             TARGET
