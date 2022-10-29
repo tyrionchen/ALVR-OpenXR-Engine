@@ -6,6 +6,7 @@
 #include "pch.h"
 #include "common.h"
 #include "geometry.h"
+#include "options.h"
 #include "graphicsplugin.h"
 
 #ifdef XR_USE_GRAPHICS_API_VULKAN
@@ -2487,8 +2488,12 @@ void Swapchain::Present(VkQueue queue, VkSemaphore drawComplete) {
 #endif  // defined(USE_MIRROR_WINDOW)
 
 struct VulkanGraphicsPlugin : public IGraphicsPlugin {
-    VulkanGraphicsPlugin(const std::shared_ptr<Options>& /*unused*/, std::shared_ptr<IPlatformPlugin> /*unused*/) {
+    VulkanGraphicsPlugin(const std::shared_ptr<Options>& options, std::shared_ptr<IPlatformPlugin> /*unused*/) {
         m_graphicsBinding.type = GetGraphicsBindingType();
+        if (options) {
+            m_noServerFramerateLock = options->NoServerFramerateLock;
+            m_noFrameSkip = options->NoFrameSkip;
+        }
     };
 
     std::vector<std::string> GetInstanceExtensions() const override { return { XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME }; }
@@ -3623,6 +3628,8 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
             std::make_shared<ALXR::FoveatedDecodeParams>(*fovDecParm) : nullptr;
     }
 
+    constexpr static const std::size_t VideoQueueSize = 2;
+
     virtual void ClearVideoTextures() override
     {
 #ifdef XR_ENABLE_CUDA_INTEROP
@@ -3634,7 +3641,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         //m_texRendereComplete.WaitForGpu();
         m_videoTextures = { VideoTexture {}, VideoTexture {} };
 #ifdef XR_USE_PLATFORM_ANDROID
-        m_videoTexQueue = VideoTextureQueue(2);
+        m_videoTexQueue = VideoTextureQueue(VideoQueueSize);
 #else
         m_lastTexIndex = std::size_t(-1);
         textureIdx = std::size_t(-1);
@@ -3959,7 +3966,23 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
     {
 #ifdef XR_USE_PLATFORM_ANDROID
         VideoTexture newVideoTex{};
-        if (m_videoTexQueue.try_dequeue(newVideoTex)) {
+
+        if (m_noFrameSkip) {
+            m_videoTexQueue.try_dequeue(newVideoTex);
+        } else {
+            std::size_t popCount = 0;
+            while (m_videoTexQueue.try_dequeue(newVideoTex) && popCount < VideoQueueSize) {
+                ++popCount;
+            }
+        }
+
+        if (!m_noServerFramerateLock && !newVideoTex.IsValid()) {
+            using namespace std::literals::chrono_literals;
+            constexpr static const auto QueueTextureWaitTime = 100ms;
+            m_videoTexQueue.wait_dequeue_timed(newVideoTex, QueueTextureWaitTime);
+        }
+
+        if (newVideoTex.IsValid()) {
             auto& newCurrentTexture = m_videoTextures[VidTextureIndex::Current];
             m_videoTextures[VidTextureIndex::DeferredDelete] = std::move(newCurrentTexture);
             newCurrentTexture = std::move(newVideoTex);
@@ -4131,7 +4154,7 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         CHECK_VKCMD(vkCreateImageView(m_vkDevice, &viewInfo, nullptr, &newVideoTex.imageView));
 
         using namespace std::literals::chrono_literals;
-        constexpr static const auto QueueTextureWaitTime = 1s;
+        constexpr static const auto QueueTextureWaitTime = 100ms;
         if (!m_videoTexQueue.wait_enqueue_timed(std::move(newVideoTex), QueueTextureWaitTime)) {
             Log::Write(Log::Level::Warning, Fmt("Waiting to queue decoded video frame (pts: %llu) timed-out after %lld seconds, this frame will be ignored", yuvBuffer.frameIndex, QueueTextureWaitTime.count()));
         }
@@ -4533,11 +4556,14 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         DeferredDelete
     };
     using VideoTextureQueue = moodycamel::BlockingReaderWriterCircularBuffer<VideoTexture>; //atomic_queue::AtomicQueue2<VideoTexture, 2>;// moodycamel::BlockingReaderWriterCircularBuffer<VideoTexture>; // xrconcurrency::concurrent_queue<VideoTexture>; //
-    VideoTextureQueue m_videoTexQueue{ 2 };
+    VideoTextureQueue m_videoTexQueue{ VideoQueueSize };
 #endif
 
     static_assert(XR_ENVIRONMENT_BLEND_MODE_OPAQUE == 1);
     std::size_t m_clearColorIndex{ (XR_ENVIRONMENT_BLEND_MODE_OPAQUE - 1) };
+    
+    bool m_noServerFramerateLock = false;
+    bool m_noFrameSkip = false;
 
 // END VIDEO STREAM DATA /////////////////////////////////////////////////////////////
 

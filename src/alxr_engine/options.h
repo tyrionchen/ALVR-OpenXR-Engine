@@ -65,6 +65,8 @@ struct Options {
 
     bool DisableLinearizeSrgb=false;
     bool DisableSuggestedBindings = false;
+    bool NoServerFramerateLock = false;
+    bool NoFrameSkip = false;
 
     struct {
         XrFormFactor FormFactor{XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};

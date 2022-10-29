@@ -272,7 +272,7 @@ struct FFMPEGDecoderPlugin final : public IDecoderPlugin {
                 std::memcpy(pktBuffer, newPacketData.data(), packetSize);
                 if (av_packet_from_data(pkt, pktBuffer, static_cast<int>(packetSize)) == 0) {
                     using namespace std::literals::chrono_literals;
-                    constexpr static const auto QueueWaitTimeout = 5s;
+                    constexpr static const auto QueueWaitTimeout = 500ms;
                     m_avPacketQueue.wait_enqueue_timed({ pkt, trackingFrameIndex }, QueueWaitTimeout);
                 } else av_free(pktBuffer);
             }
@@ -418,7 +418,7 @@ struct FFMPEGDecoderPlugin final : public IDecoderPlugin {
         assert(CreateVideoTextures != nullptr && UpdateVideoTextures != nullptr);
                 
         using namespace std::literals::chrono_literals;
-        static constexpr const auto QueueWaitTimeout = 1s;
+        static constexpr const auto QueueWaitTimeout = 500ms;
         std::size_t planeCount = 0;
         std::once_flag once_flag{};
         while (isRunningToken)

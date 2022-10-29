@@ -78,6 +78,8 @@ struct ALXRRustCtx
     bool verbose;
     bool disableLinearizeSrgb;
     bool noSuggestedBindings;
+    bool noServerFramerateLock;
+    bool noFrameSkip;
 #ifdef XR_USE_PLATFORM_ANDROID
     void* applicationVM;
     void* applicationActivity;

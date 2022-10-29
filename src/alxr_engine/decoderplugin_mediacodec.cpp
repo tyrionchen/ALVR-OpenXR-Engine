@@ -353,7 +353,7 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
 	) override
     {
         using namespace std::literals::chrono_literals;
-        constexpr static const auto QueueWaitTimeout = 5s;
+        constexpr static const auto QueueWaitTimeout = 500ms;
         
         const auto selectedCodec = m_selectedCodecType.load();
         const auto vpssps = find_vpssps(newPacketData, selectedCodec);
@@ -433,7 +433,7 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
         AMediaCodecPtr codec{ nullptr };
         AMediaFormatPtr format{ nullptr };        
         DecoderOutputThread outputThread{ imgListener.frameIndexMap };
-        static constexpr const std::int64_t QueueWaitTimeout = 1e+6;
+        static constexpr const std::int64_t QueueWaitTimeout = 5e+5;
         while (isRunningToken)
         {
             NALPacket packet{};
