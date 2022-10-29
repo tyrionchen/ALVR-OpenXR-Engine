@@ -71,6 +71,8 @@ struct InteractionProfile {
 using namespace XRPaths;
 #ifdef XR_USE_OXR_PICO
 constexpr inline const std::size_t ProfileMapSize = 1;
+#elif defined(XR_USE_OXR_OCULUS)
+constexpr inline const std::size_t ProfileMapSize = 10;
 #else
 constexpr inline const std::size_t ProfileMapSize = 9;
 #endif
@@ -217,6 +219,77 @@ constexpr inline const std::array<const InteractionProfile, ProfileMapSize> Inte
             }
         }}
     },
+#ifdef XR_USE_OXR_OCULUS
+    InteractionProfile {
+        .boolMap {
+            LeftMap { ButtonMap
+                {ALVR_INPUT_SYSTEM_CLICK, MenuClick},
+                {ALVR_INPUT_X_CLICK, XClick},
+                {ALVR_INPUT_X_TOUCH, XTouch},
+                {ALVR_INPUT_Y_CLICK, YClick},
+                {ALVR_INPUT_Y_TOUCH, YTouch},
+                {ALVR_INPUT_JOYSTICK_CLICK, ThumbstickClick},
+                {ALVR_INPUT_JOYSTICK_TOUCH, ThumbstickTouch},
+                {ALVR_INPUT_TRIGGER_TOUCH, TriggerTouch},
+                {ALVR_INPUT_THUMB_REST_TOUCH, ThumbrestTouch},
+                MapEnd
+            },
+            RightMap { ButtonMap
+                {ALVR_INPUT_SYSTEM_CLICK, SystemClick},
+                {ALVR_INPUT_A_CLICK, AClick},
+                {ALVR_INPUT_A_TOUCH, ATouch},
+                {ALVR_INPUT_B_CLICK, BClick},
+                {ALVR_INPUT_B_TOUCH, BTouch},
+                {ALVR_INPUT_JOYSTICK_CLICK, ThumbstickClick},
+                {ALVR_INPUT_JOYSTICK_TOUCH, ThumbstickTouch},
+                {ALVR_INPUT_TRIGGER_TOUCH, TriggerTouch},
+                {ALVR_INPUT_THUMB_REST_TOUCH, ThumbrestTouch},
+                MapEnd
+            },
+        },
+        .scalarMap {
+            LeftMap { ButtonMap
+                {ALVR_INPUT_GRIP_VALUE, SqueezeValue},
+                {ALVR_INPUT_JOYSTICK_X, ThumbstickX},
+                {ALVR_INPUT_JOYSTICK_Y, ThumbstickY},
+                {ALVR_INPUT_TRIGGER_VALUE, TriggerValue},
+                MapEnd
+            },
+            RightMap { ButtonMap
+                {ALVR_INPUT_GRIP_VALUE, SqueezeValue},
+                {ALVR_INPUT_JOYSTICK_X, ThumbstickX},
+                {ALVR_INPUT_JOYSTICK_Y, ThumbstickY},
+                {ALVR_INPUT_TRIGGER_VALUE, TriggerValue},
+                MapEnd
+            }
+        },
+        .scalarToBoolMap {
+            LeftMap { ButtonMap
+                {ALVR_INPUT_GRIP_CLICK, SqueezeValue},
+                {ALVR_INPUT_TRIGGER_CLICK, TriggerValue},
+                MapEnd
+            },
+            RightMap { ButtonMap
+                {ALVR_INPUT_GRIP_CLICK, SqueezeValue},
+                {ALVR_INPUT_TRIGGER_CLICK, TriggerValue},
+                MapEnd
+            }
+        },
+        .path = "/interaction_profiles/facebook/touch_controller_pro",
+        .extensionName = XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME,
+        .quitPath = nullptr,
+        .passthroughModes { PassthroughModeButtons {
+            .blendMode {
+                ALVR_BUTTON_FLAG(ALVR_INPUT_SYSTEM_CLICK),
+                ALVR_BUTTON_FLAG(ALVR_INPUT_A_CLICK)
+            },
+            .maskMode {
+                ALVR_BUTTON_FLAG(ALVR_INPUT_SYSTEM_CLICK),
+                ALVR_BUTTON_FLAG(ALVR_INPUT_B_CLICK)
+            }
+        }}
+    },
+#endif
     InteractionProfile {
         .boolMap {
             LeftMap { ButtonMap

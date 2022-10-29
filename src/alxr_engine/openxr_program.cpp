@@ -474,6 +474,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         { XR_FB_COLOR_SPACE_EXTENSION_NAME, false },
         { XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
 #ifdef XR_USE_OXR_OCULUS
+        { XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, false }
+        //{ XR_FB_TOUCH_CONTROLLER_EXTRAS_EXTENSION_NAME, false },
         // TODO: Uncomment these to enable using FB facial & social eye tracking extensions
         //       Uncomment alvr\openxr-client\alxr-android-client\quest\Cargo.toml the relevant use-features/permissions
         //       Add permission requests to alvr\openxr-client\alxr-android-client\src\permissions.rs

@@ -112,6 +112,7 @@
 #include <openxr/openxr_platform.h>
 #include <openxr/openxr_reflection.h>
 #ifdef XR_USE_OXR_OCULUS
+#include <openxr/fb_touch_controller_pro.h>
 #include <openxr/fb_eye_tracking_social.h>
 #include <openxr/fb_face_tracking.h>
 #endif
