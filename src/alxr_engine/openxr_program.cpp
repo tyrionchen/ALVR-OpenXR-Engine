@@ -338,10 +338,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         , xrLocalDimmingFrameEndInfoMETA(make_local_dimming_info(!options->DisableLocalDimming))
 #endif
     {
-#ifdef XR_USE_OXR_OCULUS
-        Log::Write(Log::Level::Info, Fmt("Is local dimming enabled? %s",
-            xrLocalDimmingFrameEndInfoMETA.localDimmingMode == XR_LOCAL_DIMMING_MODE_ON_META ? "true" : "false"));
-#endif
         LogLayersAndExtensions();
     }
 
@@ -351,10 +347,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         , xrLocalDimmingFrameEndInfoMETA(make_local_dimming_info(!options->DisableLocalDimming))
 #endif
     {
-#ifdef XR_USE_OXR_OCULUS
-        Log::Write(Log::Level::Info, Fmt("Is local dimming enabled? %s",
-            xrLocalDimmingFrameEndInfoMETA.localDimmingMode == XR_LOCAL_DIMMING_MODE_ON_META ? "true" : "false"));
-#endif
         LogLayersAndExtensions();
         auto& graphicsApi = options->GraphicsPlugin;
         if (graphicsApi.empty() || graphicsApi == "auto")
