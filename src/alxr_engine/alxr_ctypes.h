@@ -80,7 +80,7 @@ struct ALXRRustCtx
     bool noSuggestedBindings;
     bool noServerFramerateLock;
     bool noFrameSkip;
-    bool enableLocalDimming;
+    bool disableLocalDimming;
 #ifdef XR_USE_PLATFORM_ANDROID
     void* applicationVM;
     void* applicationActivity;

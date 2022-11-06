@@ -335,18 +335,26 @@ struct OpenXrProgram final : IOpenXrProgram {
         const std::shared_ptr<IGraphicsPlugin>& graphicsPlugin)
         : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin(graphicsPlugin)
 #ifdef XR_USE_OXR_OCULUS
-        , xrLocalDimmingFrameEndInfoMETA(make_local_dimming_info(options->EnableLocalDimming))
+        , xrLocalDimmingFrameEndInfoMETA(make_local_dimming_info(!options->DisableLocalDimming))
 #endif
     {
+#ifdef XR_USE_OXR_OCULUS
+        Log::Write(Log::Level::Info, Fmt("Is local dimming enabled? %s",
+            xrLocalDimmingFrameEndInfoMETA.localDimmingMode == XR_LOCAL_DIMMING_MODE_ON_META ? "true" : "false"));
+#endif
         LogLayersAndExtensions();
     }
 
     OpenXrProgram(const std::shared_ptr<Options>& options, const std::shared_ptr<IPlatformPlugin>& platformPlugin)
         : m_options(options), m_platformPlugin(platformPlugin), m_graphicsPlugin{ nullptr }
 #ifdef XR_USE_OXR_OCULUS
-        , xrLocalDimmingFrameEndInfoMETA(make_local_dimming_info(options->EnableLocalDimming))
+        , xrLocalDimmingFrameEndInfoMETA(make_local_dimming_info(!options->DisableLocalDimming))
 #endif
     {
+#ifdef XR_USE_OXR_OCULUS
+        Log::Write(Log::Level::Info, Fmt("Is local dimming enabled? %s",
+            xrLocalDimmingFrameEndInfoMETA.localDimmingMode == XR_LOCAL_DIMMING_MODE_ON_META ? "true" : "false"));
+#endif
         LogLayersAndExtensions();
         auto& graphicsApi = options->GraphicsPlugin;
         if (graphicsApi.empty() || graphicsApi == "auto")
