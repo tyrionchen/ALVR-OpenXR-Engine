@@ -2740,46 +2740,40 @@ struct VulkanGraphicsPlugin : public IGraphicsPlugin {
         std::vector<VkQueueFamilyProperties> queueFamilyProps(queueFamilyCount);
         vkGetPhysicalDeviceQueueFamilyProperties(m_vkPhysicalDevice, &queueFamilyCount, &queueFamilyProps[0]);
 
-        VkDeviceQueueCreateInfo queueInfo[2]
-         {
-           {
-            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .pNext = nullptr,
-            .queueCount = static_cast<std::uint32_t>(queuePriorities.size()),
-            .pQueuePriorities = queuePriorities.data()
-           },
-           {
-            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .pNext = nullptr,
-            .queueCount = 1,
-            .pQueuePriorities = queuePriorities.data()+1
-           },
-        
+        VkDeviceQueueCreateInfo queueInfo[2] {
+            {
+                .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .pNext = nullptr,
+                .queueCount = static_cast<std::uint32_t>(queuePriorities.size()),
+                .pQueuePriorities = queuePriorities.data()
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .pNext = nullptr,
+                .queueCount = 1,
+                .pQueuePriorities = queuePriorities.data()+1
+            },
         };
  
         for (uint32_t i = 0; i < queueFamilyCount; ++i) {
             // Only need graphics (not presentation) for draw queue
             if ((queueFamilyProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0u) {
-                //if (m_queueFamilyIndex != 0) {
                 m_queueFamilyIndex = m_queueFamilyIndexVideoCpy = queueInfo[0].queueFamilyIndex = i;
-                //}
                 break;
             }
         }
-        int queueInfoCount = 1, cpyQueueIndex = 1;;
-        if(queueFamilyProps[m_queueFamilyIndex].queueCount < 2) // no free queue graphics family, find free queue with transfer flag
+
+        std::uint32_t queueInfoCount = 1, cpyQueueIndex = 1;;
+        if (queueFamilyProps[m_queueFamilyIndex].queueCount < 2) // no free queue graphics family, find free queue with transfer flag
         {
-        for (uint32_t i = 0; i < queueFamilyCount; ++i) {
-            // Only need transfer (not graphics) for video queue
-            if ( i != m_queueFamilyIndex && (queueFamilyProps[i].queueFlags & VK_QUEUE_TRANSFER_BIT) != 0u) {
-                //if (m_queueFamilyIndex != 0) {
-                m_queueFamilyIndexVideoCpy = queueInfo[1].queueFamilyIndex = i;
-                //}
-                break;
+            for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+                // Only need transfer (not graphics) for video queue
+                if ( i != m_queueFamilyIndex && (queueFamilyProps[i].queueFlags & VK_QUEUE_TRANSFER_BIT) != 0u) {
+                    m_queueFamilyIndexVideoCpy = queueInfo[1].queueFamilyIndex = i;
+                    break;
+                }
             }
-        }
-        queueInfoCount = 2, cpyQueueIndex = 0, queueInfo[0].queueCount = 1;
-        
+            queueInfoCount = 2, cpyQueueIndex = 0, queueInfo[0].queueCount = 1;
         }
 
         std::vector<const char*> deviceExtensions =
