@@ -127,6 +127,18 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         platformData->applicationVM = ctx.applicationVM;
         platformData->applicationActivity = ctx.applicationActivity;
 
+        
+        // JNIEnv *env;
+        // jint res = ((JavaVM*)(ctx.applicationVM))->AttachCurrentThread(&env, nullptr);
+        // if (res == JNI_OK) {
+        //     Log::Write(Log::Level::Error, "6666666xxx OK to get JNI environment");
+        // } else {
+        //     Log::Write(Log::Level::Error, "6666666xxx Failed to get JNI environment.");
+        // }
+        // static const char * className = "com/tencent/tcr/xr/OpenXrTextureEglRenderer";
+	    // jclass openXrTextureEglRenderClass = env->FindClass(className);
+        // Log::Write(Log::Level::Error, Fmt("6666666xxx openXrTextureEglRenderClass:%p", openXrTextureEglRenderClass));
+
         // Initialize the loader for this platform
         PFN_xrInitializeLoaderKHR initializeLoader = nullptr;
         if (XR_SUCCEEDED(xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR",

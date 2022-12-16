@@ -2192,6 +2192,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         assert(projectionLayerViews.size() == views.size());
 
         const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
+        Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews isVideoStream:%d", isVideoStream));
         const auto vizCubes = isVideoStream ? VizCubeList{} : GetVisualizedCubes(predictedDisplayTime);
         const auto ptMode = static_cast<const ::PassthroughMode>(mode);
         // Render view to the appropriate part of the swapchain image.
@@ -2240,8 +2241,9 @@ struct OpenXrProgram final : IOpenXrProgram {
     }
 
     virtual void SetRenderMode(const RenderMode newMode) override
-    {
-        m_renderMode = newMode;
+    {   
+        UNUSED_PARM(newMode);
+        m_renderMode = RenderMode::VideoStream;
     }
 
     virtual RenderMode GetRenderMode() const override {

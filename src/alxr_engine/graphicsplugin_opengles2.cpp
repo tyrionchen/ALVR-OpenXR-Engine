@@ -93,15 +93,11 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
     }
 
     void InitializeResources() {
-        glGenTextures(1, &m_texture_id);
         glGenFramebuffers(1, &m_swapchainFramebuffer);
         m_leftEyeRenderer = makeLeftEyeRenderer();
         m_rightEyeRenderer = makeRightEyeRenderer();
         m_leftEyeRenderer->InitializeResources();
         m_rightEyeRenderer->InitializeResources();
-
-        m_leftEyeRenderer->setTextureId(m_texture_id);
-        m_rightEyeRenderer->setTextureId(m_texture_id);
     }
 
     int64_t SelectColorSwapchainFormat(const std::vector<int64_t>& runtimeFormats) const override {
@@ -132,11 +128,13 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
     }
 
     virtual std::uint64_t GetVideoFrameIndex() const override { 
-        m_SurfaceTexture->Update();
-        return m_SurfaceTexture->GetNanoTimeStamp();
+        if (!m_SurfaceTextureWrapper) {
+            return 0;
+        }
+        return m_SurfaceTextureWrapper->Update();
     }
 
-    void setSurfaceTexture(std::shared_ptr<SurfaceTexture>& texture) override { m_SurfaceTexture = texture; }
+    void setSurfaceTexture(std::shared_ptr<SurfaceTextureWrapper>& texture) override { m_SurfaceTextureWrapper = texture; }
 
     std::vector<XrSwapchainImageBaseHeader*> AllocateSwapchainImageStructs(
         uint32_t capacity, const XrSwapchainCreateInfo& /*swapchainCreateInfo*/) override {
@@ -168,6 +166,13 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
                     const XrSwapchainImageBaseHeader* swapchainImage, int64_t swapchainFormat) override {
         CHECK(layerView.subImage.imageArrayIndex == 0);  // Texture arrays not supported.
         UNUSED_PARM(swapchainFormat);                    // Not used in this function for now.
+
+        if (m_texture_id == 0) {
+            glGenTextures(1, &m_texture_id);
+            m_leftEyeRenderer->setTextureId(m_texture_id);
+            m_rightEyeRenderer->setTextureId(m_texture_id);
+            Log::Write(Log::Level::Info, Fmt("cyyyyy generate m_texture_id:%d", m_texture_id));
+        }
 
         glBindFramebuffer(GL_FRAMEBUFFER, m_swapchainFramebuffer);
 
@@ -212,7 +217,7 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
 
     std::shared_ptr<IRenderer> m_leftEyeRenderer;
     std::shared_ptr<IRenderer> m_rightEyeRenderer;
-    std::shared_ptr<SurfaceTexture> m_SurfaceTexture;
+    std::shared_ptr<SurfaceTextureWrapper> m_SurfaceTextureWrapper;
 };
 }  // namespace
 

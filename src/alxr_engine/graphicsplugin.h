@@ -7,7 +7,7 @@
 #ifdef None // xlib...
 #undef None
 #endif
-#include "surface_texture.h"
+#include "surface_texture_wrapper.h"
 
 
 #define UNUSED_PARM(x) \
@@ -132,7 +132,7 @@ struct IGraphicsPlugin {
     virtual void* GetD3D11VADeviceContext() { return nullptr; }
 
     virtual unsigned getTextureId() const { return 0; }
-    virtual void setSurfaceTexture(std::shared_ptr<SurfaceTexture> &texture){ UNUSED_PARM(texture); }
+    virtual void setSurfaceTexture(std::shared_ptr<SurfaceTextureWrapper> &texture){ UNUSED_PARM(texture); }
     // Render to a swapchain image for a projection view.
     virtual void RenderView(uint32_t viewIndex, const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,int64_t swapchainFormat) 
     {

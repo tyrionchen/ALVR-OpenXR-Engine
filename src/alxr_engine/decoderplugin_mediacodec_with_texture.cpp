@@ -29,7 +29,7 @@
 #include "openxr_program.h"
 #include "latency_manager.h"
 #include "timing.h"
-#include "surface_texture.h"
+#include "surface_texture_wrapper.h"
 #include <android/native_window_jni.h>
 
 
@@ -123,12 +123,10 @@ class DecoderOutputThread
 {
     std::thread m_thread;
     std::atomic<bool> m_isRunning{ false };
-    std::shared_ptr<SurfaceTexture> m_surfaceTexture;
+    std::shared_ptr<SurfaceTextureWrapper> m_surfaceTexture;
     
 public:
-    inline DecoderOutputThread(std::shared_ptr<SurfaceTexture> &surfaceTexturePtr)
-    : m_surfaceTexture(surfaceTexturePtr)
-    {}
+    inline DecoderOutputThread(){}
 
     inline DecoderOutputThread(const DecoderOutputThread&) noexcept = delete;
     inline DecoderOutputThread(DecoderOutputThread&&) noexcept = delete;
@@ -139,6 +137,11 @@ public:
         Stop();
         assert(!m_thread.joinable());
         Log::Write(Log::Level::Info, "DecoderOutputThread destroyed");
+    }
+
+    inline void SetTexture(std::shared_ptr<SurfaceTextureWrapper> &surfaceTexturePtr) {
+        Log::Write(Log::Level::Info, "cyyyyy SetTexture");
+        m_surfaceTexture = surfaceTexturePtr;
     }
 
     bool Start(const AMediaCodecPtr& newCodec)
@@ -210,6 +213,7 @@ public:
                 assert(w != 0 && h != 0);
                 Log::Write(Log::Level::Info, Fmt("OUTPUT_FORMAT_CHANGED, w:%d, h:%d", w, h));
                 m_surfaceTexture->SetDefaultBufferSize(w, h);
+                Log::Write(Log::Level::Info, "cyyyyy SetTexture SetDefaultBufferSize");
             }
         }
     }
@@ -305,29 +309,9 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
         }
         m_selectedCodecType.store(static_cast<ALVR_CODEC>(ctx.config.codecType));
         
-        // 1.验证SurfaceTexture反射调用成功 DONE
-        // 2.支持写入MediaCodec -> AMediaCodec_configure，让SurfaceTexture能够更新到数据
-        // 3.实现一个自己的graphic plugin, 把渲染逻辑挪过去
-
-        unsigned textureId = ctx.programPtr->GetGraphicsPlugin()->getTextureId();
-
-        JNIEnv *env;
-    
-        std::shared_ptr<SurfaceTexture> surfaceTexture;
-        jint res = ((JavaVM*)(ctx.rustCtx->applicationVM))->AttachCurrentThread(&env, nullptr);
-        if (res == JNI_OK) {
-            surfaceTexture = std::make_shared<SurfaceTexture>(env, textureId);
-        } else {
-            Log::Write(Log::Level::Error, "Failed to get JNI environment.");
-        }
-        ctx.programPtr->GetGraphicsPlugin()->setSurfaceTexture(surfaceTexture);
-
-        
-        ANativeWindow* const nativeWindow = ANativeWindow_fromSurface(env, surfaceTexture->GetJavaObjectSurface());
-
         AMediaCodecPtr codec{ nullptr };
         AMediaFormatPtr format{ nullptr };        
-        DecoderOutputThread outputThread{ surfaceTexture };
+        DecoderOutputThread outputThread{};
         static constexpr const std::int64_t QueueWaitTimeout = 5e+5;
         while (isRunningToken)
         {
@@ -356,7 +340,26 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
                 format = MakeMediaFormat(mimeType, ctx.optionMap, packet.data, ctx.config.realtimePriority);
                 assert(format != nullptr);
 
-                
+                unsigned textureId = ctx.programPtr->GetGraphicsPlugin()->getTextureId();
+                if (textureId == 0) {
+                    Log::Write(Log::Level::Error, Fmt("cyyyyy textureId:%u", textureId));
+                    continue;
+                }
+
+                JNIEnv *env;
+                std::shared_ptr<SurfaceTextureWrapper> surfaceTexture;
+                jint res = ((JavaVM*)(ctx.rustCtx->applicationVM))->AttachCurrentThread(&env, nullptr);
+                if (res == JNI_OK) {
+                    jobject activityObj = (jobject)(ctx.rustCtx->applicationActivity);
+                    surfaceTexture = std::make_shared<SurfaceTextureWrapper>(env, activityObj, textureId);
+                } else {
+                    Log::Write(Log::Level::Error, "Failed to get JNI environment.");
+                }
+                ctx.programPtr->GetGraphicsPlugin()->setSurfaceTexture(surfaceTexture);
+
+                outputThread.SetTexture(surfaceTexture);
+
+                ANativeWindow* const nativeWindow = ANativeWindow_fromSurface(env, surfaceTexture->GetSurfaceJavaObject());
 
                 auto status = AMediaCodec_configure(codec.get(), format.get(), nativeWindow, nullptr, 0);
                 if (status != AMEDIA_OK) {
