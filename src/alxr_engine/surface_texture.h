@@ -22,11 +22,13 @@ public:
 	void 					Update();
 
 	jobject					GetJavaObject();
+    jobject					GetJavaObjectSurface();
 	long long				GetNanoTimeStamp();
 
 private:
 	unsigned				textureId;
 	jobject					javaObject;
+    jobject					javaObjectSurface;
 	JNIEnv * 				jni;
 
 	// Updated when Update() is called, can be used to

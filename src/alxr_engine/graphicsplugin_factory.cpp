@@ -14,6 +14,8 @@
 #ifdef XR_USE_GRAPHICS_API_OPENGL_ES
 std::shared_ptr<IGraphicsPlugin> CreateGraphicsPlugin_OpenGLES(const std::shared_ptr<Options>& options,
                                                                std::shared_ptr<IPlatformPlugin> platformPlugin);
+std::shared_ptr<IGraphicsPlugin> CreateGraphicsPlugin_OpenGLES2(const std::shared_ptr<Options>& options,
+                                                               std::shared_ptr<IPlatformPlugin> platformPlugin);
 #endif
 #ifdef XR_USE_GRAPHICS_API_OPENGL
 std::shared_ptr<IGraphicsPlugin> CreateGraphicsPlugin_OpenGL(const std::shared_ptr<Options>& options,
@@ -44,6 +46,10 @@ const std::map<std::string, GraphicsPluginFactory, IgnoreCaseStringLess> graphic
     {"OpenGLES",
      [](const std::shared_ptr<Options>& options, std::shared_ptr<IPlatformPlugin> platformPlugin) {
          return CreateGraphicsPlugin_OpenGLES(options, std::move(platformPlugin));
+     }},
+    {"OpenGLES2",
+     [](const std::shared_ptr<Options>& options, std::shared_ptr<IPlatformPlugin> platformPlugin) {
+         return CreateGraphicsPlugin_OpenGLES2(options, std::move(platformPlugin));
      }},
 #endif
 #ifdef XR_USE_GRAPHICS_API_OPENGL

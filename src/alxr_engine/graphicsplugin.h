@@ -132,8 +132,16 @@ struct IGraphicsPlugin {
     virtual void* GetD3D11VADeviceContext() { return nullptr; }
 
     virtual unsigned getTextureId() const { return 0; }
-    virtual void setSurfaceTexture(std::unique_ptr<SurfaceTexture> &texture){ UNUSED_PARM(texture); }
-
+    virtual void setSurfaceTexture(std::shared_ptr<SurfaceTexture> &texture){ UNUSED_PARM(texture); }
+    // Render to a swapchain image for a projection view.
+    virtual void RenderView(uint32_t viewIndex, const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,int64_t swapchainFormat) 
+    {
+        UNUSED_PARM(viewIndex);
+        UNUSED_PARM(layerView);
+        UNUSED_PARM(swapchainImage);
+        UNUSED_PARM(swapchainFormat);
+    }
+    
     struct Buffer {
         void* data = nullptr;
         std::size_t pitch = 0;

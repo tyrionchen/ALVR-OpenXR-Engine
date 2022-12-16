@@ -1910,6 +1910,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         if (isVideoStream) {
             m_graphicsPlugin->BeginVideoView();
             videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
+            Log::Write(Log::Level::Verbose,
+                    Fmt("cyyyyy RenderFrame() videoFrameDisplayTime:%" PRIu64, videoFrameDisplayTime));
         }
         const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1) &&
                                 videoFrameDisplayTime != m_lastVideoFrameIndex;
@@ -2215,7 +2217,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
             if (isVideoStream)
-                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode);
+                m_graphicsPlugin->RenderView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);
             else
                 m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode, vizCubes);
             

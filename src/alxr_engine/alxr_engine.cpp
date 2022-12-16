@@ -73,6 +73,8 @@ constexpr inline auto graphics_api_str(const ALXRGraphicsApi gcp)
         return "D3D11";
     case ALXRGraphicsApi::OpenGLES:
         return "OpenGLES";
+    case ALXRGraphicsApi::OpenGLES2:
+        return "OpenGLES2";
     case ALXRGraphicsApi::OpenGL:
         return "OpenGL";
     default:
@@ -117,7 +119,7 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         options->DisableLocalDimming = ctx.disableLocalDimming;
         options->DisplayColorSpace = static_cast<XrColorSpaceFB>(ctx.displayColorSpace);
         if (options->GraphicsPlugin.empty())
-            options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
+            options->GraphicsPlugin = graphics_api_str(ALXRGraphicsApi::OpenGLES2);
 
         const auto platformData = std::make_shared<PlatformData>();
 #ifdef XR_USE_PLATFORM_ANDROID

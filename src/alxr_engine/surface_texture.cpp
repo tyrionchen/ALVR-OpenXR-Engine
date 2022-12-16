@@ -52,8 +52,20 @@ SurfaceTexture::SurfaceTexture(JNIEnv * jniEnv, unsigned id) :
 		Log::Write(Log::Level::Info, "couldn't get setDefaultBufferSize" );
     }
 
-	Log::Write(Log::Level::Info, Fmt("SurfaceTexture got method updateTexImageMethodId:%p, getTimestampMethodId:%p, setDefaultBufferSizeMethodId:%p",
-		updateTexImageMethodId, getTimestampMethodId, setDefaultBufferSizeMethodId));
+	static const char * surfaceClassName = "android/view/Surface";
+	const jclass surfaceClass = jni->FindClass(surfaceClassName);
+	if ( surfaceClass == 0 ) {
+		Log::Write(Log::Level::Info, Fmt("FindClass( %s ) failed", surfaceClassName));
+	}
+	const jmethodID surface_constructor = jni->GetMethodID( surfaceClass, "<init>", "(Landroid/graphics/SurfaceTexture;)V" );
+	if ( surface_constructor == 0 ) {
+		Log::Write(Log::Level::Info, "GetMethodID suraface( <init> ) failed" );
+	}
+
+	javaObjectSurface = jni->NewObject( surfaceClass, surface_constructor, javaObject );
+
+	Log::Write(Log::Level::Info, Fmt("SurfaceTexture got method updateTexImageMethodId:%p, getTimestampMethodId:%p, setDefaultBufferSizeMethodId:%p javaObjectSurface:%p",
+		updateTexImageMethodId, getTimestampMethodId, setDefaultBufferSizeMethodId, javaObjectSurface));
 
 	// jclass objects are localRefs that need to be freed
 	jni->DeleteLocalRef( surfaceTextureClass );
@@ -61,6 +73,8 @@ SurfaceTexture::SurfaceTexture(JNIEnv * jniEnv, unsigned id) :
 
 SurfaceTexture::~SurfaceTexture()
 {
+	Log::Write(Log::Level::Info, "SurfaceTexture::~SurfaceTexture()");
+
 	if ( javaObject ) {
 		jni->DeleteGlobalRef( javaObject );
 		javaObject = 0;
@@ -86,6 +100,11 @@ void SurfaceTexture::Update()
 jobject SurfaceTexture::GetJavaObject()
 {
 	return javaObject;
+}
+
+jobject SurfaceTexture::GetJavaObjectSurface()
+{
+	return javaObjectSurface;
 }
 
 long long SurfaceTexture::GetNanoTimeStamp()

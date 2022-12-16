@@ -30,6 +30,8 @@
 #include "latency_manager.h"
 #include "timing.h"
 #include "surface_texture.h"
+#include <android/native_window_jni.h>
+
 
 namespace
 {;
@@ -108,131 +110,6 @@ struct NALPacket
 };
 using NALPacketPtr = std::unique_ptr<NALPacket>;
 
-struct XrImageListener
-{
-    using IOpenXrProgramPtr = std::shared_ptr<IOpenXrProgram>;
-    using AImageReaderPtr = std::unique_ptr<AImageReader, decltype(AImageReader_delete)*>;
-
-    FrameIndexMap     frameIndexMap{ 4096 };
-    IOpenXrProgramPtr programPtr;
-    AImageReaderPtr   imageReader;
-    AImageReader_ImageListener imageListener;
-
-    // This mutex is only neccessary where in the case of a residue OnImageAvailable callback is still "processing" or waiting
-    // during/after an XrImageListener has been destroyed in another thread, this should not be used in any other case.
-    std::mutex        listenerDestroyMutex;
-
-    constexpr static const std::uint64_t ImageReaderFlags =
-        AHARDWAREBUFFER_USAGE_CPU_WRITE_NEVER |
-        AHARDWAREBUFFER_USAGE_CPU_READ_NEVER |
-        AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
-
-    constexpr static const std::int32_t MaxImageCount = 5;
-
-    inline static AImageReaderPtr MakeImageReader()
-    {
-        AImageReader* newImgReader = nullptr;
-        if (AImageReader_newWithUsage(1, 1, AIMAGE_FORMAT_PRIVATE, ImageReaderFlags, MaxImageCount, &newImgReader) != AMEDIA_OK ||
-            newImgReader == nullptr) {
-            return { nullptr, [](AImageReader*) {} };
-        }
-        return { newImgReader, AImageReader_delete };
-    }
-
-    XrImageListener(const IOpenXrProgramPtr& pptr)
-    : programPtr(pptr),
-      imageReader(MakeImageReader()),
-      imageListener {
-          .context = this,
-          .onImageAvailable = &XrImageListener::OnImageAvailable
-      }
-    {
-        if (programPtr == nullptr || imageReader == nullptr) {
-            imageReader.reset();
-            programPtr.reset();
-            return;
-        }
-        if (AImageReader_setImageListener(imageReader.get(), &imageListener) != AMEDIA_OK) {
-            imageReader.reset();
-            programPtr.reset();
-        }
-    }
-
-    inline XrImageListener(const XrImageListener&) noexcept = delete;
-    inline XrImageListener(XrImageListener&&)  noexcept = delete;
-    inline XrImageListener& operator=(const XrImageListener&) noexcept = delete;
-    inline XrImageListener& operator=(XrImageListener&&)  noexcept = delete;
-
-    ~XrImageListener()
-    {
-        {
-            std::scoped_lock sl(listenerDestroyMutex);
-            if (imageReader)
-                AImageReader_setImageListener(imageReader.get(), nullptr);
-            imageListener.onImageAvailable = nullptr;
-        }
-        Log::Write(Log::Level::Info, "XrImageListener destroyed");
-    }
-
-    inline bool IsValid() const { return imageReader != nullptr || programPtr != nullptr; }
-
-    inline ANativeWindow* GetWindow() const
-    {
-        if (imageReader == nullptr)
-            return nullptr;
-        ANativeWindow* surface_handle = nullptr;
-        CHECK(AImageReader_getWindow(imageReader.get(), &surface_handle) == AMEDIA_OK);
-        return surface_handle;
-    }
-
-    inline void OnImageAvailable(AImageReader* reader)
-    {
-        std::scoped_lock sl(listenerDestroyMutex);
-        using AImagePtr = std::unique_ptr<AImage, decltype(AImage_delete)*>;
-        auto img = [&]() -> AImagePtr
-        {
-            AImage* tmp = nullptr;
-            if (AImageReader_acquireLatestImage(reader, &tmp) != AMEDIA_OK)
-                return { nullptr, [](AImage*) {} };
-            return { tmp, AImage_delete };
-        }();
-        if (img == nullptr) {
-            Log::Write(Log::Level::Error, "XrImageListener: Failed to acquire latest AImage");
-            return;
-        }
-
-        std::int64_t presentationTimeNs = 0;
-        AImage_getTimestamp(img.get(), &presentationTimeNs);
-        const auto ptsUs = static_cast<std::uint64_t>(presentationTimeNs * 0.001);
-        const auto frameIndex = frameIndexMap.get_clear(ptsUs);
-        if (frameIndex == FrameIndexMap::NullIndex) {
-            Log::Write(Log::Level::Warning, Fmt("XrImageListener: Unknown frame index for pts: %lld us, frame ignored", ptsUs));
-            return;
-        }
-
-        if (const auto graphicsPluginPtr = programPtr->GetGraphicsPlugin()) {
-            std::int32_t w = 0, h = 0;
-            AImage_getWidth(img.get(), &w);
-            AImage_getHeight(img.get(), &h);
-            const IGraphicsPlugin::YUVBuffer buf{
-                .luma {
-                    .data = img.release(),
-                    .pitch = (std::size_t)w,
-                    .height = (std::size_t)h
-                },
-                .frameIndex = frameIndex
-            };
-            graphicsPluginPtr->UpdateVideoTextureMediaCodec(buf);
-        }
-    }
-
-    static inline void OnImageAvailable(void* ctx, AImageReader* reader)
-    {
-        assert(ctx != nullptr);
-        reinterpret_cast<XrImageListener*>(ctx)->OnImageAvailable(reader);
-    }
-};
-
 struct AMediaCodecDeleter {
     void operator()(AMediaCodec* codec) const {
         if (codec == nullptr)
@@ -245,11 +122,12 @@ using AMediaCodecPtr = std::shared_ptr<AMediaCodec>;
 class DecoderOutputThread
 {
     std::thread m_thread;
-    FrameIndexMap& m_frameIndexMap;
     std::atomic<bool> m_isRunning{ false };
+    std::shared_ptr<SurfaceTexture> m_surfaceTexture;
+    
 public:
-    inline DecoderOutputThread(FrameIndexMap& frameMapRef)
-    : m_frameIndexMap(frameMapRef)
+    inline DecoderOutputThread(std::shared_ptr<SurfaceTexture> &surfaceTexturePtr)
+    : m_surfaceTexture(surfaceTexturePtr)
     {}
 
     inline DecoderOutputThread(const DecoderOutputThread&) noexcept = delete;
@@ -315,8 +193,9 @@ public:
                 outputBufferId != AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED &&
                 outputBufferId != AMEDIACODEC_INFO_TRY_AGAIN_LATER)
             {
-                const auto ptsUs = static_cast<std::uint64_t>(buffInfo.presentationTimeUs);
-                const auto frameIndex = m_frameIndexMap.get(ptsUs);
+                const auto frameIndex = static_cast<std::uint64_t>(buffInfo.presentationTimeUs);
+                Log::Write(Log::Level::Verbose, Fmt("cyyyyy releaseOutputBuffer pts:%" PRIu64, frameIndex));
+
                 if (frameIndex != FrameIndexMap::NullIndex) {
                     LatencyCollector::Instance().decoderOutput(frameIndex);
                 }
@@ -330,6 +209,7 @@ public:
                 AMediaFormat_getInt32(outputFormat, AMEDIAFORMAT_KEY_HEIGHT, &h);
                 assert(w != 0 && h != 0);
                 Log::Write(Log::Level::Info, Fmt("OUTPUT_FORMAT_CHANGED, w:%d, h:%d", w, h));
+                m_surfaceTexture->SetDefaultBufferSize(w, h);
             }
         }
     }
@@ -425,7 +305,7 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
         }
         m_selectedCodecType.store(static_cast<ALVR_CODEC>(ctx.config.codecType));
         
-        // 1.验证SurfaceTexture反射调用成功
+        // 1.验证SurfaceTexture反射调用成功 DONE
         // 2.支持写入MediaCodec -> AMediaCodec_configure，让SurfaceTexture能够更新到数据
         // 3.实现一个自己的graphic plugin, 把渲染逻辑挪过去
 
@@ -433,25 +313,21 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
 
         JNIEnv *env;
     
-        std::unique_ptr<SurfaceTexture> surfaceTexture;
+        std::shared_ptr<SurfaceTexture> surfaceTexture;
         jint res = ((JavaVM*)(ctx.rustCtx->applicationVM))->AttachCurrentThread(&env, nullptr);
         if (res == JNI_OK) {
-            surfaceTexture = std::make_unique<SurfaceTexture>(env, textureId);
+            surfaceTexture = std::make_shared<SurfaceTexture>(env, textureId);
         } else {
             Log::Write(Log::Level::Error, "Failed to get JNI environment.");
         }
         ctx.programPtr->GetGraphicsPlugin()->setSurfaceTexture(surfaceTexture);
-        Log::Write(Log::Level::Info, Fmt("surfaceTexturesurfaceTexture:%p", surfaceTexture.get()));
 
-        XrImageListener imgListener { ctx.programPtr };
-        if (!imgListener.IsValid()) {
-            Log::Write(Log::Level::Error, "Failed to create image reader/listener.");
-            return false;
-        }
+        
+        ANativeWindow* const nativeWindow = ANativeWindow_fromSurface(env, surfaceTexture->GetJavaObjectSurface());
 
         AMediaCodecPtr codec{ nullptr };
         AMediaFormatPtr format{ nullptr };        
-        DecoderOutputThread outputThread{ imgListener.frameIndexMap };
+        DecoderOutputThread outputThread{ surfaceTexture };
         static constexpr const std::int64_t QueueWaitTimeout = 5e+5;
         while (isRunningToken)
         {
@@ -480,9 +356,9 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
                 format = MakeMediaFormat(mimeType, ctx.optionMap, packet.data, ctx.config.realtimePriority);
                 assert(format != nullptr);
 
-                ANativeWindow* const surface_handle = imgListener.GetWindow();
-                CHECK(surface_handle != nullptr);
-                auto status = AMediaCodec_configure(codec.get(), format.get(), surface_handle, nullptr, 0);
+                
+
+                auto status = AMediaCodec_configure(codec.get(), format.get(), nativeWindow, nullptr, 0);
                 if (status != AMEDIA_OK) {
                     Log::Write(Log::Level::Error, Fmt("Failed to configure codec, code: %ld", status));
                     codec.reset();
@@ -516,7 +392,7 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
 
             while (isRunningToken)
             {
-                if (const auto inputBufferId = AMediaCodec_dequeueInputBuffer(codec.get(), QueueWaitTimeout))
+                if (const auto inputBufferId = AMediaCodec_dequeueInputBuffer(codec.get(), QueueWaitTimeout)) // TODO 确认下
                 {
                     const auto& packet_data = packet.data;
                     if (packet.is_idr(ctx.config.codecType)) {
@@ -541,13 +417,10 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
                     static_assert(ClockType::is_steady);
                     using microseconds64 = duration<std::uint64_t, microseconds::period>;
 
-                    const auto pts = is_config_packet ? 0 : duration_cast<microseconds64>(ClockType::now().time_since_epoch()).count();
+                    const auto pts = packet.frameIndex;
                     const std::uint32_t flags = is_config_packet ? AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG : 0;
-                    if (!is_config_packet) {
-                        imgListener.frameIndexMap.set(pts, packet.frameIndex);
-                    }
-
                     const auto result = AMediaCodec_queueInputBuffer(codec.get(), inputBufferId, 0, size, pts, flags);
+                    Log::Write(Log::Level::Verbose, Fmt("cyyyyy queueInputBuffer pts:%" PRIu64, pts));
                     if (result != AMEDIA_OK) {
                         Log::Write(Log::Level::Warning, Fmt("AMediaCodec_queueInputBuffer, error-code %d: ", (int)result));
                     }
