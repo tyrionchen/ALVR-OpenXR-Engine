@@ -7,6 +7,11 @@
 #ifdef None // xlib...
 #undef None
 #endif
+#include "surface_texture.h"
+
+
+#define UNUSED_PARM(x) \
+    { (void)(x); }
 
 namespace ALXR {
     struct FoveatedDecodeParams;
@@ -125,6 +130,9 @@ struct IGraphicsPlugin {
 
     virtual const void* GetD3D11VADeviceContext() const { return nullptr; }
     virtual void* GetD3D11VADeviceContext() { return nullptr; }
+
+    virtual unsigned getTextureId() const { return 0; }
+    virtual void setSurfaceTexture(std::unique_ptr<SurfaceTexture> &texture){ UNUSED_PARM(texture); }
 
     struct Buffer {
         void* data = nullptr;
