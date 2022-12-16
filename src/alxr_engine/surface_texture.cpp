@@ -90,11 +90,14 @@ void SurfaceTexture::Update()
 {
     // latch the latest movie frame to the texture
     if ( !javaObject ) {
+		Log::Write(Log::Level::Error, "SurfaceTexture::Update javaObject==0" );
     	return;
     }
 
    jni->CallVoidMethod( javaObject, updateTexImageMethodId );
    nanoTimeStamp = jni->CallLongMethod( javaObject, getTimestampMethodId );
+   
+   Log::Write(Log::Level::Error, Fmt("SurfaceTexture::Update nanoTimeStamp:%lld", nanoTimeStamp));
 }
 
 jobject SurfaceTexture::GetJavaObject()

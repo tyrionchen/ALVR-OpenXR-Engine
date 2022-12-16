@@ -417,7 +417,7 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
                     static_assert(ClockType::is_steady);
                     using microseconds64 = duration<std::uint64_t, microseconds::period>;
 
-                    const auto pts = packet.frameIndex;
+                    const auto pts = is_config_packet ? 0 : packet.frameIndex;
                     const std::uint32_t flags = is_config_packet ? AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG : 0;
                     const auto result = AMediaCodec_queueInputBuffer(codec.get(), inputBufferId, 0, size, pts, flags);
                     Log::Write(Log::Level::Verbose, Fmt("cyyyyy queueInputBuffer pts:%" PRIu64, pts));
