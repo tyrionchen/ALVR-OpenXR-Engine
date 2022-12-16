@@ -19,6 +19,7 @@ enum ALXRGraphicsApi
     D3D12,
     D3D11,
     OpenGLES,
+    OpenGLES2,
     OpenGL,
     ApiCount = OpenGL
 };

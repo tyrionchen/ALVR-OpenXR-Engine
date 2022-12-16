@@ -5,13 +5,42 @@
 #pragma once
 
 #include <array>
-
 namespace Geometry {
 
 struct Vertex {
     XrVector3f Position;
     XrVector3f Color;
 };
+
+
+// 绘制的图形顶点: 我们绘制的是个平面
+constexpr XrVector3f c_vertices[] = {
+    {1, 1, 0,},
+    {-1, 1, 0},
+    {-1, -1, 0},
+    {1, -1, 0}
+};
+
+// 顶点绘制顺序
+constexpr unsigned short c_Indices[] = {
+    3,0,1,3,2,1,3
+};
+
+// 纹理顶点，取纹理(画面)左半部分
+const std::array<XrVector3f, 4> c_leftEyeVertices = {{
+                                                           {0.5, 0, 0},
+                                                           {0, 0, 0},
+                                                           {0, 1, 0},
+                                                           {0.5, 1, 0},
+                                                   }};
+
+// 纹理顶点，取纹理(画面)右半部分
+const std::array<XrVector3f, 4> c_rightEyeVertices = {{
+                                                               {1, 0, 0},
+                                                               {0.5, 0, 0},
+                                                               {0.5, 1, 0},
+                                                               {1, 1, 0},
+                                                       }};
 
 constexpr XrVector3f Red{1, 0, 0};
 constexpr XrVector3f DarkRed{0.25f, 0, 0};

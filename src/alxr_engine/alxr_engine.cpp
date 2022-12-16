@@ -73,6 +73,8 @@ constexpr inline auto graphics_api_str(const ALXRGraphicsApi gcp)
         return "D3D11";
     case ALXRGraphicsApi::OpenGLES:
         return "OpenGLES";
+    case ALXRGraphicsApi::OpenGLES2:
+        return "OpenGLES2";
     case ALXRGraphicsApi::OpenGL:
         return "OpenGL";
     default:
@@ -117,7 +119,7 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         options->DisableLocalDimming = ctx.disableLocalDimming;
         options->DisplayColorSpace = static_cast<XrColorSpaceFB>(ctx.displayColorSpace);
         if (options->GraphicsPlugin.empty())
-            options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
+            options->GraphicsPlugin = graphics_api_str(ALXRGraphicsApi::OpenGLES2);
 
         const auto platformData = std::make_shared<PlatformData>();
 #ifdef XR_USE_PLATFORM_ANDROID
@@ -153,6 +155,7 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
             .right_haptics  = rCtx->pathStringToHash(ALXRStrings::RightHandHaptics)
         });
         gProgram->InitializeSession();
+        Log::Write(Log::Level::Info, "cyyyy alxr_init");
         gProgram->CreateSwapchains();
 
         ALXRSystemProperties rustSysProp{};
@@ -226,6 +229,7 @@ void alxr_set_stream_config(const ALXRStreamConfig config)
     if (programPtr == nullptr)
         return;
     alxr_stop_decoder_thread();
+    Log::Write(Log::Level::Info, "cyyyy alxr_set_stream_config");
     if (const auto graphicsPtr = programPtr->GetGraphicsPlugin()) {
         const auto& rc = config.renderConfig;
         std::scoped_lock lk(gRenderMutex);
@@ -236,7 +240,7 @@ void alxr_set_stream_config(const ALXRStreamConfig config)
         if (rc.enableFoveation)
             fdParams = ALXR::MakeFoveatedDecodeParams(rc);
         graphicsPtr->SetFoveatedDecode(rc.enableFoveation ? &fdParams : nullptr);
-        programPtr->CreateSwapchains(rc.eyeWidth, rc.eyeHeight);
+        // programPtr->CreateSwapchains(rc.eyeWidth, rc.eyeHeight);
     }
 
     Log::Write(Log::Level::Info, "Starting decoder thread.");

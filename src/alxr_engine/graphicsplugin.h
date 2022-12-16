@@ -7,6 +7,11 @@
 #ifdef None // xlib...
 #undef None
 #endif
+#include "surface_texture.h"
+#include "pch.h"
+
+#define UNUSED_PARM(x) \
+    { (void)(x); }
 
 namespace ALXR {
     struct FoveatedDecodeParams;
@@ -126,6 +131,18 @@ struct IGraphicsPlugin {
     virtual const void* GetD3D11VADeviceContext() const { return nullptr; }
     virtual void* GetD3D11VADeviceContext() { return nullptr; }
 
+    virtual unsigned getTextureId() const { return 0; }
+    virtual std::shared_ptr<SurfaceTexture> GetSurfaceTexture() const { return nullptr; };
+    virtual void SetAndroidJniEnv(JNIEnv* jni) { UNUSED_PARM(jni); }
+    // Render to a swapchain image for a projection view.
+    virtual void RenderView(uint32_t viewIndex, const XrCompositionLayerProjectionView& layerView, const XrSwapchainImageBaseHeader* swapchainImage,int64_t swapchainFormat) 
+    {
+        UNUSED_PARM(viewIndex);
+        UNUSED_PARM(layerView);
+        UNUSED_PARM(swapchainImage);
+        UNUSED_PARM(swapchainFormat);
+    }
+    
     struct Buffer {
         void* data = nullptr;
         std::size_t pitch = 0;

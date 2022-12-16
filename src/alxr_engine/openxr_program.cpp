@@ -362,6 +362,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 case ALXRGraphicsApi::D3D12:    return std::make_tuple("XR_KHR_D3D12_enable"sv, "D3D12"sv);
                 case ALXRGraphicsApi::D3D11:    return std::make_tuple("XR_KHR_D3D11_enable"sv, "D3D11"sv);
                 case ALXRGraphicsApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
+                case ALXRGraphicsApi::OpenGLES2: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
                 default: return std::make_tuple("XR_KHR_opengl_enable"sv, "OpenGL"sv);
                 }
             };
@@ -488,7 +489,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         { XR_EXT_HAND_TRACKING_EXTENSION_NAME, false },
         { XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME, false },
         { XR_FB_COLOR_SPACE_EXTENSION_NAME, false },
-        { XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
+        // { XR_FB_PASSTHROUGH_EXTENSION_NAME, false },
 #ifdef XR_USE_OXR_OCULUS
         { XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, false },
         //{ XR_FB_TOUCH_CONTROLLER_EXTRAS_EXTENSION_NAME, false },
@@ -772,7 +773,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         // The graphics API can initialize the graphics device now that the systemId and instance
         // handle are available.
         m_graphicsPlugin->InitializeDevice(m_instance, m_systemId, m_environmentBlendMode);
-        m_isMultiViewEnabled = m_graphicsPlugin->IsMultiViewEnabled();
+        // m_isMultiViewEnabled = m_graphicsPlugin->IsMultiViewEnabled();
         
         Log::Write(Log::Level::Info, m_isMultiViewEnabled ?
             "Multi-view rendering enabled." :
@@ -953,14 +954,14 @@ struct OpenXrProgram final : IOpenXrProgram {
                 reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnConvertTimeToTimespecTimeKHR)));
         }
 
-        if (IsExtEnabled(XR_FB_COLOR_SPACE_EXTENSION_NAME))
-        {
-            Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_FB_COLOR_SPACE_EXTENSION_NAME));
-            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrEnumerateColorSpacesFB",
-                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnEnumerateColorSpacesFB)));
-            CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetColorSpaceFB",
-                reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetColorSpaceFB)));
-        }
+        // if (IsExtEnabled(XR_FB_COLOR_SPACE_EXTENSION_NAME))
+        // {
+        //     Log::Write(Log::Level::Info, Fmt("%s enabled.", XR_FB_COLOR_SPACE_EXTENSION_NAME));
+        //     CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrEnumerateColorSpacesFB",
+        //         reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnEnumerateColorSpacesFB)));
+        //     CHECK_XRCMD(xrGetInstanceProcAddr(m_instance, "xrSetColorSpaceFB",
+        //         reinterpret_cast<PFN_xrVoidFunction*>(&m_pfnSetColorSpaceFB)));
+        // }
 
         if (IsExtEnabled(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
         {
@@ -1381,7 +1382,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             const XrSessionCreateInfo createInfo{
                 .type = XR_TYPE_SESSION_CREATE_INFO,
                 .next = m_graphicsPlugin->GetGraphicsBinding(),
-                .createFlags = 0,
+                // .createFlags = 0,
                 .systemId = m_systemId
             };
             CHECK_XRCMD(xrCreateSession(m_instance, &createInfo, &m_session));
@@ -1426,16 +1427,20 @@ struct OpenXrProgram final : IOpenXrProgram {
         if (m_swapchains.size() > 0)
         {
             CHECK(m_configViews.size() > 0 && m_swapchainImages.size() > 0);
-            if (eyeWidth == 0 || eyeHeight == 0)
+            if (eyeWidth == 0 || eyeHeight == 0) {
+                Log::Write(Log::Level::Info, "CreateSwapchains return1");
                 return;
+            }
             const bool isSameSize = std::all_of(m_configViews.begin(), m_configViews.end(), [&](const auto& vp)
             {
                 const auto eW = std::min(eyeWidth,  vp.maxImageRectWidth);
                 const auto eH = std::min(eyeHeight, vp.maxImageRectHeight);
                 return eW == vp.recommendedImageRectWidth && eH == vp.recommendedImageRectHeight;
             });
-            if (isSameSize)
+            if (isSameSize) {
+                Log::Write(Log::Level::Info, "CreateSwapchains return2");
                 return;
+            }
             Log::Write(Log::Level::Info, "Clearing current swapchains...");
             ClearSwapchains();
             Log::Write(Log::Level::Info, "Creating new swapchains...");
@@ -1553,7 +1558,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 .mipCount = 1,
             };
             Swapchain swapchain{
-                .handle = XR_NULL_HANDLE,
+                // .handle = XR_NULL_HANDLE,
                 .width = static_cast<std::int32_t>(swapchainCreateInfo.width),
                 .height = static_cast<std::int32_t>(swapchainCreateInfo.height)
             };
@@ -1609,6 +1614,12 @@ struct OpenXrProgram final : IOpenXrProgram {
                 std::vector<XrSwapchainImageBaseHeader*> swapchainImages =
                     m_graphicsPlugin->AllocateSwapchainImageStructs(imageCount, swapchainCreateInfo);
                 CHECK_XRCMD(xrEnumerateSwapchainImages(swapchain.handle, imageCount, &imageCount, swapchainImages[0]));
+
+                for (int j = 0; j<swapchainImages.size(); j++) {
+                    const uint32_t colorTexture = reinterpret_cast<const XrSwapchainImageOpenGLESKHR*>(swapchainImages[j])->image;
+                    Log::Write(Log::Level::Info, Fmt("cyyyyy swapchain:%p handle:%p view:%d  index:%d colorTexture:%d"
+                        ,swapchain, swapchain.handle, i, j, colorTexture));
+                }
 
                 m_swapchainImages.insert(std::make_pair(swapchain.handle, std::move(swapchainImages)));
             }
@@ -1904,6 +1915,18 @@ struct OpenXrProgram final : IOpenXrProgram {
         m_PredicatedLatencyOffset.store(frameState.predictedDisplayPeriod);
         m_lastPredicatedDisplayTime.store(frameState.predictedDisplayTime);
 
+        XrBaseInStructure* baseStructure = m_platformPlugin->GetInstanceCreateExtension();
+        JavaVM* javaVm = (JavaVM*)(((XrInstanceCreateInfoAndroidKHR*)baseStructure)->applicationVM);
+
+        JNIEnv *env;
+        jint res = javaVm->AttachCurrentThread(&env, nullptr);
+        if (res == JNI_OK) {
+            m_graphicsPlugin->SetAndroidJniEnv(env);
+            // m_renderMode = RenderMode::VideoStream; // 我们hardcode一下
+        } else {
+            Log::Write(Log::Level::Error, "cyyyyy Failed to get JNI environment.");
+        }
+
         const auto renderMode = m_renderMode.load();
         const bool isVideoStream = renderMode == RenderMode::VideoStream;
         std::uint64_t videoFrameDisplayTime = std::uint64_t(-1);
@@ -1911,6 +1934,14 @@ struct OpenXrProgram final : IOpenXrProgram {
             m_graphicsPlugin->BeginVideoView();
             videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
         }
+        std::uint64_t getVideoFrameIndex = videoFrameDisplayTime;
+        if (videoFrameDisplayTime != std::uint64_t(-1) && videoFrameDisplayTime!= 0) {
+            videoFrameDisplayTime = videoFrameDisplayTime/1000;
+        }
+        Log::Write(Log::Level::Verbose,
+                    Fmt("cyyyyy RenderFrame() videoFrameDisplayTime:%" PRIu64 " getVideoFrameIndex:%" PRIu64 " isVideoStream:%d", videoFrameDisplayTime, getVideoFrameIndex,
+                    isVideoStream));
+
         const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1) &&
                                 videoFrameDisplayTime != m_lastVideoFrameIndex;
         m_lastVideoFrameIndex = videoFrameDisplayTime;
@@ -2188,16 +2219,35 @@ struct OpenXrProgram final : IOpenXrProgram {
     )
     {
         assert(projectionLayerViews.size() == views.size());
-
         const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
+        
         const auto vizCubes = isVideoStream ? VizCubeList{} : GetVisualizedCubes(predictedDisplayTime);
         const auto ptMode = static_cast<const ::PassthroughMode>(mode);
+
+        {
+            int viewIndex = 0;
+            for (auto&& handle: m_swapchains) {
+                auto vec = m_swapchainImages[handle.handle];
+                int j = 0;
+                for (auto&& e : vec) {
+                    const uint32_t colorTexture = reinterpret_cast<const XrSwapchainImageOpenGLESKHR*>(e)->image;
+
+                    Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews(Acquire) viewIndex:%d swapchain:%p handle:%p ",
+                        viewIndex, handle, handle.handle));
+                        Log::Write(Log::Level::Info, Fmt("cyyyyy jjjj:%d colorTexture:%d e(swapchainImage):%d", j++, colorTexture, e));
+                }
+                viewIndex++;
+            }
+        }
+
+
         // Render view to the appropriate part of the swapchain image.
         for (std::uint32_t i = 0; i < views.size(); ++i) {
             // Each view has a separate swapchain which is acquired, rendered to, and released.
             const Swapchain& viewSwapchain = m_swapchains[i];
             const std::uint32_t swapchainImageIndex = AcquireAndWaitForSwapchainImage(viewSwapchain);
-
+            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews isVideoStream:%d m_swapchains[%d].index:%d", 
+                isVideoStream, i, swapchainImageIndex));
             const auto& view = views[i];
             projectionLayerViews[i] = {
                 .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
@@ -2210,12 +2260,23 @@ struct OpenXrProgram final : IOpenXrProgram {
                         .offset = {0, 0},
                         .extent = {viewSwapchain.width, viewSwapchain.height}
                     },
-                    .imageArrayIndex = 0
+                    // .imageArrayIndex = 0
                 }
             };
+            
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
+            const uint32_t colorTexture = reinterpret_cast<const XrSwapchainImageOpenGLESKHR*>(swapchainImage)->image;
+
+            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews view:%d viewSwapchain:%p handle:%p", 
+                i, viewSwapchain, viewSwapchain.handle));
+
+            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews swapchainImageIndex:%d colorTexture:%d swapchainImage:%p", 
+                swapchainImageIndex, colorTexture, swapchainImage));
+
+            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews  swapchainImage:%p colorTexture:%d", swapchainImage, colorTexture));
+
             if (isVideoStream)
-                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode);
+                m_graphicsPlugin->RenderView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);
             else
                 m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode, vizCubes);
             
