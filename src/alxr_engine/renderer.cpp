@@ -119,7 +119,7 @@ struct Renderer : public IRenderer {
         Log::Write(Log::Level::Info, Fmt("setTextureId m_texture_id:%d", m_texture_id));
     }
 
-    void RenderView(const XrCompositionLayerProjectionView&) override {
+    void RenderView(const XrCompositionLayerProjectionView& layerView) override {
         glClearColor(m_clearColor[0], m_clearColor[1], m_clearColor[2], m_clearColor[3]);
         glClearDepthf(1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -133,6 +133,18 @@ struct Renderer : public IRenderer {
 
         XrMatrix4x4f identity;
         XrMatrix4x4f_CreateIdentity(&identity);
+
+        // const auto& pose = layerView.pose;
+        // XrMatrix4x4f proj;
+        // XrMatrix4x4f_CreateProjectionFov(&proj, GRAPHICS_OPENGL_ES, layerView.fov, 0.05f, 100.0f);
+        // XrMatrix4x4f toView;
+        // XrVector3f scale{1.f, 1.f, 1.f};
+        // XrMatrix4x4f_CreateTranslationRotationScale(&toView, &pose.position, &pose.orientation, &scale);
+        // XrMatrix4x4f view;
+        // XrMatrix4x4f_InvertRigidBody(&view, &toView);
+        // XrMatrix4x4f vp;
+        // XrMatrix4x4f_Multiply(&vp, &proj, &view);
+
         glUniformMatrix4fv(m_matrix_handle, 1, GL_FALSE, reinterpret_cast<const GLfloat*>(&identity));
 
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(ArraySize(Geometry::c_Indices)), GL_UNSIGNED_SHORT, nullptr);

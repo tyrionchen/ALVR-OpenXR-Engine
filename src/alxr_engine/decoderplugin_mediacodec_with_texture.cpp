@@ -10,8 +10,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
-
 #include <readerwritercircularbuffer.h>
+#include <stdio.h>
 
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaMuxer.h> 
@@ -305,6 +305,7 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
         AMediaFormatPtr format{ nullptr };        
         DecoderOutputThread outputThread{ };
         static constexpr const std::int64_t QueueWaitTimeout = 5e+5;
+        FILE* _dump_file = nullptr;
         while (isRunningToken)
         {
             std::shared_ptr<SurfaceTexture> surfaceTexture = ctx.programPtr->GetGraphicsPlugin()->GetSurfaceTexture();
@@ -316,6 +317,15 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
             NALPacket packet{};
             if (!m_packetQueue.wait_dequeue_timed(packet, QueueWaitTimeout))
                 continue;
+
+            // 拷贝一份数据到文件里面
+            // if (_dump_file == nullptr) {
+            //     _dump_file = fopen("/sdcard/Android/data/com.alvr.alxr_client/files/dumpfile.video", "wb");
+            // }
+            if (_dump_file != nullptr) {
+                fwrite(packet.data.data(), 1, packet.data.size(), _dump_file);
+            }
+            
 
             if (codec == nullptr && packet.is_config(ctx.config.codecType))
             {
@@ -393,7 +403,7 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
                     assert(packet_data.size() <= inBuffSize);
                     const std::size_t size = std::min(inBuffSize, packet_data.size());
                     std::memcpy(inputBuffer, packet_data.data(), size);
-
+                    
                     using namespace std::chrono;
                     using ClockType = XrSteadyClock;
                     static_assert(ClockType::is_steady);
@@ -420,7 +430,9 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
                 else Log::Write(Log::Level::Warning, Fmt("Waiting for decoder input buffer timed out after %f seconds, retrying...", QueueWaitTimeout * 1e-6f));
             }
         }
-
+        if (_dump_file != nullptr) {
+            fclose(_dump_file);
+        }
         outputThread.Stop();
         Log::Write(Log::Level::Info, "Decoder thread exiting...");
         if (codec != nullptr) {
