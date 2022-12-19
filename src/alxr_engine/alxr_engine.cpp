@@ -210,6 +210,7 @@ void alxr_process_frame(bool* exitRenderLoop /*= non-null */, bool* requestResta
         return;
     
     //gProgram->PollActions();
+    gProgram->SetAndroidJniEnv();
     {
         std::scoped_lock lk(gRenderMutex);
         gProgram->RenderFrame();

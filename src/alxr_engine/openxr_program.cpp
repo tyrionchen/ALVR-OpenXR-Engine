@@ -1025,51 +1025,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
 #endif
 
-        SetDeviceColorSpace();
         UpdateSupportedDisplayRefreshRates();
         InitializePassthroughAPI();
         InitializeEyeTrackers();
         InitializeFacialTracker();
         return InitializeHandTrackers();
-    }
-
-    bool SetDeviceColorSpace()
-    {
-        if (m_pfnSetColorSpaceFB == nullptr)
-            return false;
-
-        constexpr const auto to_string = [](const XrColorSpaceFB csType)
-        {
-            switch (csType)
-            {
-            case XR_COLOR_SPACE_UNMANAGED_FB: return "UNMANAGED";
-            case XR_COLOR_SPACE_REC2020_FB: return "REC2020";
-            case XR_COLOR_SPACE_REC709_FB: return "REC709";
-            case XR_COLOR_SPACE_RIFT_CV1_FB: return "RIFT_CV1";
-            case XR_COLOR_SPACE_RIFT_S_FB: return "RIFT_S";
-            case XR_COLOR_SPACE_QUEST_FB: return "QUEST";
-            case XR_COLOR_SPACE_P3_FB: return "P3";
-            case XR_COLOR_SPACE_ADOBE_RGB_FB: return "ADOBE_RGB";
-            }
-            return "unknown-color-space-type";
-        };
-
-        //std::uint32_t colorSpaceCount = 0;
-        //CHECK_XRCMD(m_pfnEnumerateColorSpacesFB(m_session, 0, &colorSpaceCount, nullptr));
-
-        //std::vector<XrColorSpaceFB> colorSpaceTypes{ colorSpaceCount, XR_COLOR_SPACE_UNMANAGED_FB };
-        //CHECK_XRCMD(m_pfnEnumerateColorSpacesFB(m_session, colorSpaceCount, &colorSpaceCount, colorSpaceTypes.data()));
-
-        const XrColorSpaceFB selectedColorSpace = m_options ?
-            m_options->DisplayColorSpace : XR_COLOR_SPACE_REC2020_FB;
-        const auto colorSpaceName = to_string(selectedColorSpace);
-
-        if (m_pfnSetColorSpaceFB(m_session, selectedColorSpace) != XR_SUCCESS) {
-            Log::Write(Log::Level::Warning, Fmt("Failed to set display colour space to \"%s\"", colorSpaceName));
-            return false;
-        }
-        Log::Write(Log::Level::Info, Fmt("Color space set successefully set to \"%s\"", colorSpaceName));
-        return true;
     }
 
     bool InitializeEyeTrackers()
@@ -1901,166 +1861,8 @@ struct OpenXrProgram final : IOpenXrProgram {
                !IsRuntime(OxrRuntimeType::Monado);
     }
 
-    void RenderFrame() override {
-        CHECK(m_session != XR_NULL_HANDLE);
-        constexpr const XrFrameWaitInfo frameWaitInfo{
-            .type = XR_TYPE_FRAME_WAIT_INFO,
-            .next = nullptr
-        };
-        XrFrameState frameState{
-            .type = XR_TYPE_FRAME_STATE,
-            .next = nullptr
-        };
-        CHECK_XRCMD(xrWaitFrame(m_session, &frameWaitInfo, &frameState));
-        m_PredicatedLatencyOffset.store(frameState.predictedDisplayPeriod);
-        m_lastPredicatedDisplayTime.store(frameState.predictedDisplayTime);
 
-        XrBaseInStructure* baseStructure = m_platformPlugin->GetInstanceCreateExtension();
-        JavaVM* javaVm = (JavaVM*)(((XrInstanceCreateInfoAndroidKHR*)baseStructure)->applicationVM);
 
-        JNIEnv *env;
-        jint res = javaVm->AttachCurrentThread(&env, nullptr);
-        if (res == JNI_OK) {
-            m_graphicsPlugin->SetAndroidJniEnv(env);
-            // m_renderMode = RenderMode::VideoStream; // 我们hardcode一下
-        } else {
-            Log::Write(Log::Level::Error, "cyyyyy Failed to get JNI environment.");
-        }
-
-        const auto renderMode = m_renderMode.load();
-        const bool isVideoStream = renderMode == RenderMode::VideoStream;
-        std::uint64_t videoFrameDisplayTime = std::uint64_t(-1);
-        if (isVideoStream) {
-            m_graphicsPlugin->BeginVideoView();
-            videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
-        }
-        std::uint64_t getVideoFrameIndex = videoFrameDisplayTime;
-        if (videoFrameDisplayTime != std::uint64_t(-1) && videoFrameDisplayTime!= 0) {
-            videoFrameDisplayTime = videoFrameDisplayTime/1000;
-        }
-        Log::Write(Log::Level::Verbose,
-                    Fmt("cyyyyy RenderFrame() videoFrameDisplayTime:%" PRIu64 " getVideoFrameIndex:%" PRIu64 " isVideoStream:%d", videoFrameDisplayTime, getVideoFrameIndex,
-                    isVideoStream));
-
-        const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1) &&
-                                videoFrameDisplayTime != m_lastVideoFrameIndex;
-        m_lastVideoFrameIndex = videoFrameDisplayTime;
-        
-        XrTime predictedDisplayTime;
-        const auto predictedViews = GetPredicatedViews(frameState, renderMode, videoFrameDisplayTime, /*out*/ predictedDisplayTime);
-
-        constexpr const XrFrameBeginInfo frameBeginInfo{
-            .type = XR_TYPE_FRAME_BEGIN_INFO,
-            .next = nullptr
-        };
-        CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
-
-        XrCompositionLayerPassthroughFB passthroughLayer;
-        XrCompositionLayerProjection    layer;
-        std::uint32_t layerCount = 0;
-        std::array<const XrCompositionLayerBaseHeader*, 2> layers{};
-        std::array<XrCompositionLayerProjectionView,2> projectionLayerViews;
-        if (frameState.shouldRender == XR_TRUE)
-        {
-            XrCompositionLayerFlags ptRenderLayerFlags = 0;
-            const auto passthroughMode = m_currentPTMode.load();
-            if (passthroughMode != ALXR::PassthroughMode::None &&
-                m_ptLayerData.reconPassthroughLayer != XR_NULL_HANDLE) {
-                passthroughLayer = {
-                    .type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
-                    .next = nullptr,
-                    .flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
-                    .space = XR_NULL_HANDLE,
-                    .layerHandle = m_ptLayerData.reconPassthroughLayer,
-                };
-                layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&passthroughLayer);
-                ptRenderLayerFlags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
-            }
-            const std::span<const XrView> views { predictedViews.begin(), predictedViews.end() };
-            if (RenderLayer(predictedDisplayTime, views, projectionLayerViews, layer, passthroughMode)) {
-                layer.layerFlags |= ptRenderLayerFlags;
-                layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
-            }
-        }
-
-        if (timeRender)
-            LatencyCollector::Instance().rendered2(videoFrameDisplayTime);
-
-#ifdef XR_USE_OXR_PICO
-        const XrFrameEndInfoEXT xrFrameEndInfoEXT {
-            .type = XR_TYPE_FRAME_END_INFO,
-            .next = nullptr,
-            .useHeadposeExt = 1,
-            .gsIndex = m_gsIndex.load()
-        };
-#endif
-        const XrFrameEndInfo frameEndInfo{
-            .type = XR_TYPE_FRAME_END_INFO,
-#ifdef XR_USE_OXR_OCULUS
-            .next = &xrLocalDimmingFrameEndInfoMETA,
-#elif defined(XR_USE_OXR_PICO)
-            .next = &xrFrameEndInfoEXT,
-#else
-            .next = nullptr,
-#endif
-            // TODO: Figure out why steamvr doesn't like using custom predicated display times!!!
-            .displayTime = UseNetworkPredicatedDisplayTime() ?
-                predictedDisplayTime : frameState.predictedDisplayTime,
-            //.displayTime = frameState.predictedDisplayTime,
-            .environmentBlendMode = m_environmentBlendMode,
-            .layerCount = layerCount,
-            .layers = layers.data()
-        };
-        CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
-
-        LatencyManager::Instance().SubmitAndSync(videoFrameDisplayTime, !timeRender);
-        if (isVideoStream)
-            m_graphicsPlugin->EndVideoView();
-        
-        if (m_delayOnGuardianChanged)
-        {
-            m_delayOnGuardianChanged = false;
-            enqueueGuardianChanged();
-        }
-    }
-
-    inline bool LocateViews(const XrTime predictedDisplayTime, const std::uint32_t viewCapacityInput, XrView* views) const
-    {
-#ifdef XR_USE_OXR_PICO
-        XrViewStatePICOEXT xrViewStatePICOEXT {};
-#endif
-        const XrViewLocateInfo viewLocateInfo{
-            .type = XR_TYPE_VIEW_LOCATE_INFO,
-#ifdef XR_USE_OXR_PICO
-            .next = &xrViewStatePICOEXT,
-#else
-            .next = nullptr,
-#endif
-            .viewConfigurationType = m_viewConfigType,
-            .displayTime = predictedDisplayTime,
-            .space = m_appSpace,
-        };
-        XrViewState viewState {
-            .type = XR_TYPE_VIEW_STATE,
-            .next = nullptr
-        };
-        uint32_t viewCountOutput = 0;
-        const XrResult res = xrLocateViews(m_session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, views);
-#ifdef XR_USE_OXR_PICO
-        m_gsIndex.store(xrViewStatePICOEXT.gsIndex);
-#endif
-        CHECK_XRRESULT(res, "LocateViews");
-        if ((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
-            (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
-            return false;  // There is no valid tracking poses for the views.
-        }
-        CHECK(viewCountOutput == viewCapacityInput);
-#if 0
-        CHECK(viewCountOutput == m_configViews.size());
-        CHECK(viewCountOutput == m_swapchains.size());
-#endif
-        return true;
-    }
 
     using VizCubeList = std::vector<Cube>;
     VizCubeList GetVisualizedCubes(const XrTime predictedDisplayTime) const {
@@ -2105,26 +1907,122 @@ struct OpenXrProgram final : IOpenXrProgram {
         return cubes;
     }
 
-    inline bool RenderLayer
-    (
-        const XrTime predictedDisplayTime,
-        const std::span<const XrView>& views,
-        std::array<XrCompositionLayerProjectionView, 2>& projectionLayerViews,
-        XrCompositionLayerProjection& layer,
-        const ALXR::PassthroughMode mode
-    ) {
-        if (m_isMultiViewEnabled)
-            return RenderLayerMultiView
-            (
-                predictedDisplayTime, views, projectionLayerViews,
-                layer, mode
-            );
-        else
-            return RenderLayerSeperateViews
-            (
-                predictedDisplayTime, views, projectionLayerViews,
-                layer, mode
-            );
+    inline bool RenderLayer(std::vector<XrCompositionLayerProjectionView>& projectionLayerViews,
+                            XrCompositionLayerProjection& layer, const std::array<XrView, 2>& predictedViews) {
+        XrResult res;
+        auto viewCount = (uint32_t)predictedViews.size();
+        CHECK(viewCount == m_configViews.size());
+        CHECK(viewCount == m_swapchains.size());
+        projectionLayerViews.resize(viewCount);
+
+        // Render view to the appropriate part of the swapchain image.
+        // 将画面渲染到Swapchain的图片里面
+        for (uint32_t i = 0; i < viewCount; i++) {
+            // Each view has a separate swapchain which is acquired, rendered to, and released.
+            const Swapchain viewSwapchain = m_swapchains[i];
+
+            XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+
+            uint32_t swapchainImageIndex;
+            CHECK_XRCMD(xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
+
+            XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            waitInfo.timeout = XR_INFINITE_DURATION;
+            CHECK_XRCMD(xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
+
+            projectionLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
+            projectionLayerViews[i].pose = predictedViews[i].pose;
+            projectionLayerViews[i].fov = predictedViews[i].fov;
+            projectionLayerViews[i].subImage.swapchain = viewSwapchain.handle;
+            projectionLayerViews[i].subImage.imageRect.offset = {0, 0};
+            projectionLayerViews[i].subImage.imageRect.extent = {viewSwapchain.width, viewSwapchain.height};
+
+            const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
+
+            m_graphicsPlugin->RenderView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);
+            XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
+        }
+        layer.space = m_appSpace;
+        layer.layerFlags = 0;
+        layer.viewCount = (uint32_t)projectionLayerViews.size();
+        layer.views = projectionLayerViews.data();
+        return true;
+    }
+
+    void SetAndroidJniEnv() override {
+        XrBaseInStructure* baseStructure = m_platformPlugin->GetInstanceCreateExtension();
+        JavaVM* javaVm = (JavaVM*)(((XrInstanceCreateInfoAndroidKHR*)baseStructure)->applicationVM);
+
+        JNIEnv* env;
+        jint res = javaVm->AttachCurrentThread(&env, nullptr);
+        if (res == JNI_OK) {
+            m_graphicsPlugin->SetAndroidJniEnv(env);
+        } else {
+            Log::Write(Log::Level::Error, "cyyyyy Failed to get JNI environment.");
+        }
+    }
+
+    void RenderFrame() override {
+        CHECK(m_session != XR_NULL_HANDLE);
+
+        XrFrameWaitInfo frameWaitInfo{XR_TYPE_FRAME_WAIT_INFO};
+        // 描述下一帧需要被显示的时间
+        XrFrameState frameState{XR_TYPE_FRAME_STATE};
+        CHECK_XRCMD(xrWaitFrame(m_session, &frameWaitInfo, &frameState));
+        m_lastPredicatedDisplayTime.store(frameState.predictedDisplayTime);
+        m_PredicatedLatencyOffset.store(frameState.predictedDisplayPeriod);
+
+        XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+        // 开始绘制一帧
+        CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
+
+        std::uint64_t videoFrameDisplayTimeMs = m_graphicsPlugin->GetVideoFrameIndex();
+        if (videoFrameDisplayTimeMs && videoFrameDisplayTimeMs != 0) {
+            videoFrameDisplayTimeMs = videoFrameDisplayTimeMs / 1000;
+        }
+
+        XrTime predictedDisplayTime{0};
+        // 拿到当前视频帧中时间戳对应的预测视图(这里有姿态)
+        const auto predictedViews = GetPredicatedViews(frameState, videoFrameDisplayTimeMs, /*out*/ predictedDisplayTime);
+        std::vector<XrCompositionLayerBaseHeader*> layers;
+        XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+        std::vector<XrCompositionLayerProjectionView> projectionLayerViews;
+
+        if (frameState.shouldRender == XR_TRUE) {
+            if (RenderLayer(projectionLayerViews, layer, predictedViews)) {
+                layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
+            }
+        }
+
+        XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
+        frameEndInfo.displayTime = predictedDisplayTime == 0 ? frameState.predictedDisplayTime : predictedDisplayTime;
+        frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        frameEndInfo.layerCount = (uint32_t)layers.size();
+        frameEndInfo.layers = layers.data();
+
+        // 结束一帧的绘制
+        CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
+    }
+
+    inline bool LocateViews(const XrTime predictedDisplayTime, const std::uint32_t viewCapacityInput, XrView* views) const {
+        const XrViewLocateInfo viewLocateInfo{
+            .type = XR_TYPE_VIEW_LOCATE_INFO,
+            .next = nullptr,
+            .viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+            .displayTime = predictedDisplayTime,
+            .space = m_appSpace,
+        };
+        XrViewState viewState{.type = XR_TYPE_VIEW_STATE, .next = nullptr};
+        uint32_t viewCountOutput = 0;
+        const XrResult res = xrLocateViews(m_session, &viewLocateInfo, &viewState, viewCapacityInput, &viewCountOutput, views);
+        CHECK_XRRESULT(res, "LocateViews");
+        if ((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
+            (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
+            return false;  // There is no valid tracking poses for the views.
+        }
+        CHECK(viewCountOutput == viewCapacityInput);
+        return true;
     }
 
     static inline std::uint32_t AcquireAndWaitForSwapchainImage(const Swapchain& swapChain) {
@@ -2142,160 +2040,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         };
         CHECK_XRCMD(xrWaitSwapchainImage(swapChain.handle, &waitInfo));
         return swapchainImageIndex;
-    }
-
-    constexpr static const XrCompositionLayerFlags RenderLayerFlags =
-        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
-        XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT;
-
-    bool RenderLayerMultiView
-    (
-        const XrTime predictedDisplayTime,
-        const std::span<const XrView>& views,
-        std::array<XrCompositionLayerProjectionView, 2>& projectionLayerViews,
-        XrCompositionLayerProjection& layer,
-        const ALXR::PassthroughMode mode
-    )
-    {
-        assert(projectionLayerViews.size() == views.size());
-        assert(m_isMultiViewEnabled);
-
-        const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
-        const auto vizCubes = isVideoStream ? VizCubeList{} : GetVisualizedCubes(predictedDisplayTime);
-        const auto ptMode = static_cast<const ::PassthroughMode>(mode);
-
-        const Swapchain& viewSwapchain = m_swapchains[0];
-        const XrRect2Di imageRect {
-            .offset = {0, 0},
-            .extent = {viewSwapchain.width, viewSwapchain.height}
-        };
-
-        const std::uint32_t swapchainImageIndex = AcquireAndWaitForSwapchainImage(viewSwapchain);
-        for (std::uint32_t viewIndex = 0; viewIndex < views.size(); ++viewIndex) {
-            const auto& view = views[viewIndex];
-            projectionLayerViews[viewIndex] = {
-                .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
-                .next = nullptr,
-                .pose = view.pose,
-                .fov = view.fov,
-                .subImage = {
-                    .swapchain = viewSwapchain.handle,
-                    .imageRect = imageRect,
-                    .imageArrayIndex = viewIndex
-                }
-            };
-        }
-
-        const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
-        if (isVideoStream)
-            m_graphicsPlugin->RenderVideoMultiView(projectionLayerViews, swapchainImage, m_colorSwapchainFormat, ptMode);
-        else
-            m_graphicsPlugin->RenderMultiView(projectionLayerViews, swapchainImage, m_colorSwapchainFormat, ptMode, vizCubes);
-
-        constexpr const XrSwapchainImageReleaseInfo releaseInfo{
-            .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
-            .next = nullptr
-        };
-        CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
-
-        layer = XrCompositionLayerProjection{
-            .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-            .next = nullptr,
-            .layerFlags = RenderLayerFlags,
-            .space = m_appSpace,
-            .viewCount = (uint32_t)projectionLayerViews.size(),
-            .views = projectionLayerViews.data()
-        };
-        return true;
-    }
-
-    bool RenderLayerSeperateViews
-    (
-        const XrTime predictedDisplayTime,
-        const std::span<const XrView>& views,
-        std::array<XrCompositionLayerProjectionView,2>& projectionLayerViews,
-        XrCompositionLayerProjection& layer,
-        const ALXR::PassthroughMode mode
-    )
-    {
-        assert(projectionLayerViews.size() == views.size());
-        const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
-        
-        const auto vizCubes = isVideoStream ? VizCubeList{} : GetVisualizedCubes(predictedDisplayTime);
-        const auto ptMode = static_cast<const ::PassthroughMode>(mode);
-
-        {
-            int viewIndex = 0;
-            for (auto&& handle: m_swapchains) {
-                auto vec = m_swapchainImages[handle.handle];
-                int j = 0;
-                for (auto&& e : vec) {
-                    const uint32_t colorTexture = reinterpret_cast<const XrSwapchainImageOpenGLESKHR*>(e)->image;
-
-                    Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews(Acquire) viewIndex:%d swapchain:%p handle:%p ",
-                        viewIndex, handle, handle.handle));
-                        Log::Write(Log::Level::Info, Fmt("cyyyyy jjjj:%d colorTexture:%d e(swapchainImage):%d", j++, colorTexture, e));
-                }
-                viewIndex++;
-            }
-        }
-
-
-        // Render view to the appropriate part of the swapchain image.
-        for (std::uint32_t i = 0; i < views.size(); ++i) {
-            // Each view has a separate swapchain which is acquired, rendered to, and released.
-            const Swapchain& viewSwapchain = m_swapchains[i];
-            const std::uint32_t swapchainImageIndex = AcquireAndWaitForSwapchainImage(viewSwapchain);
-            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews isVideoStream:%d m_swapchains[%d].index:%d", 
-                isVideoStream, i, swapchainImageIndex));
-            const auto& view = views[i];
-            projectionLayerViews[i] = {
-                .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW,
-                .next = nullptr,
-                .pose = view.pose,
-                .fov  = view.fov,
-                .subImage = {
-                    .swapchain = viewSwapchain.handle,
-                    .imageRect = {
-                        .offset = {0, 0},
-                        .extent = {viewSwapchain.width, viewSwapchain.height}
-                    },
-                    // .imageArrayIndex = 0
-                }
-            };
-            
-            const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
-            const uint32_t colorTexture = reinterpret_cast<const XrSwapchainImageOpenGLESKHR*>(swapchainImage)->image;
-
-            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews view:%d viewSwapchain:%p handle:%p", 
-                i, viewSwapchain, viewSwapchain.handle));
-
-            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews swapchainImageIndex:%d colorTexture:%d swapchainImage:%p", 
-                swapchainImageIndex, colorTexture, swapchainImage));
-
-            Log::Write(Log::Level::Info, Fmt("cyyyyy RenderLayerSeperateViews  swapchainImage:%p colorTexture:%d", swapchainImage, colorTexture));
-
-            if (isVideoStream)
-                m_graphicsPlugin->RenderView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);
-            else
-                m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode, vizCubes);
-            
-            constexpr const XrSwapchainImageReleaseInfo releaseInfo{
-                .type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,
-                .next = nullptr
-            };
-            CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
-        }
-
-        layer = XrCompositionLayerProjection {
-            .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-            .next = nullptr,
-            .layerFlags = RenderLayerFlags,
-            .space = m_appSpace,
-            .viewCount = (uint32_t)projectionLayerViews.size(),
-            .views = projectionLayerViews.data()
-        };
-        return true;
     }
 
     virtual void SetRenderMode(const RenderMode newMode) override
@@ -2454,36 +2198,33 @@ struct OpenXrProgram final : IOpenXrProgram {
         return GetHandSpaceLocation(hand, m_lastPredicatedDisplayTime, initLoc);
     }
 
-    inline std::array<XrView,2> GetPredicatedViews
-    (
-        const XrFrameState& frameState, const RenderMode renderMode, const std::uint64_t videoTimeStampNs,
-        XrTime& predicateDisplayTime
-    )
-    {
-        assert(frameState.predictedDisplayPeriod >= 0);
-        const auto GetDefaultViews = [&]()-> std::array<XrView, 2> {
-            LocateViews(frameState.predictedDisplayTime, (uint32_t)m_views.size(), m_views.data());
-            return { m_views[0], m_views[1] };
-        };
-        predicateDisplayTime = frameState.predictedDisplayTime;
-        if (renderMode == RenderMode::Lobby)
-            return GetDefaultViews();
+    inline std::array<XrView, 2> GetPredicatedViews(const XrFrameState& frameState, const uint64_t displayTimeMs, XrTime& predicateDisplayTime) {
+    assert(frameState.predictedDisplayPeriod >= 0);
+    const auto GetDefaultViews = [&]() -> std::array<XrView, 2> {
+      Log::Write(Log::Level::Info, Fmt("cannot find mapping displayTimeMs:%" PRIu64 "",
+                                       displayTimeMs));
+      LocateViews(frameState.predictedDisplayTime, (uint32_t)m_views.size(), m_views.data());
+      return {m_views[0], m_views[1]};
+    };
+    // 预测的显示时间默认是从系统获取的显示时间
+    predicateDisplayTime = frameState.predictedDisplayTime;
 
-        std::shared_lock<std::shared_mutex> l(m_trackingFrameMapMutex);
-        if (videoTimeStampNs != std::uint64_t(-1))
-        {
-            const auto trackingFrameItr = m_trackingFrameMap.find(videoTimeStampNs);
-            if (trackingFrameItr != m_trackingFrameMap.cend()) {
-                predicateDisplayTime = trackingFrameItr->second.displayTime;
-                return trackingFrameItr->second.views;
-            }
-        }
-        const auto result = m_trackingFrameMap.rbegin();
-        if (result == m_trackingFrameMap.rend())
-            return GetDefaultViews();
-        predicateDisplayTime = result->second.displayTime;
-        return result->second.views;
+    std::shared_lock<std::shared_mutex> l(m_trackingFrameMapMutex);
+
+    if (displayTimeMs != uint64_t(-1)) {
+      const auto trackingFrameItr = m_trackingFrameMap.find(displayTimeMs);
+      if (trackingFrameItr != m_trackingFrameMap.cend()) {
+        predicateDisplayTime = trackingFrameItr->second.displayTime;
+        return trackingFrameItr->second.views;
+      }
     }
+    // 最后一个元素不存在就直接获取默认的，最后一个元素存在就返回最后的
+    const auto result = m_trackingFrameMap.rbegin();
+    if (result == m_trackingFrameMap.rend()) return GetDefaultViews();
+    predicateDisplayTime = result->second.displayTime;
+    return result->second.views;
+  }
+
 
     static inline ALXREyeInfo GetEyeInfo(const XrView& left_view, const XrView& right_view)
     {
@@ -2847,10 +2588,6 @@ struct OpenXrProgram final : IOpenXrProgram {
     PFN_xrConvertTimespecTimeToTimeKHR  m_pfnConvertTimespecTimeToTimeKHR = nullptr;
     PFN_xrConvertTimeToTimespecTimeKHR  m_pfnConvertTimeToTimespecTimeKHR = nullptr;
     
-    // XR_FB_color_space
-    PFN_xrEnumerateColorSpacesFB m_pfnEnumerateColorSpacesFB = nullptr;
-    PFN_xrSetColorSpaceFB        m_pfnSetColorSpaceFB = nullptr;
-
     // XR_EXT_hand_tracking fun pointers.
     PFN_xrCreateHandTrackerEXT  m_pfnCreateHandTrackerEXT = nullptr;
     PFN_xrLocateHandJointsEXT   m_pfnLocateHandJointsEXT = nullptr;
@@ -2898,7 +2635,6 @@ struct OpenXrProgram final : IOpenXrProgram {
     mutable std::shared_mutex m_trackingFrameMapMutex;        
     TrackingFrameMap          m_trackingFrameMap{};
     std::atomic<XrDuration>   m_PredicatedLatencyOffset{ 0 };
-    std::uint64_t             m_lastVideoFrameIndex = std::uint64_t(-1);
     static constexpr const std::size_t MaxTrackingFrameCount = 360 * 3;
 /// End Tracking Thread State ////////////////////////////////////////////////////
 
