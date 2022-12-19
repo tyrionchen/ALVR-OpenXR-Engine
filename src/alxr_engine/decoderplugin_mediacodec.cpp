@@ -10,7 +10,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
-
+#include <stdio.h>
 #include <readerwritercircularbuffer.h>
 
 #include <media/NdkMediaCodec.h>
@@ -429,6 +429,7 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
             Log::Write(Log::Level::Error, "Failed to create image reader/listener.");
             return false;
         }
+        FILE* _dump_file = nullptr;
 
         AMediaCodecPtr codec{ nullptr };
         AMediaFormatPtr format{ nullptr };        
@@ -440,6 +441,13 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
             if (!m_packetQueue.wait_dequeue_timed(packet, QueueWaitTimeout))
                 continue;
 
+            // 拷贝一份数据到文件里面
+            if (_dump_file == nullptr) {
+                _dump_file = fopen("/sdcard/Android/data/com.alvr.alxr_client/files/dumpfile.video", "wb");
+            }
+            if (_dump_file != nullptr) {
+                fwrite(packet.data.data(), 1, packet.data.size(), _dump_file);
+            }
             if (codec == nullptr && packet.is_config(ctx.config.codecType))
             {
                 Log::Write(Log::Level::Info, "Spawning decoder...");
@@ -537,7 +545,9 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
                 else Log::Write(Log::Level::Warning, Fmt("Waiting for decoder input buffer timed out after %f seconds, retrying...", QueueWaitTimeout * 1e-6f));
             }
         }
-
+        if (_dump_file != nullptr) {
+            fclose(_dump_file);
+        }
         outputThread.Stop();
         Log::Write(Log::Level::Info, "Decoder thread exiting...");
         if (codec != nullptr) {
