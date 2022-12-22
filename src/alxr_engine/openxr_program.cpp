@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <mutex>
 #include <shared_mutex>
+#include <fstream>
 #ifdef XR_USE_PLATFORM_ANDROID
     #include <unistd.h>
 #endif
@@ -43,6 +44,7 @@
 #include "latency_manager.h"
 #include "interaction_profiles.h"
 #include "interaction_manager.h"
+#include <json/json.h>
 
 #ifdef XR_USE_PLATFORM_ANDROID
 #ifndef ALXR_ENGINE_DISABLE_QUIT_ACTION
@@ -1577,8 +1579,8 @@ struct OpenXrProgram final : IOpenXrProgram {
 
                 for (int j = 0; j<swapchainImages.size(); j++) {
                     const uint32_t colorTexture = reinterpret_cast<const XrSwapchainImageOpenGLESKHR*>(swapchainImages[j])->image;
-                    Log::Write(Log::Level::Info, Fmt("cyyyyy swapchain:%p handle:%p view:%d  index:%d colorTexture:%d"
-                        ,swapchain, swapchain.handle, i, j, colorTexture));
+                    Log::Write(Log::Level::Info, Fmt("cyyyyy swapchain:%p handle:%p view:%d  index:%d colorTexture:%d swapchainImages:%p"
+                        ,swapchain, swapchain.handle, i, j, colorTexture, swapchainImages[j]));
                 }
 
                 m_swapchainImages.insert(std::make_pair(swapchain.handle, std::move(swapchainImages)));
@@ -1860,8 +1862,6 @@ struct OpenXrProgram final : IOpenXrProgram {
         return !IsRuntime(OxrRuntimeType::SteamVR) &&
                !IsRuntime(OxrRuntimeType::Monado);
     }
-
-
 
 
     using VizCubeList = std::vector<Cube>;
@@ -2266,11 +2266,123 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     virtual inline bool GetEyeInfo(ALXREyeInfo& eyeInfo) const override
     {
+        if (m_lastPredicatedDisplayTime == 0) {
+            return false;
+        }
         return GetEyeInfo(eyeInfo, m_lastPredicatedDisplayTime);
     }
+    
+    void inline appedToFile(const TrackingInfo& info) {
+        static std::ofstream outfile;
+        if (!outfile.is_open()) {
+            outfile.open("/sdcard/Android/data/com.alvr.alxr_client/files/alvr_pose.infos", std::ios_base::app);
+        }
 
+        std::string trackinginfo = TrackingInfo_To_String(info);
+        Log::Write(Log::Level::Info, Fmt("TrackingInfo_To_String:%s", trackinginfo.c_str()));
+
+        outfile << trackinginfo << std::endl;
+    }
+
+    inline std::string TrackingInfo_To_String(const TrackingInfo& info) {
+        Json::Value orientation;
+        orientation["x"] = info.HeadPose_Pose_Orientation.x;
+        orientation["y"] = info.HeadPose_Pose_Orientation.y;
+        orientation["z"] = info.HeadPose_Pose_Orientation.z;
+        orientation["w"] = info.HeadPose_Pose_Orientation.w;
+        Json::Value position;
+        position["x"] = info.HeadPose_Pose_Position.x;
+        position["y"] = info.HeadPose_Pose_Position.y;
+        position["z"] = info.HeadPose_Pose_Position.z;
+        Json::Value trackingInfo;
+        trackingInfo["orientation"] = orientation;
+        trackingInfo["position"] = position;
+        trackingInfo["targetTimestampMs"] = (double)(info.targetTimestampNs);
+
+        // 压缩格式，没有换行和不必要的空白字符
+        Json::StreamWriterBuilder stremBuilber = Json::StreamWriterBuilder();
+        stremBuilber["indentation"] = ""; 
+        stremBuilber["commentStyle"] = "None";
+        return Json::writeString(stremBuilber, trackingInfo);
+    }
+
+    inline void String_To_TrackingInfo(std::string line, TrackingInfo& info) {
+        Json::Reader reader; 
+        Json::Value trackingInfo; 
+        assert(reader.parse(line, trackingInfo));
+        Json::Value orientation = trackingInfo["orientation"];
+        info.HeadPose_Pose_Orientation.x = orientation["x"].asDouble();
+        info.HeadPose_Pose_Orientation.y = orientation["y"].asDouble();
+        info.HeadPose_Pose_Orientation.z = orientation["z"].asDouble();
+        info.HeadPose_Pose_Orientation.w = orientation["w"].asDouble();
+        Json::Value position = trackingInfo["position"];
+        info.HeadPose_Pose_Position.x = position["x"].asDouble();
+        info.HeadPose_Pose_Position.y = position["y"].asDouble();
+        info.HeadPose_Pose_Position.z = position["z"].asDouble();
+        info.targetTimestampNs = (unsigned long long)(trackingInfo["targetTimestampMs"].asDouble());
+        Log::Write(Log::Level::Info, Fmt("String_To_TrackingInfo %s", line.c_str()));
+    }
+
+    // float degree = 0;
+    // bool increaseDegree = true;
+    // float hDegree = 0;
+    // bool increaseHDegree = true;
     virtual bool GetTrackingInfo(TrackingInfo& info, const bool clientPredict) /*const*/ override
     {
+
+        // XrVector3f identity{0,1,0};
+        // XrQuaternionf rotation;
+        // XrQuaternionf_CreateFromAxisAngle(&rotation, &identity, degree * (MATH_PI / 180.0f));
+        // if (increaseDegree) {
+        //     degree += 0.1;
+        // } else {
+        //     degree -= 0.1;
+        // }
+        
+        // if (degree >= 90 || degree <= 0) { 
+        //     increaseDegree = !increaseDegree;
+        // }
+
+        // const auto [xrTimeStamp2, timeStampUs2] = XrTimeNow();
+        // info.HeadPose_Pose_Position.x = 0;
+        // info.HeadPose_Pose_Position.y = 1 + sinf(hDegree * (MATH_PI / 180.0f));
+        // info.HeadPose_Pose_Position.z = 0;
+        // info.HeadPose_Pose_Orientation.x = rotation.x;
+        // info.HeadPose_Pose_Orientation.y = rotation.y;
+        // info.HeadPose_Pose_Orientation.z = rotation.z;
+        // info.HeadPose_Pose_Orientation.w = rotation.w;
+        // info.targetTimestampNs = timeStampUs2/1000;
+
+        // if (increaseHDegree) {
+        //     hDegree += 0.1;
+        // } else {
+        //     hDegree -= 0.1;
+        // }
+
+        // if (hDegree >= 180 || hDegree <= 0) {
+        //     increaseHDegree = !increaseHDegree;
+        // }
+
+        // bool result2 = true;
+        // if (result2) {
+        //     return true;
+        // }
+
+
+        // static std::ifstream infile;
+        // if (!infile.is_open()) {
+        //     infile.open("/sdcard/Android/data/com.alvr.alxr_client/files/demo_pose.infos", std::ios_base::in);
+        // }
+        // bool result = true;
+
+        // std::string jsonLine;
+        // std::getline(infile, jsonLine);
+        // String_To_TrackingInfo(jsonLine, info);
+
+        // if (result) {
+        //     return true;
+        // }
+        
         const XrDuration predicatedLatencyOffsetNs = m_PredicatedLatencyOffset.load();
         info = {
             .mounted = true,
@@ -2278,7 +2390,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         };
         assert(predicatedLatencyOffsetNs >= 0);
         
-        const auto trackingPredictionLatencyUs = LatencyCollector::Instance().getTrackingPredictionLatency();
+        const auto trackingPredictionLatencyUs = 8e4;
         const auto [xrTimeStamp, timeStampUs] = XrTimeNow();
         assert(timeStampUs != std::uint64_t(-1) && xrTimeStamp >= 0);
 
@@ -2303,6 +2415,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace, predicatedDisplayTimeXR);
         info.HeadPose_Pose_Orientation  = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
         info.HeadPose_Pose_Position     = ToTrackingVector3(hmdSpaceLoc.pose.position);
+
+        appedToFile(info);
+
+
         // info.HeadPose_LinearVelocity    = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
         // info.HeadPose_AngularVelocity   = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
 

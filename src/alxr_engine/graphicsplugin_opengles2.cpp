@@ -138,6 +138,12 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
         return m_surfaceTexture;
     }
 
+    virtual void ClearSwapchainImageStructs() override
+    {
+        Log::Write(Log::Level::Info, Fmt("cyyyyy ClearSwapchainImageStructs m_swapchainImageBuffers.size:%d ", m_swapchainImageBuffers.size()));
+        //m_swapchainImageBuffers.clear();
+    }
+
     std::vector<XrSwapchainImageBaseHeader*> AllocateSwapchainImageStructs(
         uint32_t capacity, const XrSwapchainCreateInfo& /*swapchainCreateInfo*/) override {
         // Allocate and initialize the buffer of image structs (must be sequential in memory for xrEnumerateSwapchainImages).
@@ -202,10 +208,6 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
                    static_cast<GLint>(layerView.subImage.imageRect.offset.y),
                    static_cast<GLsizei>(layerView.subImage.imageRect.extent.width),
                    static_cast<GLsizei>(layerView.subImage.imageRect.extent.height));
-        
-
-        // TODO
-        //应该是colorTexture为0导致GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT
 
         // 当把纹理添加到帧缓冲的时候, 所有的渲染操作会直接写到纹理colorTexture里面
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);

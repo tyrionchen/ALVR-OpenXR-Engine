@@ -103,7 +103,7 @@ struct IOpenXrProgram {
 
     virtual bool GetSystemProperties(ALXRSystemProperties& systemProps) const = 0;
 
-    virtual bool GetTrackingInfo(TrackingInfo& info, const bool clientPredict) /*const*/ = 0;
+    virtual bool GetTrackingInfo(TrackingInfo& info, const bool) /*const*/ = 0;
 
     virtual void ApplyHapticFeedback(const ALXR::HapticsFeedback&) = 0;
 

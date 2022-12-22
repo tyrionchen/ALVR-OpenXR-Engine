@@ -293,6 +293,7 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
         return AMediaFormatPtr { format };
     }
 
+    FILE* _dump_file = nullptr;
     virtual inline bool Run(const IDecoderPlugin::RunCtx& ctx, IDecoderPlugin::shared_bool& isRunningToken) override
     {
         if (!isRunningToken || ctx.programPtr == nullptr) {
@@ -305,7 +306,6 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
         AMediaFormatPtr format{ nullptr };        
         DecoderOutputThread outputThread{ };
         static constexpr const std::int64_t QueueWaitTimeout = 5e+5;
-        FILE* _dump_file = nullptr;
         while (isRunningToken)
         {
             std::shared_ptr<SurfaceTexture> surfaceTexture = ctx.programPtr->GetGraphicsPlugin()->GetSurfaceTexture();
@@ -319,11 +319,12 @@ struct MediaCodecDecoderPluginWithTexture final : IDecoderPlugin
                 continue;
 
             // 拷贝一份数据到文件里面
-            // if (_dump_file == nullptr) {
-            //     _dump_file = fopen("/sdcard/Android/data/com.alvr.alxr_client/files/dumpfile.video", "wb");
-            // }
+            if (_dump_file == nullptr) {
+                _dump_file = fopen("/sdcard/Android/data/com.alvr.alxr_client/files/dumpvideo.h264", "wb");
+            }
             if (_dump_file != nullptr) {
-                fwrite(packet.data.data(), 1, packet.data.size(), _dump_file);
+                fwrite(packet.data.data(), sizeof(std::uint8_t), packet.data.size(), _dump_file);
+                fflush(_dump_file);
             }
             
 

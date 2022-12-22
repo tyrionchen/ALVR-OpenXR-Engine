@@ -119,7 +119,7 @@ struct Renderer : public IRenderer {
         Log::Write(Log::Level::Info, Fmt("setTextureId m_texture_id:%d", m_texture_id));
     }
 
-    void RenderView(const XrCompositionLayerProjectionView& layerView) override {
+    void RenderView(const XrCompositionLayerProjectionView&) override {
         glClearColor(m_clearColor[0], m_clearColor[1], m_clearColor[2], m_clearColor[3]);
         glClearDepthf(1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);

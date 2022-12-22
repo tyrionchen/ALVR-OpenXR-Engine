@@ -230,9 +230,10 @@ void alxr_set_stream_config(const ALXRStreamConfig config)
     if (programPtr == nullptr)
         return;
     alxr_stop_decoder_thread();
-    Log::Write(Log::Level::Info, "cyyyy alxr_set_stream_config");
+    
     if (const auto graphicsPtr = programPtr->GetGraphicsPlugin()) {
         const auto& rc = config.renderConfig;
+        Log::Write(Log::Level::Info, Fmt("alxr_set_stream_config eye[%u,%u]",rc.eyeWidth, rc.eyeHeight));
         std::scoped_lock lk(gRenderMutex);
         programPtr->SetRenderMode(IOpenXrProgram::RenderMode::Lobby);
         graphicsPtr->ClearVideoTextures();
