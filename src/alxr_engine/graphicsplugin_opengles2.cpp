@@ -131,7 +131,8 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
 
     virtual std::uint64_t GetVideoFrameIndex() const override { 
         m_surfaceTexture->Update();
-        return m_surfaceTexture->GetNanoTimeStamp();
+        // 这里为什么要除以1000? 因为从Mediacodec返回的pts，即这里的frameIndex会多1000
+        return m_surfaceTexture->GetNanoTimeStamp()/1000;
     }
 
     std::shared_ptr<SurfaceTexture> GetSurfaceTexture() const override { 

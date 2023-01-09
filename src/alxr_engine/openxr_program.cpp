@@ -1963,6 +1963,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         }
     }
 
+    std::uint64_t lastVideoFrameDisplayTimeNs{0};
     void RenderFrame() override {
         CHECK(m_session != XR_NULL_HANDLE);
 
@@ -1977,14 +1978,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         // 开始绘制一帧
         CHECK_XRCMD(xrBeginFrame(m_session, &frameBeginInfo));
 
-        std::uint64_t videoFrameDisplayTimeMs = m_graphicsPlugin->GetVideoFrameIndex();
-        if (videoFrameDisplayTimeMs && videoFrameDisplayTimeMs != 0) {
-            videoFrameDisplayTimeMs = videoFrameDisplayTimeMs / 1000;
-        }
+        std::uint64_t videoFrameDisplayTimeNs = m_graphicsPlugin->GetVideoFrameIndex();
 
         XrTime predictedDisplayTime{0};
         // 拿到当前视频帧中时间戳对应的预测视图(这里有姿态)
-        const auto predictedViews = GetPredicatedViews(frameState, videoFrameDisplayTimeMs, /*out*/ predictedDisplayTime);
+        const auto predictedViews = GetPredicatedViews(frameState, videoFrameDisplayTimeNs, /*out*/ predictedDisplayTime);
         std::vector<XrCompositionLayerBaseHeader*> layers;
         XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         std::vector<XrCompositionLayerProjectionView> projectionLayerViews;
@@ -2001,6 +1999,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         frameEndInfo.layerCount = (uint32_t)layers.size();
         frameEndInfo.layers = layers.data();
 
+        const auto [xrTimeStamp, timeStampUs] = XrTimeNow();
+        Log::Write(Log::Level::Info, Fmt("alxr_tracking RenderFrame videoFrameDisplayTimeNs:%" PRIu64 " predictedDisplayTime:%" PRIu64 " current(ns):%" PRIu64 " diff(ms):%" PRIu64 " %s", 
+            videoFrameDisplayTimeNs, predictedDisplayTime, (timeStampUs * 1000), (videoFrameDisplayTimeNs - (timeStampUs * 1000))/1000/1000, 
+            lastVideoFrameDisplayTimeNs == videoFrameDisplayTimeNs ? "dup" : ""));
+        lastVideoFrameDisplayTimeNs = videoFrameDisplayTimeNs;
         // 结束一帧的绘制
         CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
     }
@@ -2198,11 +2201,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         return GetHandSpaceLocation(hand, m_lastPredicatedDisplayTime, initLoc);
     }
 
-    inline std::array<XrView, 2> GetPredicatedViews(const XrFrameState& frameState, const uint64_t displayTimeMs, XrTime& predicateDisplayTime) {
+    inline std::array<XrView, 2> GetPredicatedViews(const XrFrameState& frameState, const uint64_t displayTimeNs, XrTime& predicateDisplayTime) {
     assert(frameState.predictedDisplayPeriod >= 0);
     const auto GetDefaultViews = [&]() -> std::array<XrView, 2> {
-      Log::Write(Log::Level::Info, Fmt("cannot find mapping displayTimeMs:%" PRIu64 "",
-                                       displayTimeMs));
+      Log::Write(Log::Level::Info, Fmt("cannot find mapping displayTimeNs:%" PRIu64 "",
+                                       displayTimeNs));
       LocateViews(frameState.predictedDisplayTime, (uint32_t)m_views.size(), m_views.data());
       return {m_views[0], m_views[1]};
     };
@@ -2211,13 +2214,15 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     std::shared_lock<std::shared_mutex> l(m_trackingFrameMapMutex);
 
-    if (displayTimeMs != uint64_t(-1)) {
-      const auto trackingFrameItr = m_trackingFrameMap.find(displayTimeMs);
+    if (displayTimeNs != uint64_t(-1)) {
+      const auto trackingFrameItr = m_trackingFrameMap.find(displayTimeNs);
       if (trackingFrameItr != m_trackingFrameMap.cend()) {
         predicateDisplayTime = trackingFrameItr->second.displayTime;
         return trackingFrameItr->second.views;
       }
     }
+    Log::Write(Log::Level::Info, Fmt("alxr_tracking GetPredicatedViews get last for %" PRIu64 "", displayTimeNs));
+
     // 最后一个元素不存在就直接获取默认的，最后一个元素存在就返回最后的
     const auto result = m_trackingFrameMap.rbegin();
     if (result == m_trackingFrameMap.rend()) return GetDefaultViews();
@@ -2330,13 +2335,13 @@ struct OpenXrProgram final : IOpenXrProgram {
     virtual bool GetTrackingInfo(TrackingInfo& info, const bool clientPredict) /*const*/ override
     {
 
-        // XrVector3f identity{0,1,0};
+        // XrVector3f identity{0, 1, 0};
         // XrQuaternionf rotation;
         // XrQuaternionf_CreateFromAxisAngle(&rotation, &identity, degree * (MATH_PI / 180.0f));
         // if (increaseDegree) {
-        //     degree += 0.1;
+        //     degree += 0.05;
         // } else {
-        //     degree -= 0.1;
+        //     degree -= 0.05;
         // }
         
         // if (degree >= 90 || degree <= 0) { 
@@ -2345,7 +2350,8 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         // const auto [xrTimeStamp2, timeStampUs2] = XrTimeNow();
         // info.HeadPose_Pose_Position.x = 0;
-        // info.HeadPose_Pose_Position.y = 1 + sinf(hDegree * (MATH_PI / 180.0f));
+        // // info.HeadPose_Pose_Position.y = 1 + sinf(hDegree * (MATH_PI / 180.0f));
+        // info.HeadPose_Pose_Position.y = 1.5;
         // info.HeadPose_Pose_Position.z = 0;
         // info.HeadPose_Pose_Orientation.x = rotation.x;
         // info.HeadPose_Pose_Orientation.y = rotation.y;
@@ -2371,7 +2377,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
         // static std::ifstream infile;
         // if (!infile.is_open()) {
-        //     infile.open("/sdcard/Android/data/com.alvr.alxr_client/files/demo_pose.infos", std::ios_base::in);
+        //     infile.open("/sdcard/Android/data/com.alvr.alxr_client/files/alvr_pose.infos", std::ios_base::in);
         // }
         // bool result = true;
 
@@ -2412,11 +2418,14 @@ struct OpenXrProgram final : IOpenXrProgram {
          }
         info.targetTimestampNs = predicatedDisplayTimeNs;
         
+        Log::Write(Log::Level::Info, Fmt("alxr_tracking GetTrackingInfo predicatedDisplayTimeNs:%" PRIu64 " totalLatencyOffsetMs:%" PRIu64 " currentMs:%" PRIu64
+            ,predicatedDisplayTimeNs, totalLatencyOffsetNs/1000/1000, (timeStampUs/1000)));
+
         const auto hmdSpaceLoc = GetSpaceLocation(m_viewSpace, predicatedDisplayTimeXR);
         info.HeadPose_Pose_Orientation  = ToTrackingQuat(hmdSpaceLoc.pose.orientation);
         info.HeadPose_Pose_Position     = ToTrackingVector3(hmdSpaceLoc.pose.position);
 
-        appedToFile(info);
+        // appedToFile(info);
 
 
         // info.HeadPose_LinearVelocity    = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
