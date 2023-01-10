@@ -144,7 +144,10 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         const auto &ctx = *gRustCtx;
         if (ctx.verbose)
             Log::SetLevel(Log::Level::Verbose);
+#ifdef XR_TCR_VERSION
+#pragma message ("Building tcr customized alxr client.")
         initJni(ctx);
+#endif        
 
         LatencyManager::Instance().Init(LatencyManager::CallbackCtx {
             .sendFn = ctx.inputSend,
