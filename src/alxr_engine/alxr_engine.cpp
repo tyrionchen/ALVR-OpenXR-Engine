@@ -192,7 +192,9 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         const auto platformPlugin = CreatePlatformPlugin(options, platformData);        
         // Initialize the OpenXR gProgram.
         gProgram = CreateOpenXrProgram(options, platformPlugin);
+#ifdef XR_TCR_VERSION
         gProgram->setOnEvent(onEvent);
+#endif
         gProgram->CreateInstance();
         gProgram->InitializeSystem(ALXR::ALXRPaths {
             .head           = rCtx->pathStringToHash(ALXRStrings::HeadPath),
