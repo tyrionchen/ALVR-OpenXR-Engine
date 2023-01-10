@@ -27,6 +27,7 @@
 
 #include <jnipp.h>
 #include <jni.h>
+#include "json/json.h"
 
 #if defined(XR_USE_PLATFORM_WIN32) && defined(XR_EXPORT_HIGH_PERF_GPU_SELECTION_SYMBOLS)
 #pragma message("Enabling Symbols to select high-perf GPUs first")
@@ -90,7 +91,6 @@ constexpr inline bool is_valid(const ALXRRustCtx& rCtx)
             rCtx.pathStringToHash != nullptr &&
             rCtx.requestIDR != nullptr;
 }
-
 
 inline jclass loadClz(jobject obj_activity, const char* cStrClzName) {
     jclass clz_activity = jni::env()->GetObjectClass(obj_activity);
@@ -370,6 +370,88 @@ inline void LogViewConfig(const ALXREyeInfo& newEyeInfo)
         newEyeInfo.ipd * 1000.0f, lEyeFovStr.c_str(), rEyeFovStr.c_str()));
 }
 
+Json::Value toJson(const TrackingInfo& trackingInfo) {
+    Json::Value orientation;
+    orientation["x"] = trackingInfo.HeadPose_Pose_Orientation.x;
+    orientation["y"] = trackingInfo.HeadPose_Pose_Orientation.y;
+    orientation["z"] = trackingInfo.HeadPose_Pose_Orientation.z;
+    orientation["w"] = trackingInfo.HeadPose_Pose_Orientation.w;
+    Json::Value position;
+    position["x"] = trackingInfo.HeadPose_Pose_Position.x;
+    position["y"] = trackingInfo.HeadPose_Pose_Position.y;
+    position["z"] = trackingInfo.HeadPose_Pose_Position.z;
+    Json::Value pose;
+    pose["orientation"] = orientation;
+    pose["position"] = position;
+    return pose;
+}
+
+  Json::Value toJson(const EyeFov& xrFov) {
+    Json::Value fov;
+    fov["angleLeft"] = xrFov.left;
+    fov["angleRight"] = xrFov.right;
+    fov["angleUp"] = xrFov.top;
+    fov["angleDown"] = xrFov.bottom;
+    return fov;
+  }
+
+  Json::Value toJson(const XrPosef& xrPose) {
+    Json::Value orientation;
+    orientation["x"] = xrPose.orientation.x;
+    orientation["y"] = xrPose.orientation.y;
+    orientation["z"] = xrPose.orientation.z;
+    orientation["w"] = xrPose.orientation.w;
+    Json::Value position;
+    position["x"] = xrPose.position.x;
+    position["y"] = xrPose.position.y;
+    position["z"] = xrPose.position.z;
+    Json::Value pose;
+    pose["orientation"] = orientation;
+    pose["position"] = position;
+    return pose;
+  }
+
+  Json::Value toJson(const EyeFov& xrFov, const XrPosef& xrPose) {
+    Json::Value view;
+    Json::Value fov;
+    fov["angleLeft"] = xrFov.left;
+    fov["angleRight"] = xrFov.right;
+    fov["angleUp"] = xrFov.top;
+    fov["angleDown"] = xrFov.bottom;
+    view["fov"] = fov;
+    Json::Value orientation;
+    orientation["x"] = xrPose.orientation.x;
+    orientation["y"] = xrPose.orientation.y;
+    orientation["z"] = xrPose.orientation.z;
+    orientation["w"] = xrPose.orientation.w;
+    Json::Value position;
+    position["x"] = xrPose.position.x;
+    position["y"] = xrPose.position.y;
+    position["z"] = xrPose.position.z;
+    Json::Value pose;
+    pose["orientation"] = orientation;
+    pose["position"] = position;
+    view["pose"] = pose;
+    return view;
+  }
+
+void viewsConfigSend(const ALXREyeInfo& newEyeInfo) {
+    Json::Value eyeInfo;
+    eyeInfo["leftFov"] = toJson(newEyeInfo.eyeFov[0]);
+    eyeInfo["rightFov"] = toJson(newEyeInfo.eyeFov[1]);
+    eyeInfo["ipd"] = newEyeInfo.ipd;
+    onEvent("eye_info_change", Json::writeString(Json::StreamWriterBuilder(), eyeInfo));
+}
+
+  void inputSend(const TrackingInfo& newInfo) {
+    Json::Value trackingInfo;
+    trackingInfo["hmdPose"] = toJson(newInfo);
+    const auto predicatedDisplayTimeNs = static_cast<std::uint64_t>(newInfo.targetTimestampNs);
+    trackingInfo["displayTime"] = predicatedDisplayTimeNs;
+    const std::string json_string = Json::writeString(Json::StreamWriterBuilder(), trackingInfo);
+    onEvent("tracking_info_change", json_string);
+  }
+
 void alxr_on_tracking_update(const bool clientsidePrediction)
 {
     const auto rustCtx = gRustCtx;
@@ -387,7 +469,11 @@ void alxr_on_tracking_update(const bool clientsidePrediction)
         std::abs(newEyeInfo.eyeFov[1].left - gLastEyeInfo.eyeFov[1].left) > 0.00001f)
     {
         gLastEyeInfo = newEyeInfo;
+#ifdef XR_TCR_VERSION
+        viewsConfigSend(newEyeInfo);
+#else
         gRustCtx->viewsConfigSend(&newEyeInfo);
+#endif        
         LogViewConfig(newEyeInfo);
     }
 
@@ -396,7 +482,11 @@ void alxr_on_tracking_update(const bool clientsidePrediction)
     TrackingInfo newInfo;
     if (!xrProgram->GetTrackingInfo(newInfo, clientsidePrediction))
         return;
+#ifdef XR_TCR_VERSION
+    inputSend(newInfo);
+#else
     rustCtx->inputSend(&newInfo);
+#endif
 }
 
 void alxr_on_receive(const unsigned char* packet, unsigned int packetSize)
