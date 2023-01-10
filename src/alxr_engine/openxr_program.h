@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string_view>
+#include <functional>
 
 struct ALXRStreamConfig;
 struct ALXRSystemProperties;
@@ -124,6 +125,8 @@ struct IOpenXrProgram {
     virtual void Resume() = 0;
 
     virtual inline bool SetAndroidAppThread(const AndroidThreadType) { return false; }
+
+    virtual void setOnEvent(std::function<void(std::string, std::string)>) = 0;
 };
 
 struct Swapchain {

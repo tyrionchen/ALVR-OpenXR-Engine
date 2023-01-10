@@ -25,6 +25,9 @@
 #include "decoder_thread.h"
 #include "foveation.h"
 
+#include <jnipp.h>
+#include <jni.h>
+
 #if defined(XR_USE_PLATFORM_WIN32) && defined(XR_EXPORT_HIGH_PERF_GPU_SELECTION_SYMBOLS)
 #pragma message("Enabling Symbols to select high-perf GPUs first")
 // Export symbols to get the high performance gpu as first adapter in IDXGIFactory::EnumAdapters().
@@ -88,6 +91,47 @@ constexpr inline bool is_valid(const ALXRRustCtx& rCtx)
             rCtx.requestIDR != nullptr;
 }
 
+
+inline jclass loadClz(jobject obj_activity, const char* cStrClzName) {
+    jclass clz_activity = jni::env()->GetObjectClass(obj_activity);
+    jmethodID method_getClassLoader = jni::env()->GetMethodID(clz_activity, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    jobject obj_classLoader = jni::env()->CallObjectMethod(obj_activity, method_getClassLoader);
+    jclass classLoader = jni::env()->FindClass("java/lang/ClassLoader");
+    jmethodID findClass = jni::env()->GetMethodID(classLoader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+    jstring strClassName = jni::env()->NewStringUTF(cStrClzName);
+    jclass clz = (jclass)(jni::env()->CallObjectMethod(obj_classLoader, findClass, strClassName));
+    jni::env()->DeleteLocalRef(strClassName);
+    return clz;
+}
+
+jobject g_tcrActivity_jobject{nullptr};
+jmethodID g_tcrActivity_onEvent_method{nullptr};
+jmethodID g_tcrActivity_updateTexture_method{nullptr};
+jmethodID g_tcrActivity_createEglRenderer_method{nullptr};
+
+void onEvent(std::string type, std::string msg) {
+    jstring jType = jni::env()->NewStringUTF(type.c_str());
+    jstring jMsg = jni::env()->NewStringUTF(msg.c_str());
+    jni::env()->CallVoidMethod(g_tcrActivity_jobject, g_tcrActivity_onEvent_method, jType, jMsg);
+}
+
+std::uint64_t updateTexture() {
+    jni::env()->CallLongMethod(g_tcrActivity_jobject, g_tcrActivity_updateTexture_method);
+}
+
+void createEglRenderer(int textureId) {
+    jni::env()->CallVoidMethod(g_tcrActivity_jobject, g_tcrActivity_createEglRenderer_method, textureId);
+}
+
+void initJni(const ALXRRustCtx ctx) {
+    jni::init((JavaVM*)(ctx.applicationVM));
+    g_tcrActivity_jobject = (jobject)(ctx.applicationActivity);
+    jclass clz_tcr_activity = loadClz(g_tcrActivity_jobject, "com/tencent/tcr/xr/TcrActivity");
+    g_tcrActivity_onEvent_method = jni::env()->GetMethodID(clz_tcr_activity, "onEvent", "(Ljava/lang/String;Ljava/lang/String;)V");
+    g_tcrActivity_updateTexture_method = jni::env()->GetMethodID(clz_tcr_activity, "updateTexture", "()J");
+    g_tcrActivity_createEglRenderer_method = jni::env()->GetMethodID(clz_tcr_activity, "createEglRenderer","(I)V");
+}
+
 bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemProperties) {
     try {
         if (rCtx == nullptr || !is_valid(*rCtx))
@@ -100,7 +144,8 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         const auto &ctx = *gRustCtx;
         if (ctx.verbose)
             Log::SetLevel(Log::Level::Verbose);
-        
+        initJni(ctx);
+
         LatencyManager::Instance().Init(LatencyManager::CallbackCtx {
             .sendFn = ctx.inputSend,
             .timeSyncSendFn = ctx.timeSyncSend,
@@ -144,6 +189,7 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         const auto platformPlugin = CreatePlatformPlugin(options, platformData);        
         // Initialize the OpenXR gProgram.
         gProgram = CreateOpenXrProgram(options, platformPlugin);
+        gProgram->setOnEvent(onEvent);
         gProgram->CreateInstance();
         gProgram->InitializeSystem(ALXR::ALXRPaths {
             .head           = rCtx->pathStringToHash(ALXRStrings::HeadPath),

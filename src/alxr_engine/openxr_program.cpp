@@ -2719,7 +2719,13 @@ struct OpenXrProgram final : IOpenXrProgram {
         return m_graphicsPlugin;
     }
 
+    virtual inline void setOnEvent(std::function<void(std::string, std::string)> fun) override {
+        m_onEvent = fun;
+        m_onEvent("test", "this is test!!");
+    }
+
    private:
+    std::function<void(std::string, std::string)> m_onEvent{nullptr};
     const std::shared_ptr<Options> m_options;
     std::shared_ptr<IPlatformPlugin> m_platformPlugin;
     std::shared_ptr<IGraphicsPlugin> m_graphicsPlugin;

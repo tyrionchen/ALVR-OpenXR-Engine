@@ -196,6 +196,10 @@ target_include_directories(alxr_engine
     ${ALVR_OLD_CLIENT_DIR}
 )
 
+set(EXTERNAL_JNIPP_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src/external/jnipp)
+add_library(external-jnipp STATIC ${EXTERNAL_JNIPP_SOURCE_DIR}/jnipp.cpp)
+target_include_directories(external-jnipp PUBLIC ${EXTERNAL_JNIPP_SOURCE_DIR})
+
 if(GLSLANG_VALIDATOR AND NOT GLSLC_COMMAND)
     target_compile_definitions(alxr_engine PRIVATE USE_GLSLANGVALIDATOR)
 endif()
@@ -214,7 +218,7 @@ endif()
 if (XR_IS_UWP)
     target_link_libraries(alxr_engine OneCore.lib WindowsApp.lib)
 endif()
-target_link_libraries(alxr_engine openxr_loader alvr_common readerwriterqueue ${CUDA_LIB_LIST} ${FFMPEG_LIBS} ${ONE_API_TTB_LIBS})
+target_link_libraries(alxr_engine openxr_loader alvr_common readerwriterqueue ${CUDA_LIB_LIST} ${FFMPEG_LIBS} ${ONE_API_TTB_LIBS} external-jnipp)
 
 if(TARGET openxr-gfxwrapper)
     target_link_libraries(alxr_engine openxr-gfxwrapper)
