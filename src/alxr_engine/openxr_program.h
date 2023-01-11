@@ -92,6 +92,9 @@ struct IOpenXrProgram {
     // Create and submit a frame.
     virtual void RenderFrame() = 0;
 
+    // prepare Android JNI enviroment for graphicPlugin
+    virtual void SetAndroidJniEnv() {};
+    
     enum class RenderMode : std::size_t
     {
         Lobby,

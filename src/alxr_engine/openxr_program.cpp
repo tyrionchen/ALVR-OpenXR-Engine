@@ -362,6 +362,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 case ALXRGraphicsApi::D3D12:    return std::make_tuple("XR_KHR_D3D12_enable"sv, "D3D12"sv);
                 case ALXRGraphicsApi::D3D11:    return std::make_tuple("XR_KHR_D3D11_enable"sv, "D3D11"sv);
                 case ALXRGraphicsApi::OpenGLES: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
+                case ALXRGraphicsApi::OpenGLES2: return std::make_tuple("XR_KHR_opengl_es_enable"sv, "OpenGLES"sv);
                 default: return std::make_tuple("XR_KHR_opengl_enable"sv, "OpenGL"sv);
                 }
             };
@@ -2074,6 +2075,60 @@ struct OpenXrProgram final : IOpenXrProgram {
         return cubes;
     }
 
+    inline bool RenderLayer(std::vector<XrCompositionLayerProjectionView>& projectionLayerViews,
+                            XrCompositionLayerProjection& layer, const std::array<XrView, 2>& predictedViews) {
+        XrResult res;
+        auto viewCount = (uint32_t)predictedViews.size();
+        CHECK(viewCount == m_configViews.size());
+        CHECK(viewCount == m_swapchains.size());
+        projectionLayerViews.resize(viewCount);
+
+        // Render view to the appropriate part of the swapchain image.
+        // 将画面渲染到Swapchain的图片里面
+        for (uint32_t i = 0; i < viewCount; i++) {
+            // Each view has a separate swapchain which is acquired, rendered to, and released.
+            const Swapchain viewSwapchain = m_swapchains[i];
+
+            XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+
+            uint32_t swapchainImageIndex;
+            CHECK_XRCMD(xrAcquireSwapchainImage(viewSwapchain.handle, &acquireInfo, &swapchainImageIndex));
+
+            XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            waitInfo.timeout = XR_INFINITE_DURATION;
+            CHECK_XRCMD(xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
+
+            projectionLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
+            projectionLayerViews[i].pose = predictedViews[i].pose;
+            projectionLayerViews[i].fov = predictedViews[i].fov;
+            projectionLayerViews[i].subImage.swapchain = viewSwapchain.handle;
+            projectionLayerViews[i].subImage.imageRect.offset = {0, 0};
+            projectionLayerViews[i].subImage.imageRect.extent = {viewSwapchain.width, viewSwapchain.height};
+
+            const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
+
+            m_graphicsPlugin->RenderView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);
+            XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
+        }
+        layer.space = m_appSpace;
+        layer.layerFlags = 0;
+        layer.viewCount = (uint32_t)projectionLayerViews.size();
+        layer.views = projectionLayerViews.data();
+        return true;
+    }
+
+    void SetAndroidJniEnv() override {
+        XrBaseInStructure* baseStructure = m_platformPlugin->GetInstanceCreateExtension();
+        JavaVM* javaVm = (JavaVM*)(((XrInstanceCreateInfoAndroidKHR*)baseStructure)->applicationVM);
+
+        JNIEnv* env;
+        jint res = javaVm->AttachCurrentThread(&env, nullptr);
+        if (res == JNI_OK) {
+            m_graphicsPlugin->SetAndroidJniEnv(env);
+        }
+    }
+
     inline bool RenderLayer
     (
         const XrTime predictedDisplayTime,
@@ -2215,7 +2270,8 @@ struct OpenXrProgram final : IOpenXrProgram {
             };
             const XrSwapchainImageBaseHeader* const swapchainImage = m_swapchainImages[viewSwapchain.handle][swapchainImageIndex];
             if (isVideoStream)
-                m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode);
+                m_graphicsPlugin->RenderView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat);
+                // m_graphicsPlugin->RenderVideoView(i, projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode);
             else
                 m_graphicsPlugin->RenderView(projectionLayerViews[i], swapchainImage, m_colorSwapchainFormat, ptMode, vizCubes);
             

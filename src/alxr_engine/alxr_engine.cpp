@@ -77,6 +77,8 @@ constexpr inline auto graphics_api_str(const ALXRGraphicsApi gcp)
         return "D3D11";
     case ALXRGraphicsApi::OpenGLES:
         return "OpenGLES";
+    case ALXRGraphicsApi::OpenGLES2:
+        return "OpenGLES2";
     case ALXRGraphicsApi::OpenGL:
         return "OpenGL";
     default:
@@ -116,7 +118,7 @@ void onEvent(std::string type, std::string msg) {
 }
 
 std::uint64_t updateTexture() {
-    jni::env()->CallLongMethod(g_tcrActivity_jobject, g_tcrActivity_updateTexture_method);
+    return jni::env()->CallLongMethod(g_tcrActivity_jobject, g_tcrActivity_updateTexture_method);
 }
 
 void createEglRenderer(int textureId) {
@@ -166,6 +168,9 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         options->DisplayColorSpace = static_cast<XrColorSpaceFB>(ctx.displayColorSpace);
         if (options->GraphicsPlugin.empty())
             options->GraphicsPlugin = graphics_api_str(ctx.graphicsApi);
+
+        //强制使用OpenGLES2
+        options->GraphicsPlugin = graphics_api_str(ALXRGraphicsApi::OpenGLES2);
 
         const auto platformData = std::make_shared<PlatformData>();
 #ifdef XR_USE_PLATFORM_ANDROID
@@ -257,6 +262,8 @@ void alxr_process_frame(bool* exitRenderLoop /*= non-null */, bool* requestResta
     if (*exitRenderLoop || !gProgram->IsSessionRunning())
         return;
     
+    gProgram->SetAndroidJniEnv();
+
     //gProgram->PollActions();
     {
         std::scoped_lock lk(gRenderMutex);
@@ -287,7 +294,8 @@ void alxr_set_stream_config(const ALXRStreamConfig config)
         if (rc.enableFoveation)
             fdParams = ALXR::MakeFoveatedDecodeParams(rc);
         graphicsPtr->SetFoveatedDecode(rc.enableFoveation ? &fdParams : nullptr);
-        programPtr->CreateSwapchains(rc.eyeWidth, rc.eyeHeight);
+        // 使用opengles2为什么就不能重新创建Swapchains需要再确认下
+        // programPtr->CreateSwapchains(rc.eyeWidth, rc.eyeHeight);
     }
 
     Log::Write(Log::Level::Info, "Starting decoder thread.");
