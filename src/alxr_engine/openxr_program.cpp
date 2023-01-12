@@ -1981,6 +1981,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             .layerCount = layerCount,
             .layers = layers.data()
         };
+        CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
 
         LatencyManager::Instance().SubmitAndSync(videoFrameDisplayTime, !timeRender);
         if (isVideoStream)
