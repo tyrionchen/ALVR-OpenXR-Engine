@@ -2542,7 +2542,9 @@ struct OpenXrProgram final : IOpenXrProgram {
         };
         assert(predicatedLatencyOffsetNs >= 0);
         
-        const auto trackingPredictionLatencyUs = LatencyCollector::Instance().getTrackingPredictionLatency();
+        // const auto trackingPredictionLatencyUs = LatencyCollector::Instance().getTrackingPredictionLatency();
+        // Demo场景下没有计算延迟，这里先针对两种版本hardcode一下
+        const auto trackingPredictionLatencyUs = 80 * 1000.0;
         const auto [xrTimeStamp, timeStampUs] = XrTimeNow();
         assert(timeStampUs != std::uint64_t(-1) && xrTimeStamp >= 0);
 
