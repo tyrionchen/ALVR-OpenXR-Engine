@@ -146,6 +146,9 @@ struct IGraphicsPlugin {
         UNUSED_PARM(swapchainFormat);
     }
 
+    virtual void SetTcrUpdateTexture(std::function<std::uint64_t(void)>) {};
+    virtual void SetTcrCreateEglRenderer(std::function<void(int)>) {};
+
     struct Buffer {
         void* data = nullptr;
         std::size_t pitch = 0;

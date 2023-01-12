@@ -112,16 +112,26 @@ jmethodID g_tcrActivity_updateTexture_method{nullptr};
 jmethodID g_tcrActivity_createEglRenderer_method{nullptr};
 
 void onEvent(std::string type, std::string msg) {
+    if (g_tcrActivity_jobject == nullptr || g_tcrActivity_onEvent_method == nullptr) {
+        return;
+    }
+
     jstring jType = jni::env()->NewStringUTF(type.c_str());
     jstring jMsg = jni::env()->NewStringUTF(msg.c_str());
     jni::env()->CallVoidMethod(g_tcrActivity_jobject, g_tcrActivity_onEvent_method, jType, jMsg);
 }
 
 std::uint64_t updateTexture() {
+    if (g_tcrActivity_jobject == nullptr || g_tcrActivity_updateTexture_method == nullptr) {
+        return 0;
+    }
     return jni::env()->CallLongMethod(g_tcrActivity_jobject, g_tcrActivity_updateTexture_method);
 }
 
 void createEglRenderer(int textureId) {
+    if (g_tcrActivity_jobject == nullptr || g_tcrActivity_createEglRenderer_method == nullptr) {
+        return;
+    }
     jni::env()->CallVoidMethod(g_tcrActivity_jobject, g_tcrActivity_createEglRenderer_method, textureId);
 }
 
@@ -194,9 +204,11 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
         //av_jni_set_java_vm(ctx.applicationVM, nullptr);
 #endif
         // Create platform-specific implementation.
-        const auto platformPlugin = CreatePlatformPlugin(options, platformData);        
+        const auto platformPlugin = CreatePlatformPlugin(options, platformData);
         // Initialize the OpenXR gProgram.
         gProgram = CreateOpenXrProgram(options, platformPlugin);
+        gProgram->GetGraphicsPlugin()->SetTcrCreateEglRenderer(createEglRenderer);
+        gProgram->GetGraphicsPlugin()->SetTcrUpdateTexture(updateTexture);
 #ifdef XR_TCR_VERSION
         gProgram->setOnEvent(onEvent);
 #endif
@@ -257,13 +269,12 @@ void alxr_request_exit_session() {
 
 void alxr_process_frame(bool* exitRenderLoop /*= non-null */, bool* requestRestart /*= non-null */) {
     assert(exitRenderLoop != nullptr && requestRestart != nullptr);
-
     gProgram->PollEvents(exitRenderLoop, requestRestart);
-    if (*exitRenderLoop || !gProgram->IsSessionRunning())
+    if (*exitRenderLoop || !gProgram->IsSessionRunning()) {
+        Log::Write(Log::Level::Info, "alxr_process_frame exit!!!");
         return;
-    
+    }
     gProgram->SetAndroidJniEnv();
-
     //gProgram->PollActions();
     {
         std::scoped_lock lk(gRenderMutex);
@@ -470,8 +481,8 @@ void alxr_on_tracking_update(const bool clientsidePrediction)
     const auto xrProgram = gProgram;
     if (xrProgram == nullptr || !xrProgram->IsSessionRunning())
         return;
-
     ALXREyeInfo newEyeInfo{};
+
     if (!gProgram->GetEyeInfo(newEyeInfo))
         return;
     if (std::abs(newEyeInfo.ipd - gLastEyeInfo.ipd) > 0.00001f ||
@@ -486,12 +497,11 @@ void alxr_on_tracking_update(const bool clientsidePrediction)
 #endif        
         LogViewConfig(newEyeInfo);
     }
-
     xrProgram->PollActions();
-
     TrackingInfo newInfo;
-    if (!xrProgram->GetTrackingInfo(newInfo, clientsidePrediction))
+    if (!xrProgram->GetTrackingInfo(newInfo, clientsidePrediction)) {
         return;
+    }
 #ifdef XR_TCR_VERSION
     inputSend(newInfo);
 #else

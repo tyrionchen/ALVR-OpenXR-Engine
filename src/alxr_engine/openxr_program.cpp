@@ -1908,10 +1908,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         const auto renderMode = m_renderMode.load();
         const bool isVideoStream = renderMode == RenderMode::VideoStream;
         std::uint64_t videoFrameDisplayTime = std::uint64_t(-1);
-        if (isVideoStream) {
+        // if (isVideoStream) {
             m_graphicsPlugin->BeginVideoView();
             videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
-        }
+        // }
         const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1) &&
                                 videoFrameDisplayTime != m_lastVideoFrameIndex;
         m_lastVideoFrameIndex = videoFrameDisplayTime;
@@ -1947,12 +1947,11 @@ struct OpenXrProgram final : IOpenXrProgram {
                 ptRenderLayerFlags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
             }
             const std::span<const XrView> views { predictedViews.begin(), predictedViews.end() };
-            if (RenderLayer(predictedDisplayTime, views, projectionLayerViews, layer, passthroughMode)) {
+            if (RenderLayer(projectionLayerViews, layer, views)) {
                 layer.layerFlags |= ptRenderLayerFlags;
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
             }
         }
-
         if (timeRender)
             LatencyCollector::Instance().rendered2(videoFrameDisplayTime);
 
@@ -1981,12 +1980,10 @@ struct OpenXrProgram final : IOpenXrProgram {
             .layerCount = layerCount,
             .layers = layers.data()
         };
-        CHECK_XRCMD(xrEndFrame(m_session, &frameEndInfo));
 
         LatencyManager::Instance().SubmitAndSync(videoFrameDisplayTime, !timeRender);
         if (isVideoStream)
             m_graphicsPlugin->EndVideoView();
-        
         if (m_delayOnGuardianChanged)
         {
             m_delayOnGuardianChanged = false;
@@ -2075,13 +2072,13 @@ struct OpenXrProgram final : IOpenXrProgram {
         return cubes;
     }
 
-    inline bool RenderLayer(std::vector<XrCompositionLayerProjectionView>& projectionLayerViews,
-                            XrCompositionLayerProjection& layer, const std::array<XrView, 2>& predictedViews) {
+    inline bool RenderLayer(std::array<XrCompositionLayerProjectionView, 2>& projectionLayerViews,
+                            XrCompositionLayerProjection& layer, const std::span<const XrView>& views) {
         XrResult res;
-        auto viewCount = (uint32_t)predictedViews.size();
+        auto viewCount = (uint32_t)views.size();
         CHECK(viewCount == m_configViews.size());
         CHECK(viewCount == m_swapchains.size());
-        projectionLayerViews.resize(viewCount);
+        CHECK(viewCount == views.size());
 
         // Render view to the appropriate part of the swapchain image.
         // 将画面渲染到Swapchain的图片里面
@@ -2099,8 +2096,8 @@ struct OpenXrProgram final : IOpenXrProgram {
             CHECK_XRCMD(xrWaitSwapchainImage(viewSwapchain.handle, &waitInfo));
 
             projectionLayerViews[i] = {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};
-            projectionLayerViews[i].pose = predictedViews[i].pose;
-            projectionLayerViews[i].fov = predictedViews[i].fov;
+            projectionLayerViews[i].pose = views[i].pose;
+            projectionLayerViews[i].fov = views[i].fov;
             projectionLayerViews[i].subImage.swapchain = viewSwapchain.handle;
             projectionLayerViews[i].subImage.imageRect.offset = {0, 0};
             projectionLayerViews[i].subImage.imageRect.extent = {viewSwapchain.width, viewSwapchain.height};
@@ -2111,6 +2108,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
             CHECK_XRCMD(xrReleaseSwapchainImage(viewSwapchain.handle, &releaseInfo));
         }
+        layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
         layer.space = m_appSpace;
         layer.layerFlags = 0;
         layer.viewCount = (uint32_t)projectionLayerViews.size();
@@ -2121,7 +2119,6 @@ struct OpenXrProgram final : IOpenXrProgram {
     void SetAndroidJniEnv() override {
         XrBaseInStructure* baseStructure = m_platformPlugin->GetInstanceCreateExtension();
         JavaVM* javaVm = (JavaVM*)(((XrInstanceCreateInfoAndroidKHR*)baseStructure)->applicationVM);
-
         JNIEnv* env;
         jint res = javaVm->AttachCurrentThread(&env, nullptr);
         if (res == JNI_OK) {
@@ -2520,6 +2517,9 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     virtual inline bool GetEyeInfo(ALXREyeInfo& eyeInfo) const override
     {
+        if (m_lastPredicatedDisplayTime == 0) {
+            return false;
+        }
         return GetEyeInfo(eyeInfo, m_lastPredicatedDisplayTime);
     }
 

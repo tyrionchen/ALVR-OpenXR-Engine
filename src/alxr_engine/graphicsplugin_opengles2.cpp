@@ -130,9 +130,16 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
     }
 
     virtual std::uint64_t GetVideoFrameIndex() const override { 
+#ifdef XR_TCR_VERSION
+        if (m_tcr_updateTexture != nullptr) {
+            return m_tcr_updateTexture();
+        }
+        return std::uint64_t(-1);
+#else 
         m_surfaceTexture->Update();
         // 这里为什么要除以1000? 因为从Mediacodec返回的pts，即这里的frameIndex会多1000
         return m_surfaceTexture->GetNanoTimeStamp()/1000;
+#endif
     }
 
     std::shared_ptr<SurfaceTexture> GetSurfaceTexture() const override { 
@@ -174,9 +181,19 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
     }
 
     void SetAndroidJniEnv(JNIEnv* jni) override { 
+        if (m_texture_id != 0) {
+            return;
+        }
         m_AndroidJniEnv = jni;
-        Log::Write(Log::Level::Error, Fmt("cyyyyy opengles2 SetAndroidJniEnv:%p", m_AndroidJniEnv));
-
+        
+#ifdef XR_TCR_VERSION
+        if (m_tcr_createEglRenderer != nullptr) {
+            glGenTextures(1, &m_texture_id);
+            m_leftEyeRenderer->setTextureId(m_texture_id);
+            m_rightEyeRenderer->setTextureId(m_texture_id);
+            m_tcr_createEglRenderer(m_texture_id);
+        }
+#else
         if (m_surfaceTexture == nullptr) {
             glGenTextures(1, &m_texture_id);
             Log::Write(Log::Level::Info, Fmt("cyyyyy openglEs SetAndroidJniEnv m_texture_id:%d", m_texture_id));
@@ -192,6 +209,7 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
             m_leftEyeRenderer->setTextureId(m_texture_id);
             m_rightEyeRenderer->setTextureId(m_texture_id);
         }
+#endif
     }
 
     void RenderView(uint32_t viewIndex, const XrCompositionLayerProjectionView& layerView,
@@ -201,9 +219,6 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
 
         glBindFramebuffer(GL_FRAMEBUFFER, m_swapchainFramebuffer);
         const uint32_t colorTexture = reinterpret_cast<const XrSwapchainImageOpenGLESKHR*>(swapchainImage)->image;
-
-        Log::Write(Log::Level::Error, Fmt("cyyyyy RenderView before viewIndex:%d swapchainImage:%p colorTexture:%d", 
-            viewIndex, swapchainImage, colorTexture));
 
         glViewport(static_cast<GLint>(layerView.subImage.imageRect.offset.x),
                    static_cast<GLint>(layerView.subImage.imageRect.offset.y),
@@ -215,14 +230,10 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
 
         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         GLenum errorCode = glGetError();
-
-        Log::Write(Log::Level::Error, Fmt("cyyyyy RenderView after viewIndex:%d width:%d colorTexture:%d status:%x errorCode:%x", 
-            viewIndex, layerView.subImage.imageRect.extent.width, colorTexture, status, errorCode));
         
         if (status != GL_FRAMEBUFFER_COMPLETE) {
             return;
         }
-
         glBindTexture(GL_TEXTURE_EXTERNAL_OES, m_texture_id);
         glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -232,13 +243,20 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
         } else {
             m_rightEyeRenderer->RenderView(layerView);
         }
-
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     uint32_t GetSupportedSwapchainSampleCount(const XrViewConfigurationView&) override { return 1; }
 
     inline void SetEnvironmentBlendMode(const XrEnvironmentBlendMode newMode) { UNUSED_PARM(newMode); }
+
+    void SetTcrUpdateTexture(std::function<std::uint64_t(void)> func) override {
+        m_tcr_updateTexture = func;
+    }
+
+    void SetTcrCreateEglRenderer(std::function<void(int)> func) override {
+        m_tcr_createEglRenderer = func;
+    }
 
    private:
 #ifdef XR_USE_PLATFORM_ANDROID
@@ -256,6 +274,8 @@ struct OpenGLESGraphicsPlugin2 : public IGraphicsPlugin {
     std::shared_ptr<IRenderer> m_rightEyeRenderer;
     std::shared_ptr<SurfaceTexture> m_surfaceTexture;
     JNIEnv*  m_AndroidJniEnv{nullptr};
+    std::function<std::uint64_t(void)> m_tcr_updateTexture{nullptr};
+    std::function<void(int)> m_tcr_createEglRenderer{nullptr};
 };
 }  // namespace
 
