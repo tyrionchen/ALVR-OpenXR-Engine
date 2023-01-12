@@ -241,6 +241,20 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
     }
 }
 
+extern "C" {
+/*
+ * Class:     com_tencent_tcr_xr_TcrActivity
+ * Method:    nativeSetVideoReady
+ * Signature: (Ljava/lang/String;)V
+ */
+JNIEXPORT void JNICALL
+Java_com_tencent_tcr_xr_TcrActivity_nativeSetVideoStreamReady(JNIEnv*, jobject) {
+    Log::Write(Log::Level::Info, "nativeSetVideoStreamReady");
+    gProgram->SetRenderMode(IOpenXrProgram::RenderMode::VideoStream);
+}
+
+}
+
 void alxr_stop_decoder_thread()
 {
 #ifndef XR_DISABLE_DECODER_THREAD
@@ -483,8 +497,10 @@ void alxr_on_tracking_update(const bool clientsidePrediction)
         return;
     ALXREyeInfo newEyeInfo{};
 
-    if (!gProgram->GetEyeInfo(newEyeInfo))
+    if (!gProgram->GetEyeInfo(newEyeInfo)) {
+        Log::Write(Log::Level::Info, "alxr_on_tracking_update !GetEyeInfo()");
         return;
+    }
     if (std::abs(newEyeInfo.ipd - gLastEyeInfo.ipd) > 0.00001f ||
         std::abs(newEyeInfo.eyeFov[0].left - gLastEyeInfo.eyeFov[0].left) > 0.00001f ||
         std::abs(newEyeInfo.eyeFov[1].left - gLastEyeInfo.eyeFov[1].left) > 0.00001f)
@@ -500,6 +516,7 @@ void alxr_on_tracking_update(const bool clientsidePrediction)
     xrProgram->PollActions();
     TrackingInfo newInfo;
     if (!xrProgram->GetTrackingInfo(newInfo, clientsidePrediction)) {
+        Log::Write(Log::Level::Info, "alxr_on_tracking_update !GetTrackingInfo()");
         return;
     }
 #ifdef XR_TCR_VERSION

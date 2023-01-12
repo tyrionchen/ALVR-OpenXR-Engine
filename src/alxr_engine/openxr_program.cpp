@@ -1912,6 +1912,7 @@ struct OpenXrProgram final : IOpenXrProgram {
             m_graphicsPlugin->BeginVideoView();
             videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
         // }
+        Log::Write(Log::Level::Info, Fmt("RenderFrame videoFrameDisplayTime:%" PRIu64 " isVideoStream:%d", videoFrameDisplayTime, isVideoStream));
         const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1) &&
                                 videoFrameDisplayTime != m_lastVideoFrameIndex;
         m_lastVideoFrameIndex = videoFrameDisplayTime;
@@ -2074,6 +2075,7 @@ struct OpenXrProgram final : IOpenXrProgram {
 
     inline bool RenderLayer(std::array<XrCompositionLayerProjectionView, 2>& projectionLayerViews,
                             XrCompositionLayerProjection& layer, const std::span<const XrView>& views) {
+        Log::Write(Log::Level::Info, "RenderLayer begin");
         XrResult res;
         auto viewCount = (uint32_t)views.size();
         CHECK(viewCount == m_configViews.size());
@@ -2113,6 +2115,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         layer.layerFlags = 0;
         layer.viewCount = (uint32_t)projectionLayerViews.size();
         layer.views = projectionLayerViews.data();
+        Log::Write(Log::Level::Info, "RenderLayer end");
         return true;
     }
 
@@ -2242,6 +2245,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         assert(projectionLayerViews.size() == views.size());
 
         const bool isVideoStream = m_renderMode == RenderMode::VideoStream;
+        Log::Write(Log::Level::Info, Fmt("RenderLayerSeperateViews isVideoStream:%d", isVideoStream));
         const auto vizCubes = isVideoStream ? VizCubeList{} : GetVisualizedCubes(predictedDisplayTime);
         const auto ptMode = static_cast<const ::PassthroughMode>(mode);
         // Render view to the appropriate part of the swapchain image.
@@ -2409,6 +2413,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         systemProps.refreshRates = m_displayRefreshRates.data();
         systemProps.refreshRatesCount = static_cast<std::uint32_t>(m_displayRefreshRates.size());
         systemProps.currentRefreshRate = m_displayRefreshRates.back();
+#ifdef XR_TCR_VERSION        
+        systemProps.isTcrVersion = true;
+#else
+        systemProps.isTcrVersion = false;
+#endif
         if (m_pfnGetDisplayRefreshRateFB)
             CHECK_XRCMD(m_pfnGetDisplayRefreshRateFB(m_session, &systemProps.currentRefreshRate));
         return true;
