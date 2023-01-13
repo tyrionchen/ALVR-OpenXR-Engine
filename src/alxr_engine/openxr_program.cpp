@@ -1908,10 +1908,10 @@ struct OpenXrProgram final : IOpenXrProgram {
         const auto renderMode = m_renderMode.load();
         const bool isVideoStream = renderMode == RenderMode::VideoStream;
         std::uint64_t videoFrameDisplayTime = std::uint64_t(-1);
-        // if (isVideoStream) {
+        if (isVideoStream) {
             m_graphicsPlugin->BeginVideoView();
             videoFrameDisplayTime = m_graphicsPlugin->GetVideoFrameIndex();
-        // }
+        }
         Log::Write(Log::Level::Info, Fmt("RenderFrame videoFrameDisplayTime:%" PRIu64 " isVideoStream:%d", videoFrameDisplayTime, isVideoStream));
         const bool timeRender = videoFrameDisplayTime != std::uint64_t(-1) &&
                                 videoFrameDisplayTime != m_lastVideoFrameIndex;
@@ -1948,7 +1948,7 @@ struct OpenXrProgram final : IOpenXrProgram {
                 ptRenderLayerFlags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
             }
             const std::span<const XrView> views { predictedViews.begin(), predictedViews.end() };
-            if (RenderLayer(projectionLayerViews, layer, views)) {
+            if (RenderLayer(predictedDisplayTime, views, projectionLayerViews, layer, passthroughMode)) {
                 layer.layerFlags |= ptRenderLayerFlags;
                 layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
             }
