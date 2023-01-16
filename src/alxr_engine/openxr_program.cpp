@@ -30,6 +30,8 @@
 #include <algorithm>
 #include <mutex>
 #include <shared_mutex>
+#include <fstream>
+#include <json/json.h>
 #ifdef XR_USE_PLATFORM_ANDROID
     #include <unistd.h>
 #endif
@@ -1891,7 +1893,12 @@ struct OpenXrProgram final : IOpenXrProgram {
                !IsRuntime(OxrRuntimeType::Monado);
     }
 
+    int count=0;
     void RenderFrame() override {
+        // TimeWarp效果验证
+        // count++;
+        // if(count>500)return;
+
         CHECK(m_session != XR_NULL_HANDLE);
         constexpr const XrFrameWaitInfo frameWaitInfo{
             .type = XR_TYPE_FRAME_WAIT_INFO,
@@ -2533,8 +2540,152 @@ struct OpenXrProgram final : IOpenXrProgram {
         return GetEyeInfo(eyeInfo, m_lastPredicatedDisplayTime);
     }
 
+    void inline appedToFile(const TrackingInfo& info, const std::array<XrView, 2>& newViews) {
+        static std::ofstream outfile;
+        if (!outfile.is_open()) {
+            outfile.open("/sdcard/Android/data/com.alvr.alxr_client/files/alvr_pose.infos", std::ios_base::app);
+        }
+
+        std::string trackinginfo = TrackingInfo_To_String(info, newViews);
+        Log::Write(Log::Level::Info, Fmt("TrackingInfo_To_String:%s", trackinginfo.c_str()));
+
+        outfile << trackinginfo << std::endl;
+    }
+
+    inline std::string TrackingInfo_To_String(const TrackingInfo& info, const std::array<XrView, 2>& newViews) {
+        Json::Value orientation;
+        orientation["x"] = info.HeadPose_Pose_Orientation.x;
+        orientation["y"] = info.HeadPose_Pose_Orientation.y;
+        orientation["z"] = info.HeadPose_Pose_Orientation.z;
+        orientation["w"] = info.HeadPose_Pose_Orientation.w;
+        Json::Value position;
+        position["x"] = info.HeadPose_Pose_Position.x;
+        position["y"] = info.HeadPose_Pose_Position.y;
+        position["z"] = info.HeadPose_Pose_Position.z;
+        Json::Value trackingInfo;
+        trackingInfo["orientation"] = orientation;
+        trackingInfo["position"] = position;
+        trackingInfo["targetTimestampMs"] = (double)(info.targetTimestampNs);
+
+        Json::Value orientation1;
+        orientation1["x"] = newViews[0].pose.orientation.x;
+        orientation1["y"] = newViews[0].pose.orientation.y;
+        orientation1["z"] = newViews[0].pose.orientation.z;
+        orientation1["w"] = newViews[0].pose.orientation.w;
+        Json::Value position1;
+        position1["x"] = newViews[0].pose.position.x;
+        position1["y"] = newViews[0].pose.position.y;
+        position1["z"] = newViews[0].pose.position.z;
+        trackingInfo["orientation1"] = orientation1;
+        trackingInfo["position1"] = position1;
+        Json::Value fov1;
+        fov1["angleDown"] = newViews[0].fov.angleDown;
+        fov1["angleLeft"] = newViews[0].fov.angleLeft;
+        fov1["angleRight"] = newViews[0].fov.angleRight;
+        fov1["angleUp"] = newViews[0].fov.angleUp;
+        trackingInfo["fov1"] = fov1;
+
+        Json::Value orientation2;
+        orientation2["x"] = newViews[1].pose.orientation.x;
+        orientation2["y"] = newViews[1].pose.orientation.y;
+        orientation2["z"] = newViews[1].pose.orientation.z;
+        orientation2["w"] = newViews[1].pose.orientation.w;
+        Json::Value position2;
+        position2["x"] = newViews[1].pose.position.x;
+        position2["y"] = newViews[1].pose.position.y;
+        position2["z"] = newViews[1].pose.position.z;
+        trackingInfo["orientation2"] = orientation2;
+        trackingInfo["position2"] = position2;
+        Json::Value fov2;
+        fov2["angleDown"] = newViews[1].fov.angleDown;
+        fov2["angleLeft"] = newViews[1].fov.angleLeft;
+        fov2["angleRight"] = newViews[1].fov.angleRight;
+        fov2["angleUp"] = newViews[1].fov.angleUp;
+        trackingInfo["fov2"] = fov2;
+
+        // 压缩格式，没有换行和不必要的空白字符
+        Json::StreamWriterBuilder stremBuilber = Json::StreamWriterBuilder();
+        stremBuilber["indentation"] = "";
+        stremBuilber["commentStyle"] = "None";
+        return Json::writeString(stremBuilber, trackingInfo);
+    }
+
+    inline void String_To_TrackingInfo(std::string line, TrackingInfo& info, std::array<XrView, 2>& newViews) {
+        Json::Reader reader;
+        Json::Value trackingInfo;
+        assert(reader.parse(line, trackingInfo));
+        Json::Value orientation = trackingInfo["orientation"];
+        info.HeadPose_Pose_Orientation.x = orientation["x"].asDouble();
+        info.HeadPose_Pose_Orientation.y = orientation["y"].asDouble();
+        info.HeadPose_Pose_Orientation.z = orientation["z"].asDouble();
+        info.HeadPose_Pose_Orientation.w = orientation["w"].asDouble();
+        Json::Value position = trackingInfo["position"];
+        info.HeadPose_Pose_Position.x = position["x"].asDouble();
+        info.HeadPose_Pose_Position.y = position["y"].asDouble();
+        info.HeadPose_Pose_Position.z = position["z"].asDouble();
+        info.targetTimestampNs = (unsigned long long)(trackingInfo["targetTimestampMs"].asDouble());
+
+        Json::Value position1 = trackingInfo["position1"];
+        newViews[0].pose.position.x = position1["x"].asDouble();
+        newViews[0].pose.position.y = position1["y"].asDouble();
+        newViews[0].pose.position.z = position1["z"].asDouble();
+        Json::Value orientation1 = trackingInfo["orientation1"];
+        newViews[0].pose.orientation.x = orientation1["x"].asDouble();
+        newViews[0].pose.orientation.y = orientation1["y"].asDouble();
+        newViews[0].pose.orientation.z = orientation1["z"].asDouble();
+        newViews[0].pose.orientation.w = orientation1["w"].asDouble();
+        Json::Value fov1 = trackingInfo["fov1"];
+        newViews[0].fov.angleDown = fov1["angleDown"].asDouble();
+        newViews[0].fov.angleLeft = fov1["angleLeft"].asDouble();
+        newViews[0].fov.angleRight = fov1["angleRight"].asDouble();
+        newViews[0].fov.angleUp = fov1["angleUp"].asDouble();
+
+        Json::Value position2 = trackingInfo["position2"];
+        newViews[1].pose.position.x = position2["x"].asDouble();
+        newViews[1].pose.position.y = position2["y"].asDouble();
+        newViews[1].pose.position.z = position2["z"].asDouble();
+        Json::Value orientation2 = trackingInfo["orientation2"];
+        newViews[1].pose.orientation.x = orientation2["x"].asDouble();
+        newViews[1].pose.orientation.y = orientation2["y"].asDouble();
+        newViews[1].pose.orientation.z = orientation2["z"].asDouble();
+        newViews[1].pose.orientation.w = orientation2["w"].asDouble();
+        Json::Value fov2 = trackingInfo["fov2"];
+        newViews[1].fov.angleDown = fov2["angleDown"].asDouble();
+        newViews[1].fov.angleLeft = fov2["angleLeft"].asDouble();
+        newViews[1].fov.angleRight = fov2["angleRight"].asDouble();
+        newViews[1].fov.angleUp = fov2["angleUp"].asDouble();
+
+        Log::Write(Log::Level::Info, Fmt("String_To_TrackingInfo %s", line.c_str()));
+    }
+
     virtual bool GetTrackingInfo(TrackingInfo& info, const bool clientPredict) /*const*/ override
     {
+        // {
+        //     static std::ifstream infile;
+        //     if (!infile.is_open()) {
+        //         infile.open("/sdcard/Android/data/com.alvr.alxr_client/files/alvr_pose.infos", std::ios_base::in);
+        //     }
+
+        //     std::string jsonLine;
+        //     std::getline(infile, jsonLine);
+        //     std::array<XrView, 2> newViews{IdentityView, IdentityView};
+        //     String_To_TrackingInfo(jsonLine, info, newViews);
+        //     {
+        //         std::unique_lock<std::shared_mutex> lock(m_trackingFrameMapMutex);
+        //         m_trackingFrameMap[info.targetTimestampNs] = {
+        //             .views = newViews,
+        //             //.timestamp   = predicatedDisplayTimeNs,
+        //             .displayTime = (int64_t)(info.targetTimestampNs)  // predicatedDisplayTimeXR
+        //         };
+        //         if (m_trackingFrameMap.size() > MaxTrackingFrameCount) m_trackingFrameMap.erase(m_trackingFrameMap.begin());
+        //     }
+
+        //     bool result = true;
+        //     if (result) {
+        //         return true;
+        //     }
+        // }
+
         const XrDuration predicatedLatencyOffsetNs = m_PredicatedLatencyOffset.load();
         info = {
             .mounted = true,
@@ -2571,6 +2722,8 @@ struct OpenXrProgram final : IOpenXrProgram {
         info.HeadPose_Pose_Position     = ToTrackingVector3(hmdSpaceLoc.pose.position);
         // info.HeadPose_LinearVelocity    = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
         // info.HeadPose_AngularVelocity   = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
+
+        //appedToFile(info,newViews);
 
         const auto lastPredicatedDisplayTime = m_lastPredicatedDisplayTime.load();
         const auto& inputPredicatedTime = clientPredict ? predicatedDisplayTimeXR : lastPredicatedDisplayTime;
