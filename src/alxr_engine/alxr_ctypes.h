@@ -66,6 +66,7 @@ struct ALXRSystemProperties
     unsigned int refreshRatesCount;
     unsigned int recommendedEyeWidth;
     unsigned int recommendedEyeHeight;
+    bool isTcrVersion;
 };
 
 struct ALXREyeInfo
