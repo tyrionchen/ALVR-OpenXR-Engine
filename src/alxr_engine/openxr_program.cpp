@@ -1981,9 +1981,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             .next = nullptr,
 #endif
             // TODO: Figure out why steamvr doesn't like using custom predicated display times!!!
-            .displayTime = UseNetworkPredicatedDisplayTime() ?
-                predictedDisplayTime : frameState.predictedDisplayTime,
-            //.displayTime = frameState.predictedDisplayTime,
+            // .displayTime = UseNetworkPredicatedDisplayTime() ?
+            //     predictedDisplayTime : frameState.predictedDisplayTime, // 强制不使用预测的延迟，减少交叉验证的负担
+            .displayTime = frameState.predictedDisplayTime,
             .environmentBlendMode = m_environmentBlendMode,
             .layerCount = layerCount,
             .layers = layers.data()
@@ -2664,7 +2664,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         // info.HeadPose_AngularVelocity   = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
 
         // appedToFile(info,newViews);
-        
+
         const auto lastPredicatedDisplayTime = m_lastPredicatedDisplayTime.load();
         const auto& inputPredicatedTime = clientPredict ? predicatedDisplayTimeXR : lastPredicatedDisplayTime;
 
