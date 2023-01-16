@@ -59,6 +59,18 @@ if(ANDROID)
         ${VULKAN_SHADERS})
         #$<TARGET_OBJECTS:android_native_app_glue>)
     target_link_libraries(alxr_engine ${ANDROID_LIBRARY} ${ANDROID_LOG_LIBRARY} mediandk)
+    
+    set(EXTERNAL_JSON_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src/external/jsoncpp)
+    target_sources(alxr_engine
+            PRIVATE
+            ${EXTERNAL_JSON_SOURCE_DIR}/src/lib_json/json_reader.cpp
+            ${EXTERNAL_JSON_SOURCE_DIR}/src/lib_json/json_value.cpp
+            ${EXTERNAL_JSON_SOURCE_DIR}/src/lib_json/json_writer.cpp
+            )
+    target_include_directories(alxr_engine
+            PRIVATE
+            ${EXTERNAL_JSON_SOURCE_DIR}/include
+            )
 else()
     set(CMAKE_INSTALL_RPATH $ORIGIN)
     add_library(alxr_engine SHARED
