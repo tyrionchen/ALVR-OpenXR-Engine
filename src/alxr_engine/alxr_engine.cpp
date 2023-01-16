@@ -221,6 +221,18 @@ bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemPr
     }
 }
 
+extern "C" {
+/*
+ * Class:     com_tencent_tcr_xr_TcrActivity
+ * Method:    nativeSetVideoReady
+ * Signature: (Ljava/lang/String;)V
+ */
+JNIEXPORT void JNICALL Java_com_tencent_tcr_xr_TcrActivity_nativeSetVideoStreamReady(JNIEnv*, jobject) {
+    Log::Write(Log::Level::Info, "nativeSetVideoStreamReady");
+    gProgram->SetRenderMode(IOpenXrProgram::RenderMode::VideoStream);
+}
+}
+
 void alxr_stop_decoder_thread()
 {
 #ifndef XR_DISABLE_DECODER_THREAD

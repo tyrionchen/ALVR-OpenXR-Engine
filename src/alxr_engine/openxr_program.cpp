@@ -2356,6 +2356,11 @@ struct OpenXrProgram final : IOpenXrProgram {
         systemProps.refreshRates = m_displayRefreshRates.data();
         systemProps.refreshRatesCount = static_cast<std::uint32_t>(m_displayRefreshRates.size());
         systemProps.currentRefreshRate = m_displayRefreshRates.back();
+#ifdef XR_TCR_VERSION        
+        systemProps.isTcrVersion = true;
+#else
+        systemProps.isTcrVersion = false;
+#endif
         if (m_pfnGetDisplayRefreshRateFB)
             CHECK_XRCMD(m_pfnGetDisplayRefreshRateFB(m_session, &systemProps.currentRefreshRate));
         return true;
