@@ -200,6 +200,13 @@ set(EXTERNAL_JNIPP_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src/external/jnipp)
 add_library(external-jnipp STATIC ${EXTERNAL_JNIPP_SOURCE_DIR}/jnipp.cpp)
 target_include_directories(external-jnipp PUBLIC ${EXTERNAL_JNIPP_SOURCE_DIR})
 
+target_sources(alxr_engine PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/external/jsoncpp/src/lib_json/json_reader.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/jsoncpp/src/lib_json/json_value.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/jsoncpp/src/lib_json/json_writer.cpp
+)
+target_include_directories(alxr_engine PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsoncpp/include)
+
 if(GLSLANG_VALIDATOR AND NOT GLSLC_COMMAND)
     target_compile_definitions(alxr_engine PRIVATE USE_GLSLANGVALIDATOR)
 endif()
