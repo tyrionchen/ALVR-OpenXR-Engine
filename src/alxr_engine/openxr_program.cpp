@@ -1981,9 +1981,9 @@ struct OpenXrProgram final : IOpenXrProgram {
             .next = nullptr,
 #endif
             // TODO: Figure out why steamvr doesn't like using custom predicated display times!!!
-            .displayTime = UseNetworkPredicatedDisplayTime() ?
-                predictedDisplayTime : frameState.predictedDisplayTime,
-            //.displayTime = frameState.predictedDisplayTime,
+            // .displayTime = UseNetworkPredicatedDisplayTime() ?
+            //     predictedDisplayTime : frameState.predictedDisplayTime, // 强制不使用预测的延迟，减少交叉验证的负担
+            .displayTime = frameState.predictedDisplayTime,
             .environmentBlendMode = m_environmentBlendMode,
             .layerCount = layerCount,
             .layers = layers.data()
@@ -2663,26 +2663,29 @@ struct OpenXrProgram final : IOpenXrProgram {
         // {
         //     static std::ifstream infile;
         //     if (!infile.is_open()) {
-        //         infile.open("/sdcard/Android/data/com.alvr.alxr_client/files/alvr_pose.infos", std::ios_base::in);
+        //         infile.open("/sdcard/cyy/alvr_pose.infos", std::ios_base::in);
+        //         Log::Write(Log::Level::Info, Fmt("open alvr_pose.infos file: %d", infile.is_open()));
         //     }
 
-        //     std::string jsonLine;
-        //     std::getline(infile, jsonLine);
-        //     std::array<XrView, 2> newViews{IdentityView, IdentityView};
-        //     String_To_TrackingInfo(jsonLine, info, newViews);
-        //     {
-        //         std::unique_lock<std::shared_mutex> lock(m_trackingFrameMapMutex);
-        //         m_trackingFrameMap[info.targetTimestampNs] = {
-        //             .views = newViews,
-        //             //.timestamp   = predicatedDisplayTimeNs,
-        //             .displayTime = (int64_t)(info.targetTimestampNs)  // predicatedDisplayTimeXR
-        //         };
-        //         if (m_trackingFrameMap.size() > MaxTrackingFrameCount) m_trackingFrameMap.erase(m_trackingFrameMap.begin());
-        //     }
+        //     if (infile.is_open()) {
+        //         std::string jsonLine;
+        //         std::getline(infile, jsonLine);
+        //         std::array<XrView, 2> newViews{IdentityView, IdentityView};
+        //         String_To_TrackingInfo(jsonLine, info, newViews);
+        //         {
+        //             std::unique_lock<std::shared_mutex> lock(m_trackingFrameMapMutex);
+        //             m_trackingFrameMap[info.targetTimestampNs] = {
+        //                .views = newViews,
+        //                 //.timestamp   = predicatedDisplayTimeNs,
+        //                 .displayTime = (int64_t)(info.targetTimestampNs)  // predicatedDisplayTimeXR
+        //             };
+        //             if (m_trackingFrameMap.size() > MaxTrackingFrameCount) m_trackingFrameMap.erase(m_trackingFrameMap.begin());
+        //         }
 
-        //     bool result = true;
-        //     if (result) {
-        //         return true;
+        //         bool result = true;
+        //         if (result) {
+        //             return true;
+        //         }
         //     }
         // }
 
@@ -2723,7 +2726,7 @@ struct OpenXrProgram final : IOpenXrProgram {
         // info.HeadPose_LinearVelocity    = ToTrackingVector3(hmdSpaceLoc.linearVelocity);
         // info.HeadPose_AngularVelocity   = ToTrackingVector3(hmdSpaceLoc.angularVelocity);
 
-        //appedToFile(info,newViews);
+        // appedToFile(info,newViews);
 
         const auto lastPredicatedDisplayTime = m_lastPredicatedDisplayTime.load();
         const auto& inputPredicatedTime = clientPredict ? predicatedDisplayTimeXR : lastPredicatedDisplayTime;
