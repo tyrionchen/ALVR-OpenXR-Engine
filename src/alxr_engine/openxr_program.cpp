@@ -2470,6 +2470,18 @@ struct OpenXrProgram final : IOpenXrProgram {
     virtual inline bool GetEyeInfo(ALXREyeInfo& eyeInfo, const XrTime& time) const override
     {
         std::array<XrView, 2> newViews{ IdentityView, IdentityView };
+
+        // time为0是无效时间，无法通过LocateViews查询双眼View，这种情况不进行查询。
+        //
+        // 备注: 
+        // 原ALXR逻辑必定会在RenderFrame调用之后才会通过alxr_on_tracking_update函数调用到了这里，而RenderFrame调用后会给外部的m_lastPredicatedDisplayTime赋值,
+        // 因此通过alxr_on_tracking_update调用到这里没有问题[见函数GetEyeInfo(ALXREyeInfo& eyeInfo)]。
+        //
+        // 由于Tcr版本跳过了建立连接等逻辑直接通过alxr_on_tracking_update函数调用到了这里，导致RenderView还未被调用就通过前者调用了这个函数，导致time为0.
+        //
+        // 请注意: alxr_on_tracking_update和调用RenderFrame的alxr_process_frame函数是在不同线程被调用的。
+        if (time == 0) return false;
+
         LocateViews(time, static_cast<const std::uint32_t>(newViews.size()), newViews.data());
         eyeInfo = GetEyeInfo(newViews[0], newViews[1]);
         return true;

@@ -105,8 +105,6 @@ inline jclass loadClz(jobject obj_activity, const char* cStrClzName) {
 
 jobject g_tcrActivity_jobject{nullptr};
 jmethodID g_tcrActivity_onEvent_method{nullptr};
-jmethodID g_tcrActivity_updateTexture_method{nullptr};
-jmethodID g_tcrActivity_createEglRenderer_method{nullptr};
 
 void onEvent(std::string type, std::string msg) {
     jstring jType = jni::env()->NewStringUTF(type.c_str());
@@ -114,21 +112,11 @@ void onEvent(std::string type, std::string msg) {
     jni::env()->CallVoidMethod(g_tcrActivity_jobject, g_tcrActivity_onEvent_method, jType, jMsg);
 }
 
-std::uint64_t updateTexture() {
-    jni::env()->CallLongMethod(g_tcrActivity_jobject, g_tcrActivity_updateTexture_method);
-}
-
-void createEglRenderer(int textureId) {
-    jni::env()->CallVoidMethod(g_tcrActivity_jobject, g_tcrActivity_createEglRenderer_method, textureId);
-}
-
 void initJni(const ALXRRustCtx ctx) {
     jni::init((JavaVM*)(ctx.applicationVM));
     g_tcrActivity_jobject = (jobject)(ctx.applicationActivity);
     jclass clz_tcr_activity = loadClz(g_tcrActivity_jobject, "com/tencent/tcr/xr/TcrActivity");
     g_tcrActivity_onEvent_method = jni::env()->GetMethodID(clz_tcr_activity, "onEvent", "(Ljava/lang/String;Ljava/lang/String;)V");
-    g_tcrActivity_updateTexture_method = jni::env()->GetMethodID(clz_tcr_activity, "updateTexture", "()J");
-    g_tcrActivity_createEglRenderer_method = jni::env()->GetMethodID(clz_tcr_activity, "createEglRenderer","(I)V");
 }
 
 
