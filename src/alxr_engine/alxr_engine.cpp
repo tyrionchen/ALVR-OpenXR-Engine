@@ -121,6 +121,12 @@ void initJni(const ALXRRustCtx ctx) {
 
 
 bool alxr_init(const ALXRRustCtx* rCtx, /*[out]*/ ALXRSystemProperties* systemProperties) {
+    int a = 0x12345678;
+    if( *((char*)&a) == 0x12)
+        Log::Write(Log::Level::Error, "Big Endian");
+    else
+        Log::Write(Log::Level::Error, "Little Endian");
+
     try {
         if (rCtx == nullptr || !is_valid(*rCtx))
         {
@@ -219,6 +225,21 @@ JNIEXPORT void JNICALL Java_com_tencent_tcr_xr_TcrActivity_nativeSetVideoStreamR
     Log::Write(Log::Level::Info, "nativeSetVideoStreamReady");
     gProgram->SetRenderMode(IOpenXrProgram::RenderMode::VideoStream);
 }
+
+/*
+ * Class:     com_tencent_tcr_xr_TcrActivity
+ * Method:    nativeReceiveVideoFrame
+ * Signature: (Ljava/nio/ByteBuffer;J;J)V
+ */
+JNIEXPORT void JNICALL Java_com_tencent_tcr_xr_TcrActivity_nativeReceiveVideoFrame(JNIEnv* env, jobject, jobject jData, jlong jDataSize, jlong displayTime) {
+    std::int64_t dataSize = jDataSize;
+    void *nativeBuffer = env->GetDirectBufferAddress(jData);
+    char str[jDataSize];
+    memcpy(str, nativeBuffer, jDataSize);
+    int capacity = env->GetDirectBufferCapacity(jData);
+    Log::Write(Log::Level::Info, Fmt("Java_com_tencent_tcr_xr_TcrActivity_nativeReceiveVideoFrame dataSize:%" PRIi64 " str:%s capacity:%d displayTime:%d", dataSize, str, capacity, displayTime));
+}
+
 }
 
 void alxr_stop_decoder_thread()

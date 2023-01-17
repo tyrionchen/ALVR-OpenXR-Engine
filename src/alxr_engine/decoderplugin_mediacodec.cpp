@@ -340,7 +340,7 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
     using GraphicsPluginPtr = std::shared_ptr<IGraphicsPlugin>;
 
     AVPacketQueue           m_packetQueue { 360 };
-    std::atomic<ALVR_CODEC> m_selectedCodecType { ALVR_CODEC_H265 };
+    std::atomic<ALVR_CODEC> m_selectedCodecType { ALVR_CODEC_H264 };
 
     virtual ~MediaCodecDecoderPlugin() override {
         Log::Write(Log::Level::Info, "MediaCodecDecoderPlugin destroyed");

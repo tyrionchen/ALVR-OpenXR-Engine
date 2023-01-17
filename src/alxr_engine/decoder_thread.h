@@ -48,5 +48,6 @@ public:
 	void Start(const StartCtx& ctx);
 	void Stop();
 	bool QueuePacket(const VideoFrame& header, const std::size_t packetSize);
+	bool QueuePacket(const std::uint8_t* buffer,  const std::size_t bufferSize, const unsigned long long displayTime);
 };
 #endif

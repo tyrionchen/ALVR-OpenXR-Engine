@@ -29,6 +29,15 @@ bool XrDecoderThread::QueuePacket(const VideoFrame& header, const std::size_t pa
 	return true;
 }
 
+bool XrDecoderThread::QueuePacket(const std::uint8_t* buffer,  const std::size_t bufferSize, const unsigned long long displayTime)
+{
+	const auto decoderPlugin = m_decoderPlugin;
+	if (decoderPlugin == nullptr)
+		return false;
+	decoderPlugin->QueuePacket({ buffer, bufferSize }, displayTime);
+	return true;
+}
+
 void XrDecoderThread::Stop()
 {
 	Log::Write(Log::Level::Info, "shutting down decoder thread");
@@ -65,7 +74,6 @@ void XrDecoderThread::Start(const XrDecoderThread::StartCtx& ctx)
 		decoderType = rustCtx->decoderType;
 		Log::Write(Log::Level::Verbose, "Sending IDR request");
 		rustCtx->setWaitingNextIDR(true);
-		rustCtx->requestIDR();
 	}
 
 #ifndef XR_DISABLE_DECODER_THREAD
