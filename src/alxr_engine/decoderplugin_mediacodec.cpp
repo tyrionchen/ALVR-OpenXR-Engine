@@ -357,7 +357,9 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
         
         const auto selectedCodec = m_selectedCodecType.load();
         const auto vpssps = find_vpssps(newPacketData, selectedCodec);
-        if (is_config(vpssps, selectedCodec))
+        bool isConfig = is_config(vpssps, selectedCodec);
+        Log::Write(Log::Level::Info, Fmt("cyy_test MediaCodecDecoderPlugin.QueuePacket() find_vpssps:%d is_config:%d trackingFrameIndex:%" PRIu64, vpssps, isConfig, trackingFrameIndex));
+        if (isConfig)
         {
             NALPacket configPacket{ vpssps, trackingFrameIndex };
             const auto frameData = newPacketData.subspan(vpssps.size(), newPacketData.size() - vpssps.size());
@@ -439,6 +441,8 @@ struct MediaCodecDecoderPlugin final : IDecoderPlugin
             NALPacket packet{};
             if (!m_packetQueue.wait_dequeue_timed(packet, QueueWaitTimeout))
                 continue;
+
+            Log::Write(Log::Level::Info, Fmt("cyy_test wait_dequeue_timed codecType:%d codec=nullptr:%d", ctx.config.codecType, codec == nullptr));
 
             if (codec == nullptr && packet.is_config(ctx.config.codecType))
             {

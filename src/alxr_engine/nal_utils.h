@@ -35,6 +35,8 @@ using ConstPacketType = std::span<const std::uint8_t>;
 constexpr inline NalType get_nal_type(const ConstPacketType& packet, const ALVR_CODEC codec)
 {
     if (packet.size() < 5) return NalType::Unknown;
+    // 前4个字节为start code(从0开始算)，第五个字节是nalu头部
+    // 对于H264来说，nalu头部的3~8位表示nalu的类型
     return NalType(codec == ALVR_CODEC_H264 ?
         packet[4] & std::uint8_t(0x1F) :
         (packet[4] >> 1) & std::uint8_t(0x3F));
@@ -55,6 +57,8 @@ constexpr inline bool is_idr(const ConstPacketType& packet, const ALVR_CODEC cod
 inline ConstPacketType find_vpssps(const ConstPacketType& packet, const ALVR_CODEC codec)
 {
     const auto nalType = get_nal_type(packet, codec);
+    Log::Write(Log::Level::Info, Fmt("cyy_test find_vpssps nalType:%d codec:%d", nalType, codec));
+
     if (!is_config(nalType, codec))
         return PacketType{};
 

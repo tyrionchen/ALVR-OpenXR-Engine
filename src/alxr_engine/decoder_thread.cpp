@@ -2,6 +2,9 @@
 #include "logger.h"
 #include "decoderplugin.h"
 #include "latency_manager.h"
+#include <iostream>
+#include "common.h"
+#include <inttypes.h>
 
 bool XrDecoderThread::QueuePacket(const VideoFrame& header, const std::size_t packetSize)
 {
@@ -34,7 +37,12 @@ bool XrDecoderThread::QueuePacket(const std::uint8_t* buffer,  const std::size_t
 	const auto decoderPlugin = m_decoderPlugin;
 	if (decoderPlugin == nullptr)
 		return false;
-	decoderPlugin->QueuePacket({ buffer, bufferSize }, displayTime);
+	Log::Write(Log::Level::Info, Fmt("cyy_test QueuePacket bufferSize:%zu displayTime:%" PRIi64, bufferSize, displayTime));	
+	// TODO 看起来这个地方传递过去以后, decoderplugin_mediacodec接收到的大小和displayTime是不对的，
+	//		这里应该是我们对他们内存和指针以及span的理解有问题，需要先理解明白，再来看为什么传不过去
+
+	// TODO 实现ALXR本身的录制功能 -> 目的是跑通 EncodedImage -> Render(Vulkan) 这个流程
+	decoderPlugin->QueuePacket({ reinterpret_cast<const std::uint8_t*>(buffer), bufferSize }, displayTime);
 	return true;
 }
 

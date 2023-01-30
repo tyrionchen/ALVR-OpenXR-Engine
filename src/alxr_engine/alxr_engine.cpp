@@ -51,6 +51,7 @@ using RustCtxPtr = std::shared_ptr<const ALXRRustCtx>;
 RustCtxPtr        gRustCtx{ nullptr };
 IOpenXrProgramPtr gProgram{ nullptr };
 XrDecoderThread   gDecoderThread{};
+std::mutex        gDecoderMutex{};
 std::mutex        gRenderMutex{};
 ALXREyeInfo       gLastEyeInfo = EyeInfoZero;
 
@@ -222,8 +223,37 @@ extern "C" {
  * Signature: (Ljava/lang/String;)V
  */
 JNIEXPORT void JNICALL Java_com_tencent_tcr_xr_TcrActivity_nativeSetVideoStreamReady(JNIEnv*, jobject) {
+    const auto programPtr = gProgram;
+    if (programPtr == nullptr) {
+        Log::Write(Log::Level::Info, "nativeSetVideoStreamReady() programPtr=null");
+        return;
+    }
+
     Log::Write(Log::Level::Info, "nativeSetVideoStreamReady");
-    gProgram->SetRenderMode(IOpenXrProgram::RenderMode::VideoStream);
+    programPtr->SetRenderMode(IOpenXrProgram::RenderMode::VideoStream);
+
+    // ALXRCodecType codecType;
+    // bool          enableFEC;
+    // bool          realtimePriority;
+    // unsigned int  cpuThreadCount; // only used for software decoding.
+
+    // 启动解码线程
+    Log::Write(Log::Level::Info, "Starting decoder thread.");
+#ifndef XR_DISABLE_DECODER_THREAD
+    const XrDecoderThread::StartCtx startCtx { // TODO 这个线程没有启动
+        .decoderConfig = {
+            .codecType = ALXRCodecType::H264_CODEC,
+            .enableFEC = false,
+            .realtimePriority = true,
+            .cpuThreadCount = 1
+        },
+        .programPtr = programPtr,
+        .rustCtx = gRustCtx
+    };
+    gDecoderThread.Start(startCtx);
+    Log::Write(Log::Level::Info, "Decoder Thread started.");
+#endif
+
 }
 
 /*
@@ -234,10 +264,13 @@ JNIEXPORT void JNICALL Java_com_tencent_tcr_xr_TcrActivity_nativeSetVideoStreamR
 JNIEXPORT void JNICALL Java_com_tencent_tcr_xr_TcrActivity_nativeReceiveVideoFrame(JNIEnv* env, jobject, jobject jData, jlong jDataSize, jlong displayTime) {
     std::int64_t dataSize = jDataSize;
     void *nativeBuffer = env->GetDirectBufferAddress(jData);
-    char str[jDataSize];
-    memcpy(str, nativeBuffer, jDataSize);
     int capacity = env->GetDirectBufferCapacity(jData);
-    Log::Write(Log::Level::Info, Fmt("Java_com_tencent_tcr_xr_TcrActivity_nativeReceiveVideoFrame dataSize:%" PRIi64 " str:%s capacity:%d displayTime:%d", dataSize, str, capacity, displayTime));
+    Log::Write(Log::Level::Info, Fmt("Java_com_tencent_tcr_xr_TcrActivity_nativeReceiveVideoFrame dataSize:%" PRIi64 " capacity:%d displayTime:%ld", dataSize, capacity, displayTime));
+
+    {
+        std::scoped_lock lk(gDecoderMutex);
+        gDecoderThread.QueuePacket(((std::uint8_t*)nativeBuffer), jDataSize, displayTime);
+    }
 }
 
 }
@@ -312,7 +345,7 @@ void alxr_set_stream_config(const ALXRStreamConfig config)
 
     gLastEyeInfo = EyeInfoZero;
 #ifndef XR_DISABLE_DECODER_THREAD
-    const XrDecoderThread::StartCtx startCtx {
+    const XrDecoderThread::StartCtx startCtx { // TODO 这个线程没有启动
         .decoderConfig = config.decoderConfig,
         .programPtr = programPtr,
         .rustCtx = gRustCtx
